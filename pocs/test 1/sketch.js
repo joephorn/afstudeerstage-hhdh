@@ -9,7 +9,7 @@
 const TEXT              = "ALBION"; // word to render
 const ROWS              = 12;        // number of horizontal stripes
 const LINE_HEIGHT       = 8;         // dash thickness (px in output canvas)
-const TIP_RATIO         = 0.28;      // 0..1: small cap radius relative to big cap
+const TIP_RATIO         = 0.25;      // 0..1: small cap radius relative to big cap
 const PADDING           = 40;        // canvas padding
 
 // Scan behavior
@@ -26,6 +26,10 @@ const FIT_WIDTH_FRAC    = 0.80;      // total word width ≤ this of buffer widt
 const BAND_TOP_FACTOR   = 0.92;      // baseline - asc * factor
 const BAND_BOT_FACTOR   = 1.04;      // baseline + desc * factor
 
+// Interface
+const interfaceX = 50;
+const interfaceY = 220;
+
 // Font file (set to null to use system sans-serif)
 const FONT_PATH         = 'Machine-Bold.otf';
 
@@ -33,6 +37,8 @@ const FONT_PATH         = 'Machine-Bold.otf';
 let glyphBuffer;      // offscreen p5.Graphics used for scanning
 let layout;           // computed positions + spans
 let loadedFont;       // p5.Font
+let rowsSetting = ROWS; // mutable rows count controlled by UI
+let sliderRows;         // p5 DOM slider instance
 const DEBUG = false;  // set true to draw overlay
 
 function preload(){
@@ -44,6 +50,7 @@ function setup(){
   pixelDensity(1);
   noLoop();
   layout = buildLayout(TEXT);
+  initInterface();
 }
 
 function draw(){
@@ -60,26 +67,30 @@ function draw(){
       const y = r * layout.rowPitch + layout.rowPitch * 0.5;
       for (const span of rowsForLetter[r]){
         const rightEdgeX = baseX + span.rightRel * layout.scale; // canvas units
-        const dashW      = span.runLen * layout.scale;           // dynamic length
-        const cx         = rightEdgeX - dashW * 0.5;             // center position
-        drawRoundedTaper(cx, y, dashW, LINE_HEIGHT, -1, TIP_RATIO);
+        const dashLen    = Math.max(0, span.runLen * layout.scale);
+        drawRoundedTaper(rightEdgeX, y, dashLen, LINE_HEIGHT, TIP_RATIO);
       }
     }
   }
 
+  drawInterface();
   if (DEBUG) drawDebugOverlay();
 }
 
 // ====== DRAWING ======
-function drawRoundedTaper(cx, cy, w, h, dir = -1, tipRatio = 0.25){
-  // Big round end (radius R) and smaller rounded tip (radius r). Connect with a quad.
-  const R = h * 0.5;
-  const r = Math.max(0.01, R * tipRatio);
-  const half = w * 0.5;
 
-  const bigX = cx - dir * (half - R); // right end when dir = -1
-  const tipX = cx + dir * (half - r); // left end when dir = -1
+function drawRoundedTaper(rightX, cy, len, h, tipRatio = 0.25){
+  const R = h * 0.5;                   // big round end radius
+  const r = Math.max(0.01, R * tipRatio); // small tip radius
 
+  // Center of big circle is R left from the rightmost edge
+  const bigX = rightX - R;
+
+  // Separation between circle centers. Ensure non-negative to avoid flipping.
+  const centerSep = Math.max(0, len - (R + r));
+  const tipX = bigX - centerSep;  // tip center to the left
+
+  // Connect tangents with a quad
   beginShape();
   vertex(bigX, cy - R);
   vertex(tipX, cy - r);
@@ -87,6 +98,7 @@ function drawRoundedTaper(cx, cy, w, h, dir = -1, tipRatio = 0.25){
   vertex(bigX, cy + R);
   endShape(CLOSE);
 
+  // Caps
   circle(bigX, cy, 2 * R);
   circle(tipX, cy, 2 * r);
 }
@@ -120,7 +132,7 @@ function scanRowInRange(g, y, x1, x2){
 }
 
 // ====== LAYOUT PIPELINE ======
-function buildLayout(word){
+function buildLayout(word, rowsCount = rowsSetting){
   // 1) Create offscreen buffer with no smoothing (hard edges for scanning)
   glyphBuffer = createGraphics(BUFFER_W, BUFFER_H);
   glyphBuffer.pixelDensity(1);
@@ -169,14 +181,14 @@ function buildLayout(word){
   if (bandTop > bandBot){ const t = bandTop; bandTop = bandBot; bandBot = t; }
 
   const rowsY = [];
-  for (let r = 0; r < ROWS; r++) rowsY.push( lerp(bandTop, bandBot, (r + 0.5) / ROWS) );
+  for (let r = 0; r < rowsCount; r++) rowsY.push( lerp(bandTop, bandBot, (r + 0.5) / rowsCount) );
 
   // 5) Build letter ranges and scan per row
   const ranges = letterWidths.map((w, i) => ({ x1: Math.floor(letterX[i]), x2: Math.ceil(letterX[i] + w) - 1 }));
   const lettersOrder = [...word];
-  const perLetter = {}; lettersOrder.forEach(ch => perLetter[ch] = Array.from({length: ROWS}, () => []));
+  const perLetter = {}; lettersOrder.forEach(ch => perLetter[ch] = Array.from({length: rowsCount}, () => []));
 
-  for (let r = 0; r < ROWS; r++){
+  for (let r = 0; r < rowsCount; r++){
     const y = rowsY[r];
     for (let li = 0; li < ranges.length; li++){
       const { x1, x2 } = ranges[li];
@@ -191,7 +203,7 @@ function buildLayout(word){
 
   // 6) Map to output canvas coordinates
   const scale    = (width  - 2 * PADDING) / totalW;
-  const rowPitch = (height - 2 * PADDING) / ROWS;
+  const rowPitch = (height - 2 * PADDING) / rowsCount;
 
   return {
     letters: perLetter,
@@ -206,7 +218,29 @@ function buildLayout(word){
   };
 }
 
-// ====== DEBUG OVERLAY (optional) ======
+// ====== INTERFACE ======
+function initInterface(){
+  // Slider: rows (3..100)
+  sliderRows = createSlider(5, 50, rowsSetting, 1);
+  sliderRows.position(interfaceX, interfaceY+20);
+  sliderRows.style('width', '100px');
+  sliderRows.input(() => {
+    rowsSetting = sliderRows.value();
+    layout = buildLayout(TEXT, rowsSetting);
+    redraw();
+  });
+}
+
+function drawInterface(){
+  // simple HUD label in the canvas
+  push();
+  resetMatrix();
+  fill(0); noStroke(); textSize(12); textAlign(LEFT, TOP);
+  text(`Rows: ${rowsSetting}`, 50, height - 24);
+  pop();
+}
+
+// ====== DEBUG OVERLAY ======
 function drawDebugOverlay(){
   push();
   noFill(); stroke(0, 60); strokeWeight(1);
