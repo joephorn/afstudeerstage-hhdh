@@ -3,11 +3,13 @@
  ******************************/
 
 // ====== CONFIG ======
-const TEXT              = "ALBION"; // word to render
-const ROWS              = 12;        // number of horizontal stripes
-const LINE_HEIGHT       = 8;         // dash thickness (px in output canvas)
-const TIP_RATIO         = 0.25;      // 0..1: small cap radius relative to big cap
+const TEXT              = "ALBION";
+const ROWS              = 12;
+const LINE_HEIGHT       = 8;
+const TIP_RATIO         = 0.25;
 const PADDING           = 40;        // canvas padding
+const DISPLACEMENT_LVL  = 1;
+const DISPLACE_UNIT     = 20;        // px per row step for displacement
 
 // Scan behavior
 const BRIDGE_PIXELS     = 0;         // allow bridging small white gaps (0 = off)
@@ -33,13 +35,14 @@ const FONT_PATH         = 'Machine-Bold.otf';
 // ====== STATE ======
 let glyphBuffer;      // offscreen p5.Graphics used for scanning
 let layout;           // computed positions + spans
-let loadedFont;       // p5.Font
-let rowsSetting = ROWS; // mutable rows count controlled by UI
-let sliderRows;         // p5 DOM slider instance
-let lineThickness = LINE_HEIGHT; // mutable line thickness (px)
-let heightScale   = 1.0;         // vertical scale of the letter (1.0 = original)
-let sliderThickness, sliderHeight; // DOM sliders
-const DEBUG = false;  // set true to draw overlay
+let loadedFont;
+let rowsSetting = ROWS;
+let sliderRows;
+let lineThickness = LINE_HEIGHT;
+let heightScale   = 1.0;
+let dispStep = 1;                    // -N..+N → per-row shift = dispStep * DISPLACE_UNIT * rowIndex
+let sliderThickness, sliderHeight, sliderDisplacement;
+const DEBUG = false;
 
 let baseRowPitch;   // baseline row pitch derived at startup
 let rowsBaseline;   // rows count at startup; canvas height scales only with this
@@ -48,29 +51,35 @@ let rowsBaseline;   // rows count at startup; canvas height scales only with thi
 let mainCanvas;
 let uiHolder;
 let uiWidth = 360;
-let uiHeight = 100;
+let uiHeight = 130;
 let uiP5 = null;             // p5 instance for the UI canvas (instance mode)
 
+let rowYsCanvas = []; // y-position of each row in canvas coordinates
+
 function desiredCanvasHeight(){
-  // Canvas height corresponds to heightScale
   return Math.ceil(PADDING * 2 + baseRowPitch * rowsBaseline * heightScale);
 }
 
 function positionUI(){
   if (!mainCanvas || !uiHolder) return;
-  uiHolder.position(mainCanvas.width + 50, 0);
+  uiHolder.position(mainCanvas.width + 20, 0); // directly under main canvas
   positionControls();
   redrawUI();
 }
 
 function positionControls(){
   if (!uiHolder) return;
-  const pos = uiHolder.position();
-  const left = pos.x + 12;
-  const top  = pos.y + 16;
-  if (sliderRows)      sliderRows.position(left, top);
-  if (sliderThickness) sliderThickness.position(left, top + 28);
-  if (sliderHeight)    sliderHeight.position(left, top + 56);
+  const left = uiHolder.position.x + 12;
+  const top  = 16;
+  if (sliderRows)           { sliderRows.parent(uiHolder);           sliderRows.position(left, top); }
+  if (sliderThickness)      { sliderThickness.parent(uiHolder);      sliderThickness.position(left, top + 28); }
+  if (sliderHeight)         { sliderHeight.parent(uiHolder);         sliderHeight.position(left, top + 56); }
+  if (sliderDisplacement)   { sliderDisplacement.parent(uiHolder);   sliderDisplacement.position(left, top + 84); }
+  // ensure sliders are on top of the UI canvas
+  if (sliderRows)           sliderRows.style('z-index', '1000');
+  if (sliderThickness)      sliderThickness.style('z-index', '1000');
+  if (sliderHeight)         sliderHeight.style('z-index', '1000');
+  if (sliderDisplacement)   sliderDisplacement.style('z-index', '1000');
 }
 
 function redrawUI(){
@@ -90,6 +99,7 @@ function setup(){
   layout = buildLayout(TEXT);
   initInterface();
   resizeCanvas(width, desiredCanvasHeight(), true);
+  positionUI();
 
   // Create UI holder + UI canvas (instance-mode p5)
   if (uiHolder) uiHolder.remove();
@@ -104,16 +114,19 @@ function setup(){
     p.setup = function(){
       const cnv = p.createCanvas(uiWidth, uiHeight);
       cnv.parent(uiHolder);
-      p.noLoop();
+      p.frameRate(12); // light loop so labels always reflect latest values
     };
     p.draw = function(){
       p.background(250);
       p.noStroke(); p.fill(0); p.textSize(12); p.textAlign(p.LEFT, p.TOP);
       p.text(`Rows: ${rowsSetting}`, 12, 4);
-      p.text(`Line: ${lineThickness}px`, 12, 8+25);
-      p.text(`Height: ${Math.round(heightScale*100)}%`, 12, 8+54);
+      p.text(`Line: ${lineThickness}px`, 12, 33);
+      p.text(`Height: ${Math.round(heightScale*100)}%`, 12, 62);
+      p.text(`Displace: ${dispStep} steps (×${DISPLACE_UNIT}px/step)`, 12, 90);
     };
   });
+
+  redrawUI();
 
   // Place UI under the main canvas and align sliders with it
   positionUI();
@@ -127,18 +140,32 @@ function draw(){
   translate(PADDING, PADDING);
   fill(0); noStroke();
 
+  // compute row centers (canvas space) and store for later use
+  const rowPitchNow = (height - 2 * PADDING) / rowsSetting;
+  rowYsCanvas = Array.from({ length: rowsSetting }, (_, r) => r * rowPitchNow + rowPitchNow * 0.5);
+
   for (let li = 0; li < layout.lettersOrder.length; li++){
     const letterKey = layout.lettersOrder[li];
     const rowsForLetter = layout.letters[letterKey];
     const baseX = layout.letterX[li];
 
     for (let r = 0; r < rowsForLetter.length; r++){
-      const rowPitchNow = (height - 2 * PADDING) / rowsSetting;
-      const y = r * rowPitchNow + rowPitchNow * 0.5;
+      const y = rowYsCanvas[r];
       for (const span of rowsForLetter[r]){
         const rightEdgeX = baseX + span.rightRel * layout.scale; // canvas units
         const dashLen    = Math.max(0, span.runLen * layout.scale);
-        drawRoundedTaper(rightEdgeX, y, dashLen, lineThickness, TIP_RATIO);
+        // Displacement by snapped intervals across rows.
+        // We compute a step index = round( (r/(rows-1)) * dispStep )
+        // Then shift by stepIndex * DISPLACE_UNIT. This keeps the logo straight
+        // but only moves rows at a few discrete intervals.
+        let xShift = 0;
+        if (dispStep !== 0){
+          const denom = Math.max(1, rowsSetting - 1);
+          const t = r / denom; // 0..1 over rows
+          const stepIndex = Math.round(t * dispStep); // signed steps
+          xShift = stepIndex * DISPLACE_UNIT;
+        }
+        drawRoundedTaper(rightEdgeX + xShift, y, dashLen, lineThickness, TIP_RATIO);
       }
     }
   }
@@ -172,6 +199,26 @@ function drawRoundedTaper(rightX, cy, len, h, tipRatio = 0.25){
   // Caps
   circle(bigX, cy, 2 * R);
   circle(tipX, cy, 2 * r);
+}
+
+function drawStraightTaper(rightX, cy, len, h){
+  const R = h * 0.5;
+  const r = 0;
+
+  // Center of big circle is R left from the rightmost edge
+  const bigX = rightX - R;
+
+  // Separation between circle centers. Ensure non-negative to avoid flipping.
+  const centerSep = Math.max(0, len - (R + r));
+  const tipX = bigX - centerSep;  // tip center to the left
+
+  // Connect tangents with a quad
+  beginShape();
+  vertex(bigX, cy - R);
+  vertex(tipX, cy - r);
+  vertex(tipX, cy + r);
+  vertex(bigX, cy + R);
+  endShape(CLOSE);
 }
 
 // ====== SCANNING HELPERS ======
@@ -283,7 +330,6 @@ function buildLayout(word, rowsCount = rowsSetting){
     letterW: letterWidths,
     scale,
     rowPitch,
-    // debug extras
     rowsY,
     ranges
   };
@@ -291,22 +337,20 @@ function buildLayout(word, rowsCount = rowsSetting){
 
 // ====== INTERFACE ======
 function initInterface(){
-  // Rows (5-50)
-  sliderRows = createSlider(5, 50, rowsSetting, 1);
+  sliderRows = createSlider(4, 4*8, rowsSetting, 4);
   sliderRows.style('width', '180px');
   sliderRows.input(() => {
     rowsSetting = sliderRows.value();
     layout = buildLayout(TEXT, rowsSetting);
     redraw();
     positionUI();
+    redrawUI();
   });
 
-  // Line thickness (1-40 px)
   sliderThickness = createSlider(1, 40, lineThickness, 1);
   sliderThickness.style('width', '180px');
-  sliderThickness.input(() => { lineThickness = sliderThickness.value(); redraw(); positionUI(); });
+  sliderThickness.input(() => { lineThickness = sliderThickness.value(); redraw(); positionUI(); redrawUI(); });
 
-  // Letter height scale (50% - 200%)
   sliderHeight = createSlider(50, 200, Math.round(heightScale * 100), 1);
   sliderHeight.style('width', '180px');
   sliderHeight.input(() => {
@@ -314,11 +358,19 @@ function initInterface(){
     resizeCanvas(width, desiredCanvasHeight(), true);
     redraw();
     positionUI();
+    redrawUI();
   });
 
-    sliderRows.style('z-index', '1000');
-    sliderThickness.style('z-index', '1000');
-    sliderHeight.style('z-index', '1000');
+  // Displacement step (−4 .. +4); −1 = 30px/rij naar links, +1 = 30px/rij naar rechts
+  sliderDisplacement = createSlider(-4, 4, dispStep, 1);
+  sliderDisplacement.style('width', '180px');
+  sliderDisplacement.input(() => {
+    dispStep = sliderDisplacement.value();
+    redraw();
+    positionUI();
+    redrawUI();
+  });
+
   positionControls();
 }
 
@@ -328,8 +380,7 @@ function drawDebugOverlay(){
   noFill(); stroke(0, 60); strokeWeight(1);
   // row guides
   for (let r = 0; r < layout.rowsY.length; r++){
-    const rowPitchNow = (height - 2 * PADDING) / rowsSetting;
-    const y = r * rowPitchNow + rowPitchNow * 0.5;
+    const y = rowYsCanvas[r] ?? ((height - 2 * PADDING) / rowsSetting) * r + ((height - 2 * PADDING) / rowsSetting) * 0.5;
     line(0, y, width, y);
   }
   // letter boxes
@@ -346,8 +397,7 @@ function drawDebugOverlay(){
     const rows = layout.letters[letterKey];
     const baseX = layout.letterX[li];
     for (let r = 0; r < rows.length; r++){
-      const rowPitchNow3 = (height - 2 * PADDING) / rowsSetting;
-      const y = r * rowPitchNow3 + rowPitchNow3 * 0.5;
+      const y = rowYsCanvas[r] ?? ((height - 2 * PADDING) / rowsSetting) * r + ((height - 2 * PADDING) / rowsSetting) * 0.5;
       for (const seg of rows[r]){
         const x2 = baseX + seg.rightRel * layout.scale;
         const x1 = x2 - seg.runLen * layout.scale;
