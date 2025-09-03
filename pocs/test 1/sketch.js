@@ -1,8 +1,5 @@
 /******************************
  * ALBION logo
- * - Font-render → scan per row per letter
- * - Dashes start at right edge, length = local run of ink
- * - Rounded tapered tip (no sharp point)
  ******************************/
 
 // ====== CONFIG ======
@@ -39,22 +36,94 @@ let layout;           // computed positions + spans
 let loadedFont;       // p5.Font
 let rowsSetting = ROWS; // mutable rows count controlled by UI
 let sliderRows;         // p5 DOM slider instance
+let lineThickness = LINE_HEIGHT; // mutable line thickness (px)
+let heightScale   = 1.0;         // vertical scale of the letter (1.0 = original)
+let sliderThickness, sliderHeight; // DOM sliders
 const DEBUG = false;  // set true to draw overlay
+
+let baseRowPitch;   // baseline row pitch derived at startup
+let rowsBaseline;   // rows count at startup; canvas height scales only with this
+
+// UI canvas (separate)
+let mainCanvas;
+let uiHolder;
+let uiWidth = 360;
+let uiHeight = 100;
+let uiP5 = null;             // p5 instance for the UI canvas (instance mode)
+
+function desiredCanvasHeight(){
+  // Canvas height corresponds to heightScale
+  return Math.ceil(PADDING * 2 + baseRowPitch * rowsBaseline * heightScale);
+}
+
+function positionUI(){
+  if (!mainCanvas || !uiHolder) return;
+  uiHolder.position(mainCanvas.width + 50, 0);
+  positionControls();
+  redrawUI();
+}
+
+function positionControls(){
+  if (!uiHolder) return;
+  const pos = uiHolder.position();
+  const left = pos.x + 12;
+  const top  = pos.y + 16;
+  if (sliderRows)      sliderRows.position(left, top);
+  if (sliderThickness) sliderThickness.position(left, top + 28);
+  if (sliderHeight)    sliderHeight.position(left, top + 56);
+}
+
+function redrawUI(){
+  if (uiP5 && uiP5.redraw) uiP5.redraw();
+}
 
 function preload(){
   if (FONT_PATH) loadedFont = loadFont(FONT_PATH, () => {}, err => console.error(err));
 }
 
 function setup(){
-  createCanvas(800, 250, SVG);
+  mainCanvas = createCanvas(800, 250, SVG);
   pixelDensity(1);
+  baseRowPitch = (height - 2 * PADDING) / rowsSetting;
+  rowsBaseline = rowsSetting; // lock baseline to initial rows
   noLoop();
   layout = buildLayout(TEXT);
   initInterface();
+  resizeCanvas(width, desiredCanvasHeight(), true);
+
+  // Create UI holder + UI canvas (instance-mode p5)
+  if (uiHolder) uiHolder.remove();
+  uiHolder = createDiv();
+  uiHolder.style('width', uiWidth + 'px');
+  uiHolder.style('height', uiHeight + 'px');
+  uiHolder.style('padding', '0');
+  uiHolder.style('margin', '0');
+
+  // Second p5 instance for the UI canvas
+  uiP5 = new p5((p) => {
+    p.setup = function(){
+      const cnv = p.createCanvas(uiWidth, uiHeight);
+      cnv.parent(uiHolder);
+      p.noLoop();
+    };
+    p.draw = function(){
+      p.background(250);
+      p.noStroke(); p.fill(0); p.textSize(12); p.textAlign(p.LEFT, p.TOP);
+      p.text(`Rows: ${rowsSetting}`, 12, 4);
+      p.text(`Line: ${lineThickness}px`, 12, 8+25);
+      p.text(`Height: ${Math.round(heightScale*100)}%`, 12, 8+54);
+    };
+  });
+
+  // Place UI under the main canvas and align sliders with it
+  positionUI();
+
+  noLoop();
+  redraw();
 }
 
 function draw(){
-  background(255);
+  background(250);
   translate(PADDING, PADDING);
   fill(0); noStroke();
 
@@ -64,17 +133,19 @@ function draw(){
     const baseX = layout.letterX[li];
 
     for (let r = 0; r < rowsForLetter.length; r++){
-      const y = r * layout.rowPitch + layout.rowPitch * 0.5;
+      const rowPitchNow = (height - 2 * PADDING) / rowsSetting;
+      const y = r * rowPitchNow + rowPitchNow * 0.5;
       for (const span of rowsForLetter[r]){
         const rightEdgeX = baseX + span.rightRel * layout.scale; // canvas units
         const dashLen    = Math.max(0, span.runLen * layout.scale);
-        drawRoundedTaper(rightEdgeX, y, dashLen, LINE_HEIGHT, TIP_RATIO);
+        drawRoundedTaper(rightEdgeX, y, dashLen, lineThickness, TIP_RATIO);
       }
     }
   }
 
   drawInterface();
   if (DEBUG) drawDebugOverlay();
+  positionUI();
 }
 
 // ====== DRAWING ======
@@ -220,24 +291,35 @@ function buildLayout(word, rowsCount = rowsSetting){
 
 // ====== INTERFACE ======
 function initInterface(){
-  // Slider: rows (3..100)
+  // Rows (5-50)
   sliderRows = createSlider(5, 50, rowsSetting, 1);
-  sliderRows.position(interfaceX, interfaceY+20);
-  sliderRows.style('width', '100px');
+  sliderRows.style('width', '180px');
   sliderRows.input(() => {
     rowsSetting = sliderRows.value();
     layout = buildLayout(TEXT, rowsSetting);
     redraw();
+    positionUI();
   });
-}
 
-function drawInterface(){
-  // simple HUD label in the canvas
-  push();
-  resetMatrix();
-  fill(0); noStroke(); textSize(12); textAlign(LEFT, TOP);
-  text(`Rows: ${rowsSetting}`, 50, height - 24);
-  pop();
+  // Line thickness (1-40 px)
+  sliderThickness = createSlider(1, 40, lineThickness, 1);
+  sliderThickness.style('width', '180px');
+  sliderThickness.input(() => { lineThickness = sliderThickness.value(); redraw(); positionUI(); });
+
+  // Letter height scale (50% - 200%)
+  sliderHeight = createSlider(50, 200, Math.round(heightScale * 100), 1);
+  sliderHeight.style('width', '180px');
+  sliderHeight.input(() => {
+    heightScale = sliderHeight.value() / 100;
+    resizeCanvas(width, desiredCanvasHeight(), true);
+    redraw();
+    positionUI();
+  });
+
+    sliderRows.style('z-index', '1000');
+    sliderThickness.style('z-index', '1000');
+    sliderHeight.style('z-index', '1000');
+  positionControls();
 }
 
 // ====== DEBUG OVERLAY ======
@@ -246,7 +328,8 @@ function drawDebugOverlay(){
   noFill(); stroke(0, 60); strokeWeight(1);
   // row guides
   for (let r = 0; r < layout.rowsY.length; r++){
-    const y = r * layout.rowPitch + layout.rowPitch * 0.5;
+    const rowPitchNow = (height - 2 * PADDING) / rowsSetting;
+    const y = r * rowPitchNow + rowPitchNow * 0.5;
     line(0, y, width, y);
   }
   // letter boxes
@@ -254,7 +337,8 @@ function drawDebugOverlay(){
   for (let i = 0; i < layout.ranges.length; i++){
     const lx = layout.letterX[i];
     const lw = layout.letterW[i] * layout.scale;
-    rect(lx, 0, lw, layout.rowsY.length * layout.rowPitch);
+    const rowPitchNow2 = (height - 2 * PADDING) / rowsSetting;
+    rect(lx, 0, lw, layout.rowsY.length * rowPitchNow2);
   }
   // scanned spans + right edges
   for (let li = 0; li < layout.lettersOrder.length; li++){
@@ -262,7 +346,8 @@ function drawDebugOverlay(){
     const rows = layout.letters[letterKey];
     const baseX = layout.letterX[li];
     for (let r = 0; r < rows.length; r++){
-      const y = r * layout.rowPitch + layout.rowPitch * 0.5;
+      const rowPitchNow3 = (height - 2 * PADDING) / rowsSetting;
+      const y = r * rowPitchNow3 + rowPitchNow3 * 0.5;
       for (const seg of rows[r]){
         const x2 = baseX + seg.rightRel * layout.scale;
         const x1 = x2 - seg.runLen * layout.scale;
