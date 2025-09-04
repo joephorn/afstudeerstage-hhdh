@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>SVG + Vector PDF Export</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.js-svg@1.6.0"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/3.0.2/jspdf.umd.min.js"></script>
+    <script src="https://unpkg.com/svg2pdf.js@2.2.4/dist/svg2pdf.umd.min.js"></script>
+  </head>
+  <body>
+    <script>
+        let exportSVGbtn, exportPDFbtn, svgElement;
+
+        function setup() {
+            createCanvas(400, 400, SVG);
+            noLoop();
+
+            exportSVGbtn = createButton("Export SVG");
+            exportSVGbtn.mousePressed(() => save("sketch.svg"));
+
+            exportPDFbtn = createButton("Export PDF");
+            exportPDFbtn.mousePressed(exportPDF);
+        }
+
+        function draw() {
+            background(240);
+            fill(0, 150, 255);
+            rectMode(CENTER);
+            textAlign(CENTER, CENTER)
+            noStroke();
+            rect(width/2, height/2, 500, 200);
+            fill(0)
+            textSize(20)
+            text("bewijs dat", width/2, 150)
+            textSize(50)
+            text("ik", width/2, 200)
+            textSize(20)
+            text("een svg heb geexporteerd", width/2, 250)
+        }
+
+        async function exportPDF() {
+          const { jsPDF } = window.jspdf;
+          const pdf = new jsPDF({
+            orientation: "portrait",
+            unit: "pt",
+            format: [width, height],
+          });
+          // Try multiple attachment patterns for svg2pdf
+          const pickFn = (...cands) => cands.find(fn => typeof fn === "function") || null;
+          const svg2pdfFn = pickFn(
+            window.svg2pdf,
+            window.svg2pdf && window.svg2pdf.default,
+            window.svg2pdf && window.svg2pdf.svg2pdf,
+            window.svg2pdf && window.svg2pdf.default && window.svg2pdf.default.svg2pdf,
+            (typeof svg2pdf !== "undefined" ? svg2pdf : null),
+            (typeof svg2pdf !== "undefined" && svg2pdf.default ? svg2pdf.default : null),
+            (typeof svg2pdf !== "undefined" && svg2pdf.svg2pdf ? svg2pdf.svg2pdf : null)
+          );
+          if (!svg2pdfFn) {
+            alert("svg2pdf library not loaded (or wrong build). Check <script> includes.");
+            return;
+          }
+          const svg = svgElement || document.querySelector("svg");
+          await svg2pdfFn(svg, pdf, {
+            x: 0,
+            y: 0,
+            width: width,
+            height: height,
+            useCSS: true,
+          });
+          pdf.save("sketch.pdf");
+        }
+    </script>
+  </body>
+</html>
