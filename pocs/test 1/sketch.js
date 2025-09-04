@@ -41,7 +41,10 @@ let sliderRows;
 let lineThickness = LINE_HEIGHT;
 let heightScale   = 1.0;
 let dispStep = 1;                    // -N..+N → per-row shift = dispStep * DISPLACE_UNIT * rowIndex
-let sliderThickness, sliderHeight, sliderDisplacement;
+let sliderThickness, sliderHeight, sliderDisplacement, sliderPixelate;
+let roundedEdges = true; // toggle between rounded and straight taper
+let checkboxRounded;
+let pixelStep = 1;       // cell size voor pixelation; 1 = uit
 const DEBUG = false;
 
 let baseRowPitch;   // baseline row pitch derived at startup
@@ -51,8 +54,10 @@ let rowsBaseline;   // rows count at startup; canvas height scales only with thi
 let mainCanvas;
 let uiHolder;
 let uiWidth = 360;
-let uiHeight = 130;
+let uiHeight = 150;
 let uiP5 = null;             // p5 instance for the UI canvas (instance mode)
+
+let renderBuf;               // offscreen raster buffer used for pixelation sampling
 
 let rowYsCanvas = []; // y-position of each row in canvas coordinates
 
@@ -71,15 +76,12 @@ function positionControls(){
   if (!uiHolder) return;
   const left = uiHolder.position.x + 12;
   const top  = 16;
-  if (sliderRows)           { sliderRows.parent(uiHolder);           sliderRows.position(left, top); }
-  if (sliderThickness)      { sliderThickness.parent(uiHolder);      sliderThickness.position(left, top + 28); }
-  if (sliderHeight)         { sliderHeight.parent(uiHolder);         sliderHeight.position(left, top + 56); }
-  if (sliderDisplacement)   { sliderDisplacement.parent(uiHolder);   sliderDisplacement.position(left, top + 84); }
-  // ensure sliders are on top of the UI canvas
-  if (sliderRows)           sliderRows.style('z-index', '1000');
-  if (sliderThickness)      sliderThickness.style('z-index', '1000');
-  if (sliderHeight)         sliderHeight.style('z-index', '1000');
-  if (sliderDisplacement)   sliderDisplacement.style('z-index', '1000');
+  if (sliderRows)           { sliderRows.parent(uiHolder);           sliderRows.position(left, top); } sliderRows.style('z-index', '1000');
+  if (sliderThickness)      { sliderThickness.parent(uiHolder);      sliderThickness.position(left, top + 28); sliderThickness.style('z-index', '1000'); }
+  if (sliderHeight)         { sliderHeight.parent(uiHolder);         sliderHeight.position(left, top + 56); sliderHeight.style('z-index', '1000'); }
+  if (sliderDisplacement)   { sliderDisplacement.parent(uiHolder);   sliderDisplacement.position(left, top + 84); sliderDisplacement.style('z-index', '1000'); }
+  if (sliderPixelate)       { sliderPixelate.parent(uiHolder);       sliderPixelate.position(left, top + 112); sliderPixelate.style('z-index','1000'); }
+  if (checkboxRounded)      { checkboxRounded.parent(uiHolder);      checkboxRounded.position(left, top + 140); }
 }
 
 function redrawUI(){
@@ -93,6 +95,9 @@ function preload(){
 function setup(){
   mainCanvas = createCanvas(800, 250, SVG);
   pixelDensity(1);
+  renderBuf = createGraphics(width, height);
+  renderBuf.pixelDensity(1);
+  renderBuf.noSmooth();
   baseRowPitch = (height - 2 * PADDING) / rowsSetting;
   rowsBaseline = rowsSetting; // lock baseline to initial rows
   noLoop();
@@ -123,6 +128,7 @@ function setup(){
       p.text(`Line: ${lineThickness}px`, 12, 33);
       p.text(`Height: ${Math.round(heightScale*100)}%`, 12, 62);
       p.text(`Displace: ${dispStep} steps (×${DISPLACE_UNIT}px/step)`, 12, 90);
+      p.text(`Pixelate: ${pixelStep}px`, 12, 116);
     };
   });
 
@@ -135,29 +141,27 @@ function setup(){
   redraw();
 }
 
-function draw(){
-  background(250);
-  translate(PADDING, PADDING);
-  fill(0); noStroke();
+function renderLogo(g){
+  g.push();
+  g.background(255);
+  g.translate(PADDING, PADDING);
+  g.fill(0); g.noStroke();
 
   // compute row centers (canvas space) and store for later use
   const rowPitchNow = (height - 2 * PADDING) / rowsSetting;
   rowYsCanvas = Array.from({ length: rowsSetting }, (_, r) => r * rowPitchNow + rowPitchNow * 0.5);
 
   for (let li = 0; li < layout.lettersOrder.length; li++){
-    const letterKey = layout.lettersOrder[li];
+    const letterKey   = layout.lettersOrder[li];
     const rowsForLetter = layout.letters[letterKey];
-    const baseX = layout.letterX[li];
+    const baseX       = layout.letterX[li];
 
     for (let r = 0; r < rowsForLetter.length; r++){
       const y = rowYsCanvas[r];
       for (const span of rowsForLetter[r]){
         const rightEdgeX = baseX + span.rightRel * layout.scale; // canvas units
         const dashLen    = Math.max(0, span.runLen * layout.scale);
-        // Displacement by snapped intervals across rows.
-        // We compute a step index = round( (r/(rows-1)) * dispStep )
-        // Then shift by stepIndex * DISPLACE_UNIT. This keeps the logo straight
-        // but only moves rows at a few discrete intervals.
+        // Displacement by snapped intervals across rows (optional)
         let xShift = 0;
         if (dispStep !== 0){
           const denom = Math.max(1, rowsSetting - 1);
@@ -165,60 +169,106 @@ function draw(){
           const stepIndex = Math.round(t * dispStep); // signed steps
           xShift = stepIndex * DISPLACE_UNIT;
         }
-        drawRoundedTaper(rightEdgeX + xShift, y, dashLen, lineThickness, TIP_RATIO);
+        if (roundedEdges) {
+          drawRoundedTaper(g, rightEdgeX + xShift, y, dashLen, lineThickness, TIP_RATIO);
+        } else {
+          drawStraightTaper(g, rightEdgeX + xShift, y, dashLen, lineThickness);
+        }
+      }
+    }
+  }
+  g.pop();
+}
+
+function draw(){
+  background(250);
+  noStroke();
+
+  // Ensure buffer matches current canvas size
+  if (!renderBuf || renderBuf.width !== width || renderBuf.height !== height){
+    renderBuf = createGraphics(width, height);
+    renderBuf.pixelDensity(1);
+    renderBuf.noSmooth();
+  }
+
+  // 1) Render the logo into offscreen raster buffer
+  renderLogo(renderBuf);
+
+  // 2) Pixelate only if pixelStep != base value (1)
+  if (pixelStep <= 1) {
+    // No pixelation: draw the rendered buffer as-is
+    image(renderBuf, 0, 0);
+  } else {
+    // Thresholded mosaic using direct pixel access (fast & crisp B/W)
+    const cell = Math.max(0.25, pixelStep);
+    renderBuf.loadPixels();
+    noStroke();
+    fill(0);
+    const thr = 200; // hoger = strenger (alleen donkerder pixels worden zwart)
+    for (let y = 0; y < height - 1e-6; y += cell){
+      const yi = Math.min(renderBuf.height - 1, Math.floor(y));
+      for (let x = 0; x < width - 1e-6; x += cell){
+        const xi = Math.min(renderBuf.width - 1, Math.floor(x));
+        const idx = 4 * (yi * renderBuf.width + xi);  // red kanaal
+        const v = renderBuf.pixels[idx];
+        if (v < thr){
+          rect(x, y, cell, cell);  // teken alleen zwarte cellen
+        }
       }
     }
   }
 
-  drawInterface();
   if (DEBUG) drawDebugOverlay();
   positionUI();
 }
 
 // ====== DRAWING ======
 
-function drawRoundedTaper(rightX, cy, len, h, tipRatio = 0.25){
-  const R = h * 0.5;                   // big round end radius
-  const r = Math.max(0.01, R * tipRatio); // small tip radius
+function drawRoundedTaper(g, rightX, cy, len, h, tipRatio = 0.25){
+  // Base radii vanuit lijndikte
+  let R = h * 0.5;                      // grote cap rechts
+  let r = Math.max(0.01, R * tipRatio); // kleine cap links
 
-  // Center of big circle is R left from the rightmost edge
-  const bigX = rightX - R;
+  // 1) Grote cap mag nooit > 50% van de lengte zijn
+  const maxRByLen = Math.max(0.0001, len * 0.5);
+  R = Math.min(R, maxRByLen);
 
-  // Separation between circle centers. Ensure non-negative to avoid flipping.
+  // 2) Kleine cap afleiden van effectieve R, maar begrenzen zodat R + r ≤ len en r ≤ R
+  const rTarget = Math.max(0.01, R * tipRatio);
+  r = Math.min(rTarget, Math.max(0, len - R));
+  r = Math.min(r, R);
+
+  // 3) Afstand tussen cap-centra
   const centerSep = Math.max(0, len - (R + r));
-  const tipX = bigX - centerSep;  // tip center to the left
 
-  // Connect tangents with a quad
-  beginShape();
-  vertex(bigX, cy - R);
-  vertex(tipX, cy - r);
-  vertex(tipX, cy + r);
-  vertex(bigX, cy + R);
-  endShape(CLOSE);
+  // 4) Cap-centra
+  const bigX = rightX - R;       // center grote cap (rechts)
+  const tipX = bigX - centerSep; // center kleine cap (links)
 
-  // Caps
-  circle(bigX, cy, 2 * R);
-  circle(tipX, cy, 2 * r);
+  // 5) Body (stadionvorm) verbinden
+  g.beginShape();
+  g.vertex(bigX, cy - R);
+  g.vertex(tipX, cy - r);
+  g.vertex(tipX, cy + r);
+  g.vertex(bigX, cy + R);
+  g.endShape(CLOSE);
+
+  // 6) Caps tekenen
+  g.circle(bigX, cy, 2 * R);
+  g.circle(tipX, cy, 2 * r);
 }
 
-function drawStraightTaper(rightX, cy, len, h){
+function drawStraightTaper(g, rightX, cy, len, h){
   const R = h * 0.5;
-  const r = 0;
-
-  // Center of big circle is R left from the rightmost edge
   const bigX = rightX - R;
+  const centerSep = Math.max(0, len - R); // r=0 for straight tip
+  const tipX = bigX - centerSep;
 
-  // Separation between circle centers. Ensure non-negative to avoid flipping.
-  const centerSep = Math.max(0, len - (R + r));
-  const tipX = bigX - centerSep;  // tip center to the left
-
-  // Connect tangents with a quad
-  beginShape();
-  vertex(bigX, cy - R);
-  vertex(tipX, cy - r);
-  vertex(tipX, cy + r);
-  vertex(bigX, cy + R);
-  endShape(CLOSE);
+  g.beginShape();
+  g.vertex(bigX, cy - R);
+  g.vertex(tipX, cy);
+  g.vertex(bigX, cy + R);
+  g.endShape(CLOSE);
 }
 
 // ====== SCANNING HELPERS ======
@@ -319,9 +369,9 @@ function buildLayout(word, rowsCount = rowsSetting){
     }
   }
 
-  // 6) Map to output canvas coordinates
-  const scale    = (width  - 2 * PADDING) / totalW;
-  const rowPitch = (height - 2 * PADDING) / rowsCount;
+  // 6) Map to output canvas coordinates (non-uniform: width locked, height stretches)
+  const scale    = (width  - 2 * PADDING) / totalW;           // X-scale fixed by width
+  const rowPitch = (height - 2 * PADDING) / rowsCount;        // Y-scale from canvas height
 
   return {
     letters: perLetter,
@@ -347,7 +397,7 @@ function initInterface(){
     redrawUI();
   });
 
-  sliderThickness = createSlider(1, 40, lineThickness, 1);
+  sliderThickness = createSlider(1, 25, lineThickness, 1);
   sliderThickness.style('width', '180px');
   sliderThickness.input(() => { lineThickness = sliderThickness.value(); redraw(); positionUI(); redrawUI(); });
 
@@ -356,6 +406,9 @@ function initInterface(){
   sliderHeight.input(() => {
     heightScale = sliderHeight.value() / 100;
     resizeCanvas(width, desiredCanvasHeight(), true);
+    renderBuf = createGraphics(width, height);
+    renderBuf.pixelDensity(1);
+    renderBuf.noSmooth();
     redraw();
     positionUI();
     redrawUI();
@@ -371,7 +424,24 @@ function initInterface(){
     redrawUI();
   });
 
+  sliderPixelate = createSlider(0.5, 10, pixelStep, 0.25);
+    sliderPixelate.style('width', '180px');
+    sliderPixelate.input(() => {
+    pixelStep = sliderPixelate.value();
+    redraw();
+    positionUI();
+    redrawUI();
+    });
+
   positionControls();
+
+  checkboxRounded = createCheckbox('Rounded edges', roundedEdges);
+  checkboxRounded.changed(() => {
+    roundedEdges = checkboxRounded.checked();
+    redraw();
+    positionUI();
+    redrawUI();
+  });
 }
 
 // ====== DEBUG OVERLAY ======
