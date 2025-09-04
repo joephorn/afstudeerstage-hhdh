@@ -2,7 +2,7 @@
 <html>
   <head>
     <meta charset="utf-8">
-    <title>SVG + Vector PDF Export</title>
+    <title>Export POC</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
     <script src="https://unpkg.com/p5.js-svg@1.6.0"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/3.0.2/jspdf.umd.min.js"></script>
@@ -10,7 +10,7 @@
   </head>
   <body>
     <script>
-        let exportSVGbtn, exportPDFbtn, svgElement;
+        let exportSVGbtn, exportPDFbtn, exportPNGbtn, exportMP4btn, exportWebMbtn, exportHTMLbtn, exportLottiebtn, svgElement;
 
         function setup() {
             createCanvas(400, 400, SVG);
@@ -21,6 +21,21 @@
 
             exportPDFbtn = createButton("Export PDF");
             exportPDFbtn.mousePressed(exportPDF);
+
+            exportPNGbtn = createButton("Export PNG");
+            exportPNGbtn.mousePressed(exportPNG);
+
+            exportMP4btn = createButton("Export MP4");
+            exportMP4btn.mousePressed(exportMP4);
+
+            exportWebMbtn = createButton("Export WebM");
+            exportWebMbtn.mousePressed(exportWebM);
+
+            exportHTMLbtn = createButton("Export HMTL");
+            exportHTMLbtn.mousePressed(exportHTML);
+
+            exportLottiebtn = createButton("Export Lottie");
+            exportLottiebtn.mousePressed(exportLottie);
         }
 
         function draw() {
@@ -36,7 +51,7 @@
             textSize(50)
             text("ik", width/2, 200)
             textSize(20)
-            text("een svg heb geexporteerd", width/2, 250)
+            text("een [file type] heb geexporteerd", width/2, 250)
         }
 
         async function exportPDF() {
@@ -70,6 +85,26 @@
             useCSS: true,
           });
           pdf.save("sketch.pdf");
+        }
+
+        async function exportPNG() {
+          
+        }
+
+        async function exportMP4() {
+          
+        }
+
+        async function exportWebM() {
+          
+        }
+
+        async function exportHTML() {
+          
+        }
+
+        async function exportLottie() {
+          
         }
     </script>
   </body>
