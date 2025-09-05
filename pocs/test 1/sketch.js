@@ -10,6 +10,11 @@ const TIP_RATIO         = 0.25;
 const PADDING           = 40;        // canvas padding
 const DISPLACEMENT_LVL  = 1;
 const DISPLACE_UNIT     = 20;        // px per row step for displacement
+const LEN_SCALE_STRENGTH = 0.5;     // 0..1 — hoeveel van (widthFactor-1) wordt toegepast op lange runs (lager = minder snel meeschalen)
+const TRACK_STRENGTH    = 0.43;    // 0..1 — 0 = tracking blijft gelijk, 1 = tracking schaalt mee met widthFactor
+const SMALL_LEN_BIAS   = 0.5;    // 0..1 — fractie van (widthFactor-1) voor korte runs (< lenThresholdPx)
+const VIEW_SCALE        = 0.92;   // visual CSS scale of the canvas (no change to drawing scale)
+const SAFE_MARGIN      = 16;    // px; keep content this far from canvas edges when auto-fitting
 
 // Scan behavior
 const BRIDGE_PIXELS     = 0;         // allow bridging small white gaps (0 = off)
@@ -30,7 +35,7 @@ const interfaceX = 50;
 const interfaceY = 220;
 
 // Font file (set to null to use system sans-serif)
-const FONT_PATH         = 'Machine-Bold.otf';
+const FONT_PATH         = './src/Machine-Bold.otf';
 
 // ====== STATE ======
 let glyphBuffer;      // offscreen p5.Graphics used for scanning
@@ -41,12 +46,13 @@ let sliderRows;
 let lineThickness = LINE_HEIGHT;
 let heightScale   = 1.0;
 let dispStep = 1;                    // -N..+N → per-row shift = dispStep * DISPLACE_UNIT * rowIndex
-let sliderThickness, sliderHeight, sliderDisplacement, sliderPixelate, sliderWidth;
+let sliderThickness, sliderHeight, sliderDisplacement, sliderWidth;
 let roundedEdges = true; // toggle between rounded and straight taper
-let checkboxRounded;
-let pixelStep = 1;       // cell size voor pixelation; 1 = uit
+let checkboxRounded, checkboxDebug;
 let widthFactor = 1.0;
-const DEBUG = false;
+let lenThresholdPx = 65;
+let sliderLenThresh;
+let DEBUG = false;
 
 let baseRowPitch;   // baseline row pitch derived at startup
 let rowsBaseline;   // rows count at startup; canvas height scales only with this
@@ -55,10 +61,9 @@ let rowsBaseline;   // rows count at startup; canvas height scales only with thi
 let mainCanvas;
 let uiHolder;
 let uiWidth = 360;
-let uiHeight = 150;
+let uiHeight = 250;
 let uiP5 = null;             // p5 instance for the UI canvas (instance mode)
 
-let renderBuf;               // offscreen raster buffer used for pixelation sampling
 
 let rowYsCanvas = []; // y-position of each row in canvas coordinates
 
@@ -68,21 +73,46 @@ function desiredCanvasHeight(){
 
 function positionUI(){
   if (!mainCanvas || !uiHolder) return;
-  uiHolder.position(mainCanvas.width + 20, 0); // directly under main canvas
+  // Lock UI container to top-right (fixed overlay)
+  const x = Math.max(0, windowWidth - uiWidth - 16);
+  const y = 16;
+  uiHolder.style('position', 'fixed');
+  uiHolder.style('z-index', '1000');
+  uiHolder.position(x, y);
   positionControls();
   redrawUI();
+}
+// Helper to visually scale and center the canvas in the window via CSS (does not alter p5 width/height)
+function fitCanvasToWindow(){
+  // Compute a CSS size that fits inside the window, with a slight margin via VIEW_SCALE
+  const base = Math.min(windowWidth / width, windowHeight / height);
+  const s    = base * VIEW_SCALE;
+  const cssW = Math.max(1, Math.floor(width  * s));
+  const cssH = Math.max(1, Math.floor(height * s));
+  const left = Math.floor((windowWidth  - cssW) * 0.5);
+  const top  = Math.floor((windowHeight - cssH) * 0.5);
+
+  const el = mainCanvas.elt;
+  el.style.position = 'fixed';
+  el.style.zIndex   = '0';
+  el.style.width    = cssW + 'px';
+  el.style.height   = cssH + 'px';
+  el.style.left     = left + 'px';
+  el.style.top      = top  + 'px';
 }
 
 function positionControls(){
   if (!uiHolder) return;
   const left = uiHolder.position.x + 12;
-  const top  = 16;
-  if (sliderRows)           { sliderRows.parent(uiHolder);           sliderRows.position(left, top); } sliderRows.style('z-index', '1000');
-  if (sliderThickness)      { sliderThickness.parent(uiHolder);      sliderThickness.position(left, top + 28); sliderThickness.style('z-index', '1000'); }
-  if (sliderHeight)         { sliderHeight.parent(uiHolder);         sliderHeight.position(left, top + 56); sliderHeight.style('z-index', '1000'); }
-  if (sliderDisplacement)   { sliderDisplacement.parent(uiHolder);   sliderDisplacement.position(left, top + 84); sliderDisplacement.style('z-index', '1000'); }
-  if (sliderPixelate)       { sliderPixelate.parent(uiHolder);       sliderPixelate.position(left, top + 112); sliderPixelate.style('z-index','1000'); }
-  if (checkboxRounded)      { checkboxRounded.parent(uiHolder);      checkboxRounded.position(left, top + 140); }
+  let top  = 16;
+  const interval = 30;
+  if (sliderRows)           { sliderRows.parent(uiHolder);           sliderRows.position(left, top); } sliderRows.style('z-index', '1000');  top += interval;
+  if (sliderThickness)      { sliderThickness.parent(uiHolder);      sliderThickness.position(left, top); sliderThickness.style('z-index', '1000'); }  top += interval;
+  if (sliderHeight)         { sliderHeight.parent(uiHolder);         sliderHeight.position(left, top); sliderHeight.style('z-index', '1000'); }  top += interval;
+  if (sliderWidth)          { sliderWidth.parent(uiHolder);          sliderWidth.position(left, top); sliderWidth.style('z-index','1000'); }  top += interval;
+  if (sliderDisplacement)   { sliderDisplacement.parent(uiHolder);   sliderDisplacement.position(left, top); sliderDisplacement.style('z-index', '1000'); }  top += interval;
+  if (checkboxRounded)      { checkboxRounded.parent(uiHolder);      checkboxRounded.position(left, top); }  top += interval;
+  if (checkboxDebug)        { checkboxDebug.parent(uiHolder);        checkboxDebug.position(left, top); }  top += interval;
 }
 
 function redrawUI(){
@@ -96,9 +126,6 @@ function preload(){
 function setup(){
   mainCanvas = createCanvas(800, 250, SVG);
   pixelDensity(1);
-  renderBuf = createGraphics(width, height);
-  renderBuf.pixelDensity(1);
-  renderBuf.noSmooth();
   baseRowPitch = (height - 2 * PADDING) / rowsSetting;
   rowsBaseline = rowsSetting; // lock baseline to initial rows
   noLoop();
@@ -106,6 +133,7 @@ function setup(){
   initInterface();
   resizeCanvas(width, desiredCanvasHeight(), true);
   positionUI();
+  fitCanvasToWindow();
 
   // Create UI holder + UI canvas (instance-mode p5)
   if (uiHolder) uiHolder.remove();
@@ -117,19 +145,22 @@ function setup(){
 
   // Second p5 instance for the UI canvas
   uiP5 = new p5((p) => {
+
     p.setup = function(){
       const cnv = p.createCanvas(uiWidth, uiHeight);
       cnv.parent(uiHolder);
       p.frameRate(12); // light loop so labels always reflect latest values
     };
     p.draw = function(){
+      var top = 4;
+      const interval = 30;
       p.background(250);
       p.noStroke(); p.fill(0); p.textSize(12); p.textAlign(p.LEFT, p.TOP);
-      p.text(`Rows: ${rowsSetting}`, 12, 4);
-      p.text(`Line: ${lineThickness}px`, 12, 33);
-      p.text(`Height: ${Math.round(heightScale*100)}%`, 12, 62);
-      p.text(`Displace: ${dispStep} steps (×${DISPLACE_UNIT}px/step)`, 12, 90);
-      p.text(`Pixelate: ${pixelStep}px`, 12, 116);
+      p.text(`Rows: ${rowsSetting}`, 12, top);  top += interval;
+      p.text(`Line: ${lineThickness}px`, 12, top);  top += interval;
+      p.text(`Height: ${Math.round(heightScale*100)}%`, 12, top);  top += interval;
+      p.text(`Width: ${Math.round(widthFactor*100)}%`, 12, top);  top += interval;
+      p.text(`Displace: ${dispStep} steps (×${DISPLACE_UNIT}px/step)`, 12, top);  top += interval;
     };
   });
 
@@ -137,6 +168,7 @@ function setup(){
 
   // Place UI under the main canvas and align sliders with it
   positionUI();
+  fitCanvasToWindow();
 
   noLoop();
   redraw();
@@ -145,23 +177,70 @@ function setup(){
 function renderLogo(g){
   g.push();
   g.background(255);
-  g.translate(PADDING, PADDING);
   g.fill(0); g.noStroke();
 
-  // compute row centers (canvas space) and store for later use
+  // Content-aware centring with auto-fit (uniform) so content never escapes the canvas
+  const tEff = 1 + (widthFactor - 1) * TRACK_STRENGTH; // effectieve tracking-factor voor tracking
   const rowPitchNow = (height - 2 * PADDING) / rowsSetting;
+
+  // --- Measure true content width using the actual widened right edges ---
+  let leftmost = Infinity;
+  let rightmost = -Infinity;
+  for (let li = 0; li < layout.lettersOrder.length; li++){
+    const baseX = layout.letterX[li] * tEff;
+    if (baseX < leftmost) leftmost = baseX;
+    const letterKey = layout.lettersOrder[li];
+    const rows = layout.letters[letterKey];
+    let maxRel = 0;
+    for (let r = 0; r < rows.length; r++){
+      for (const seg of rows[r]){ if (seg.rightRel > maxRel) maxRel = seg.rightRel; }
+    }
+    const candidateRight = baseX + maxRel * layout.scale * widthFactor;
+    if (candidateRight > rightmost) rightmost = candidateRight;
+  }
+  if (!isFinite(leftmost)) leftmost = 0;
+  if (!isFinite(rightmost)) rightmost = width - 2 * PADDING;
+  const contentW0 = Math.max(1, rightmost - leftmost);
+  const contentH0 = rowsSetting * rowPitchNow;
+
+  // Fit scale (≤ 1) with margin to avoid overflow when widening
+  const sFit = Math.min(
+    (width  - 2 * SAFE_MARGIN) / contentW0,
+    (height - 2 * SAFE_MARGIN) / contentH0,
+    1
+  );
+  const contentW = contentW0 * sFit;
+  const contentH = contentH0 * sFit;
+  const left = (width  - contentW) * 0.5 - leftmost * sFit; // offset by measured leftmost
+  const top  = (height - contentH) * 0.5;
+  g.translate(left, top);
+  g.scale(sFit, sFit);
+
+  // compute row centres (local/unscaled space) and store for later use
   rowYsCanvas = Array.from({ length: rowsSetting }, (_, r) => r * rowPitchNow + rowPitchNow * 0.5);
 
   for (let li = 0; li < layout.lettersOrder.length; li++){
     const letterKey   = layout.lettersOrder[li];
     const rowsForLetter = layout.letters[letterKey];
-    const baseX       = layout.letterX[li];
+    // Scale base letter position so inter-letter spacing stays consistent when widening
+    const baseX       = layout.letterX[li] * tEff; // tracking groeit minder hard dan de interne verbreding
 
     for (let r = 0; r < rowsForLetter.length; r++){
       const y = rowYsCanvas[r];
+      // Determine max run length in this row to bias length scaling
+      let maxRunLen = 0;
+      for (const s of rowsForLetter[r]) {
+        if (s.runLen > maxRunLen) maxRunLen = s.runLen;
+      }
       for (const span of rowsForLetter[r]){
-        const rightEdgeX = baseX + span.rightRel * layout.scale; // canvas units
-        const dashLen    = Math.max(0, span.runLen * layout.scale);
+        const rightEdgeX = baseX + span.rightRel * layout.scale * widthFactor; // widen x-distance inside glyph
+        const baseLen = Math.max(0, span.runLen * layout.scale);
+        // Alleen runs die groter zijn dan de instelbare drempel schalen mee
+        const eligible     = baseLen >= lenThresholdPx;
+        const lenBiasBase  = (maxRunLen > 0) ? (span.runLen / maxRunLen) : 0;  // 0..1
+        const lenBiasShort = SMALL_LEN_BIAS;                                    // kleine vaste bias voor korte runs
+        const lenBias      = eligible ? lenBiasBase : lenBiasShort;
+        const dashLen      = baseLen * (1 + (widthFactor - 1) * lenBias * LEN_SCALE_STRENGTH);
         // Displacement by snapped intervals across rows (optional)
         let xShift = 0;
         if (dispStep !== 0){
@@ -184,41 +263,7 @@ function renderLogo(g){
 function draw(){
   background(250);
   noStroke();
-
-  // Ensure buffer matches current canvas size
-  if (!renderBuf || renderBuf.width !== width || renderBuf.height !== height){
-    renderBuf = createGraphics(width, height);
-    renderBuf.pixelDensity(1);
-    renderBuf.noSmooth();
-  }
-
-  // 1) Render the logo into offscreen raster buffer
-  renderLogo(renderBuf);
-
-  // 2) Pixelate only if pixelStep != base value (1)
-  if (pixelStep <= 1) {
-    // No pixelation: draw the rendered buffer as-is
-    image(renderBuf, 0, 0);
-  } else {
-    // Thresholded mosaic using direct pixel access (fast & crisp B/W)
-    const cell = Math.max(0.25, pixelStep);
-    renderBuf.loadPixels();
-    noStroke();
-    fill(0);
-    const thr = 200; // hoger = strenger (alleen donkerder pixels worden zwart)
-    for (let y = 0; y < height - 1e-6; y += cell){
-      const yi = Math.min(renderBuf.height - 1, Math.floor(y));
-      for (let x = 0; x < width - 1e-6; x += cell){
-        const xi = Math.min(renderBuf.width - 1, Math.floor(x));
-        const idx = 4 * (yi * renderBuf.width + xi);  // red kanaal
-        const v = renderBuf.pixels[idx];
-        if (v < thr){
-          rect(x, y, cell, cell);  // teken alleen zwarte cellen
-        }
-      }
-    }
-  }
-
+  renderLogo(this);
   if (DEBUG) drawDebugOverlay();
   positionUI();
 }
@@ -382,7 +427,8 @@ function buildLayout(word, rowsCount = rowsSetting){
     scale,
     rowPitch,
     rowsY,
-    ranges
+    ranges,
+    wordWScaled: totalW * scale
   };
 }
 
@@ -392,6 +438,14 @@ function initInterface(){
   sliderRows.style('width', '180px');
   sliderRows.input(() => {
     rowsSetting = sliderRows.value();
+    // keep displacement slider in sync with new rowsSetting
+    if (sliderDisplacement) {
+      sliderDisplacement.attribute('min', -rowsSetting);
+      sliderDisplacement.attribute('max', rowsSetting);
+      // clamp current dispStep to new range
+      dispStep = Math.max(-rowsSetting, Math.min(rowsSetting, dispStep));
+      sliderDisplacement.value(dispStep);
+    }
     layout = buildLayout(TEXT, rowsSetting);
     redraw();
     positionUI();
@@ -407,16 +461,12 @@ function initInterface(){
   sliderHeight.input(() => {
     heightScale = sliderHeight.value() / 100;
     resizeCanvas(width, desiredCanvasHeight(), true);
-    renderBuf = createGraphics(width, height);
-    renderBuf.pixelDensity(1);
-    renderBuf.noSmooth();
     redraw();
     positionUI();
     redrawUI();
   });
 
-  // Displacement step (−4 .. +4); −1 = 30px/rij naar links, +1 = 30px/rij naar rechts
-  sliderDisplacement = createSlider(-4, 4, dispStep, 1);
+  sliderDisplacement = createSlider(-rowsSetting, rowsSetting, dispStep, 1);
   sliderDisplacement.style('width', '180px');
   sliderDisplacement.input(() => {
     dispStep = sliderDisplacement.value();
@@ -424,15 +474,15 @@ function initInterface(){
     positionUI();
     redrawUI();
   });
-
-  sliderPixelate = createSlider(0.5, 10, pixelStep, 0.25);
-    sliderPixelate.style('width', '180px');
-    sliderPixelate.input(() => {
-    pixelStep = sliderPixelate.value();
+  
+  sliderWidth = createSlider(50, 300, Math.round(widthFactor * 100), 1);
+  sliderWidth.style('width', '180px');
+  sliderWidth.input(() => {
+    widthFactor = sliderWidth.value() / 100;
     redraw();
     positionUI();
     redrawUI();
-    });
+  });
 
   positionControls();
 
@@ -443,39 +493,90 @@ function initInterface(){
     positionUI();
     redrawUI();
   });
+
+  checkboxDebug = createCheckbox('Debug mode', DEBUG);
+  checkboxDebug.changed(() => {
+    DEBUG = checkboxDebug.checked();
+    redraw();
+    positionUI();
+    redrawUI();
+  });
 }
 
 // ====== DEBUG OVERLAY ======
 function drawDebugOverlay(){
   push();
   noFill(); stroke(0, 60); strokeWeight(1);
+
+  const tEff = 1 + (widthFactor - 1) * TRACK_STRENGTH;
+  const rowPitchNow = (height - 2 * PADDING) / rowsSetting;
+
+  // Measure true content bounds with internal widening
+  let leftmost = Infinity;
+  let rightmost = -Infinity;
+  for (let li = 0; li < layout.lettersOrder.length; li++){
+    const baseX = layout.letterX[li] * tEff;
+    if (baseX < leftmost) leftmost = baseX;
+    const letterKey = layout.lettersOrder[li];
+    const rows = layout.letters[letterKey];
+    let maxRel = 0;
+    for (let r = 0; r < rows.length; r++){
+      for (const seg of rows[r]){ if (seg.rightRel > maxRel) maxRel = seg.rightRel; }
+    }
+    const candidateRight = baseX + maxRel * layout.scale * widthFactor;
+    if (candidateRight > rightmost) rightmost = candidateRight;
+  }
+  if (!isFinite(leftmost)) leftmost = 0;
+  if (!isFinite(rightmost)) rightmost = width - 2 * PADDING;
+  const contentW0 = Math.max(1, rightmost - leftmost);
+  const contentH0 = rowsSetting * rowPitchNow;
+
+  const sFit = Math.min(
+    (width  - 2 * SAFE_MARGIN) / contentW0,
+    (height - 2 * SAFE_MARGIN) / contentH0,
+    1
+  );
+  const contentW = contentW0 * sFit;
+  const contentH = contentH0 * sFit;
+  const left = (width  - contentW) * 0.5 - leftmost * sFit;
+  const top  = (height - contentH) * 0.5;
+  translate(left, top);
+  scale(sFit, sFit);
+
   // row guides
   for (let r = 0; r < layout.rowsY.length; r++){
-    const y = rowYsCanvas[r] ?? ((height - 2 * PADDING) / rowsSetting) * r + ((height - 2 * PADDING) / rowsSetting) * 0.5;
-    line(0, y, width, y);
+    const y = rowYsCanvas[r] ?? (rowPitchNow * r + rowPitchNow * 0.5);
+    line(leftmost, y, leftmost + contentW0, y);
   }
+
   // letter boxes
   stroke(0, 160);
   for (let i = 0; i < layout.ranges.length; i++){
-    const lx = layout.letterX[i];
-    const lw = layout.letterW[i] * layout.scale;
-    const rowPitchNow2 = (height - 2 * PADDING) / rowsSetting;
-    rect(lx, 0, lw, layout.rowsY.length * rowPitchNow2);
+    const lx = layout.letterX[i] * tEff;
+    const lw = layout.letterW[i] * layout.scale * tEff;
+    rect(lx, 0, lw, layout.rowsY.length * rowPitchNow);
   }
+
   // scanned spans + right edges
   for (let li = 0; li < layout.lettersOrder.length; li++){
     const letterKey = layout.lettersOrder[li];
     const rows = layout.letters[letterKey];
-    const baseX = layout.letterX[li];
+    const baseX = layout.letterX[li] * tEff;
     for (let r = 0; r < rows.length; r++){
-      const y = rowYsCanvas[r] ?? ((height - 2 * PADDING) / rowsSetting) * r + ((height - 2 * PADDING) / rowsSetting) * 0.5;
+      const y = rowYsCanvas[r] ?? (rowPitchNow * r + rowPitchNow * 0.5);
       for (const seg of rows[r]){
-        const x2 = baseX + seg.rightRel * layout.scale;
-        const x1 = x2 - seg.runLen * layout.scale;
+        const x2 = baseX + seg.rightRel * layout.scale * widthFactor; // match render
+        const x1 = x2 - seg.runLen * layout.scale;                    // base run length (unscaled)
         stroke(0,180,0); line(x1, y, x2, y);
         noStroke(); fill(255,0,0); circle(x2, y, 3);
       }
     }
   }
   pop();
+}
+function windowResized(){
+  // Keep the canvas visually full-screen and UI locked to the corner on resize
+  fitCanvasToWindow();
+  positionUI();
+  redraw();
 }
