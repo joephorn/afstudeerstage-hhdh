@@ -1,7 +1,3 @@
-/******************************
- * ALBION logo
- ******************************/
-
 // ====== CONFIG ======
 const TEXT              = "ALBION";
 const ROWS              = 12;
@@ -11,14 +7,20 @@ const PADDING           = 40;        // canvas padding
 const DISPLACEMENT_LVL  = 1;
 const DISPLACE_UNIT     = 20;        // px per row step for displacement
 const LEN_SCALE_STRENGTH = 0.5;     // 0..1 — hoeveel van (widthFactor-1) wordt toegepast op lange runs (lager = minder snel meeschalen)
-const TRACK_STRENGTH    = 0.43;    // 0..1 — 0 = tracking blijft gelijk, 1 = tracking schaalt mee met widthFactor
-const SMALL_LEN_BIAS   = 0.5;    // 0..1 — fractie van (widthFactor-1) voor korte runs (< lenThresholdPx)
-const VIEW_SCALE        = 0.92;   // visual CSS scale of the canvas (no change to drawing scale)
-const SAFE_MARGIN      = 16;    // px; keep content this far from canvas edges when auto-fitting
+const TRACK_STRENGTH    = 1;    // meeschalen van lange lijnen (horizontaal)
+const SMALL_LEN_BIAS   = 1;    // meeschalen van korte lijnen (verticaal)
+const VIEW_SCALE        = 0.8;   // visual CSS scale of the canvas (no change to drawing scale)
+const SAFE_MARGIN      = 16;    // keep content this far from canvas edges when auto-fitting
+const LETTER_GAP       = 0;    // px fixed spacing between letters (visual)
+const BOUND_MIN_LEN    = 4;
 
 // Scan behavior
-const BRIDGE_PIXELS     = 0;         // allow bridging small white gaps (0 = off)
-const INK_THRESHOLD     = 160;       // 0..255: darker considered ink in pg buffer
+const BRIDGE_PIXELS     = 2;         // allow bridging small white gaps (0 = off)
+const INK_THRESHOLD     = 160;
+
+// Row sampling kernel (vertical) in the glyph buffer
+const ROW_KERNEL_Y_FRAC = 0.015; // ~1.5% van bandhoogte → 1–3px meestal
+const MIN_RUN_PX_BUFFER = 2;     // filter micro-runs die ruis veroorzaken
 
 // Offscreen buffer + auto-fit targets
 const BUFFER_W          = 2600;
@@ -30,11 +32,6 @@ const FIT_WIDTH_FRAC    = 0.80;      // total word width ≤ this of buffer widt
 const BAND_TOP_FACTOR   = 0.92;      // baseline - asc * factor
 const BAND_BOT_FACTOR   = 1.04;      // baseline + desc * factor
 
-// Interface
-const interfaceX = 50;
-const interfaceY = 220;
-
-// Font file (set to null to use system sans-serif)
 const FONT_PATH         = './src/Machine-Bold.otf';
 
 // ====== STATE ======
@@ -47,38 +44,34 @@ let lineThickness = LINE_HEIGHT;
 let heightScale   = 1.0;
 let dispStep = 1;                    // -N..+N → per-row shift = dispStep * DISPLACE_UNIT * rowIndex
 let sliderThickness, sliderHeight, sliderDisplacement, sliderWidth;
-let roundedEdges = true; // toggle between rounded and straight taper
-let checkboxRounded, checkboxDebug;
+let checkboxRounded, checkboxdebugMode;
+let roundedEdges = true;
+let debugMode = false;
 let widthFactor = 1.0;
 let lenThresholdPx = 65;
-let sliderLenThresh;
-let DEBUG = false;
 
 let baseRowPitch;   // baseline row pitch derived at startup
-let rowsBaseline;   // rows count at startup; canvas height scales only with this
 
 // UI canvas (separate)
-let mainCanvas;
-let uiHolder;
+let canvasContainer;
+let uiContainer;
 let uiWidth = 360;
 let uiHeight = 250;
 let uiP5 = null;             // p5 instance for the UI canvas (instance mode)
 
-
 let rowYsCanvas = []; // y-position of each row in canvas coordinates
 
 function desiredCanvasHeight(){
-  return Math.ceil(PADDING * 2 + baseRowPitch * rowsBaseline * heightScale);
+  return Math.ceil(PADDING * 2 + baseRowPitch * ROWS * heightScale);
 }
 
 function positionUI(){
-  if (!mainCanvas || !uiHolder) return;
-  // Lock UI container to top-right (fixed overlay)
+  if (!mainCanvas || !uiContainer) return;
   const x = Math.max(0, windowWidth - uiWidth - 16);
   const y = 16;
-  uiHolder.style('position', 'fixed');
-  uiHolder.style('z-index', '1000');
-  uiHolder.position(x, y);
+  uiContainer.style('position', 'fixed');
+  uiContainer.style('z-index', '1000');
+  uiContainer.position(x, y);
   positionControls();
   redrawUI();
 }
@@ -102,17 +95,17 @@ function fitCanvasToWindow(){
 }
 
 function positionControls(){
-  if (!uiHolder) return;
-  const left = uiHolder.position.x + 12;
+  if (!uiContainer) return;
+  const left = uiContainer.position.x + 12;
   let top  = 16;
   const interval = 30;
-  if (sliderRows)           { sliderRows.parent(uiHolder);           sliderRows.position(left, top); } sliderRows.style('z-index', '1000');  top += interval;
-  if (sliderThickness)      { sliderThickness.parent(uiHolder);      sliderThickness.position(left, top); sliderThickness.style('z-index', '1000'); }  top += interval;
-  if (sliderHeight)         { sliderHeight.parent(uiHolder);         sliderHeight.position(left, top); sliderHeight.style('z-index', '1000'); }  top += interval;
-  if (sliderWidth)          { sliderWidth.parent(uiHolder);          sliderWidth.position(left, top); sliderWidth.style('z-index','1000'); }  top += interval;
-  if (sliderDisplacement)   { sliderDisplacement.parent(uiHolder);   sliderDisplacement.position(left, top); sliderDisplacement.style('z-index', '1000'); }  top += interval;
-  if (checkboxRounded)      { checkboxRounded.parent(uiHolder);      checkboxRounded.position(left, top); }  top += interval;
-  if (checkboxDebug)        { checkboxDebug.parent(uiHolder);        checkboxDebug.position(left, top); }  top += interval;
+  if (sliderRows)           { sliderRows.parent(uiContainer);           sliderRows.position(left, top); } sliderRows.style('z-index', '1000');  top += interval;
+  if (sliderThickness)      { sliderThickness.parent(uiContainer);      sliderThickness.position(left, top); sliderThickness.style('z-index', '1000'); }  top += interval;
+  if (sliderHeight)         { sliderHeight.parent(uiContainer);         sliderHeight.position(left, top); sliderHeight.style('z-index', '1000'); }  top += interval;
+  if (sliderWidth)          { sliderWidth.parent(uiContainer);          sliderWidth.position(left, top); sliderWidth.style('z-index','1000'); }  top += interval;
+  if (sliderDisplacement)   { sliderDisplacement.parent(uiContainer);   sliderDisplacement.position(left, top); sliderDisplacement.style('z-index', '1000'); }  top += interval;
+  if (checkboxRounded)      { checkboxRounded.parent(uiContainer);      checkboxRounded.position(left, top); }  top += interval;
+  if (checkboxdebugMode)    { checkboxdebugMode.parent(uiContainer);    checkboxdebugMode.position(left, top); }  top += interval;
 }
 
 function redrawUI(){
@@ -121,14 +114,12 @@ function redrawUI(){
 
 function preload(){
   if (FONT_PATH) loadedFont = loadFont(FONT_PATH, () => {}, err => console.error(err));
-  logo = loadShape('./src/albion-logo.svg');
 }
 
 function setup(){
   mainCanvas = createCanvas(800, 250, SVG);
   pixelDensity(1);
   baseRowPitch = (height - 2 * PADDING) / rowsSetting;
-  rowsBaseline = rowsSetting; // lock baseline to initial rows
   noLoop();
   layout = buildLayout(TEXT);
   initInterface();
@@ -137,19 +128,19 @@ function setup(){
   fitCanvasToWindow();
 
   // Create UI holder + UI canvas (instance-mode p5)
-  if (uiHolder) uiHolder.remove();
-  uiHolder = createDiv();
-  uiHolder.style('width', uiWidth + 'px');
-  uiHolder.style('height', uiHeight + 'px');
-  uiHolder.style('padding', '0');
-  uiHolder.style('margin', '0');
+  if (uiContainer) uiContainer.remove();
+  uiContainer = createDiv();
+  uiContainer.style('width', uiWidth + 'px');
+  uiContainer.style('height', uiHeight + 'px');
+  uiContainer.style('padding', '0');
+  uiContainer.style('margin', '0');
 
   // Second p5 instance for the UI canvas
   uiP5 = new p5((p) => {
 
     p.setup = function(){
       const cnv = p.createCanvas(uiWidth, uiHeight);
-      cnv.parent(uiHolder);
+      cnv.parent(uiContainer);
       p.frameRate(12); // light loop so labels always reflect latest values
     };
     p.draw = function(){
@@ -166,8 +157,6 @@ function setup(){
   });
 
   redrawUI();
-
-  // Place UI under the main canvas and align sliders with it
   positionUI();
   fitCanvasToWindow();
 
@@ -175,56 +164,179 @@ function setup(){
   redraw();
 }
 
-function renderLogo(g){
-  g.push();
-  g.background(255);
-  g.fill(0); g.noStroke();
+// Compute the effective dash length for a span (same math as in renderLogo)
+function dashLenForSpan(baseLen, maxRunLen){
+  const eligible     = baseLen >= lenThresholdPx;
+  const lenBiasBase  = (maxRunLen > 0) ? (baseLen / maxRunLen) : 0;  // 0..1
+  const lenBiasShort = SMALL_LEN_BIAS;                                // kleine vaste bias voor korte runs
+  const lenBias      = eligible ? lenBiasBase : lenBiasShort;
+  return baseLen * (1 + (widthFactor - 1) * lenBias * LEN_SCALE_STRENGTH);
+}
 
-  // Content-aware centring with auto-fit (uniform) so content never escapes the canvas
-  const tEff = 1 + (widthFactor - 1) * TRACK_STRENGTH; // effectieve tracking-factor voor tracking
+// Measure per-letter bounds (visual left/right) using the same math as the renderer
+
+function computePerLetterBounds(){
+  const tEff = 1 + (widthFactor - 1) * TRACK_STRENGTH;
+  const letterLeft = new Array(layout.lettersOrder.length).fill(Infinity);
+  const letterRight = new Array(layout.lettersOrder.length).fill(-Infinity);
+
+  for (let li = 0; li < layout.lettersOrder.length; li++){
+    const baseX = layout.letterX[li] * tEff; // tracking-applied start of letter box
+    const letterKey = layout.lettersOrder[li];
+    const rows = layout.letters[letterKey];
+
+    for (let r = 0; r < rows.length; r++){
+      // max run length in this row for bias
+      let maxRunLen = 0; for (const s of rows[r]) if (s.runLen > maxRunLen) maxRunLen = s.runLen;
+      // displacement for this row
+      let xShift = 0;
+      if (dispStep !== 0){
+        const denom = Math.max(1, rowsSetting - 1);
+        const t = r / denom;
+        const stepIndex = Math.round(t * dispStep);
+        xShift = stepIndex * DISPLACE_UNIT;
+      }
+      for (const seg of rows[r]){
+        const rightEdgeX = baseX + seg.rightRel * layout.scale * widthFactor;
+        const baseLen    = Math.max(0, seg.runLen * layout.scale);
+        const dlen       = dashLenForSpan(baseLen, maxRunLen);
+        const rightX     = rightEdgeX + xShift;
+        const leftX      = rightX - dlen;
+        if (leftX  < letterLeft[li])  letterLeft[li]  = leftX;
+        if (rightX > letterRight[li]) letterRight[li] = rightX;
+      }
+    }
+    // Fallback if a letter had no spans
+    if (!isFinite(letterLeft[li]))  letterLeft[li]  = baseX;
+    if (!isFinite(letterRight[li])) letterRight[li] = baseX;
+  }
+  return { tEff, letterLeft, letterRight };
+}
+
+// Compute per-letter offsets so that visual left edges are spaced by a fixed gap
+function computeSpacedOffsets(gapPx = LETTER_GAP){
+  const { letterLeft, letterRight } = computePerLetterBounds();
+  const n = letterLeft.length;
+  const widths = new Array(n);
+  for (let i = 0; i < n; i++) widths[i] = Math.max(0, letterRight[i] - letterLeft[i]);
+
+  // Start at the global left so word remains centred by our later fit
+  let globalLeft = Infinity; for (let i = 0; i < n; i++) if (letterLeft[i] < globalLeft) globalLeft = letterLeft[i];
+  if (!isFinite(globalLeft)) globalLeft = 0;
+
+  const targetLeft = new Array(n);
+  if (n > 0){
+    targetLeft[0] = globalLeft;
+    for (let i = 1; i < n; i++) targetLeft[i] = targetLeft[i-1] + widths[i-1] + gapPx;
+  }
+
+  // Offsets to add to the original tracked baseX so that the visual left becomes targetLeft
+  const offsets = new Array(n);
+  for (let i = 0; i < n; i++) offsets[i] = targetLeft[i] - letterLeft[i];
+
+  const start = n > 0 ? targetLeft[0] : 0;
+  const end   = n > 0 ? targetLeft[n-1] + widths[n-1] : 0;
+  return { offsets, targetLeft, widths, start, end };
+}
+
+// Build contiguous (packed) letter boxes so each next box starts where the previous ends
+function computePackedLetterBoxes(){
+  const { letterLeft, letterRight } = computePerLetterBounds();
+  const n = letterLeft.length;
+  const widths = new Array(n);
+  for (let i = 0; i < n; i++) widths[i] = Math.max(0, letterRight[i] - letterLeft[i]);
+  // start at global leftmost across all letters so the word stays centred later
+  let globalLeft = Infinity; for (let i = 0; i < n; i++) if (letterLeft[i] < globalLeft) globalLeft = letterLeft[i];
+  if (!isFinite(globalLeft)) globalLeft = 0;
+  const packedLeft = new Array(n);
+  if (n > 0){
+    packedLeft[0] = globalLeft;
+    for (let i = 1; i < n; i++) packedLeft[i] = packedLeft[i-1] + widths[i-1];
+  }
+  const start = n > 0 ? packedLeft[0] : 0;
+  const end   = n > 0 ? packedLeft[n-1] + widths[n-1] : 0;
+  const packedWidth = Math.max(0, end - start);
+  return { packedLeft, widths, start, end, packedWidth };
+}
+
+function computeLayoutFit(){
+  const tEff = 1 + (widthFactor - 1) * TRACK_STRENGTH;
   const rowPitchNow = (height - 2 * PADDING) / rowsSetting;
 
-  // --- Measure true content width using the actual widened right edges ---
+  const { offsets } = computeSpacedOffsets();
+
+  // Use spaced letter positions for bounds
   let leftmost = Infinity;
   let rightmost = -Infinity;
   for (let li = 0; li < layout.lettersOrder.length; li++){
-    const baseX = layout.letterX[li] * tEff;
-    if (baseX < leftmost) leftmost = baseX;
+    const baseX = layout.letterX[li] * tEff + offsets[li];
     const letterKey = layout.lettersOrder[li];
     const rows = layout.letters[letterKey];
-    let maxRel = 0;
+
     for (let r = 0; r < rows.length; r++){
-      for (const seg of rows[r]){ if (seg.rightRel > maxRel) maxRel = seg.rightRel; }
+      // max run length in this row (for bias), same as render loop
+      let maxRunLen = 0;
+      for (const s of rows[r]) if (s.runLen > maxRunLen) maxRunLen = s.runLen;
+
+      // displacement in this row
+      let xShift = 0;
+      if (dispStep !== 0){
+        const denom = Math.max(1, rowsSetting - 1);
+        const t = r / denom;
+        const stepIndex = Math.round(t * dispStep);
+        xShift = stepIndex * DISPLACE_UNIT;
+      }
+
+      for (const seg of rows[r]){
+        const rightEdgeX = baseX + seg.rightRel * layout.scale * widthFactor;
+        const baseLen    = Math.max(0, seg.runLen * layout.scale);
+        const dlen       = dashLenForSpan(baseLen, maxRunLen);
+        const rightX     = rightEdgeX + xShift;
+        const leftX      = rightX - dlen; // dash grows to the left
+        if (leftX  < leftmost)  leftmost  = leftX;
+        if (rightX > rightmost) rightmost = rightX;
+      }
     }
-    const candidateRight = baseX + maxRel * layout.scale * widthFactor;
-    if (candidateRight > rightmost) rightmost = candidateRight;
   }
+
   if (!isFinite(leftmost)) leftmost = 0;
   if (!isFinite(rightmost)) rightmost = width - 2 * PADDING;
+
   const contentW0 = Math.max(1, rightmost - leftmost);
   const contentH0 = rowsSetting * rowPitchNow;
 
-  // Fit scale (≤ 1) with margin to avoid overflow when widening
   const sFit = Math.min(
     (width  - 2 * SAFE_MARGIN) / contentW0,
     (height - 2 * SAFE_MARGIN) / contentH0,
     1
   );
+
   const contentW = contentW0 * sFit;
   const contentH = contentH0 * sFit;
-  const left = (width  - contentW) * 0.5 - leftmost * sFit; // offset by measured leftmost
+  const left = (width  - contentW) * 0.5 - leftmost * sFit; // offset with measured left bound
   const top  = (height - contentH) * 0.5;
+
+  return { tEff, rowPitchNow, leftmost, rightmost, contentW0, contentH0, sFit, left, top };
+}
+
+function renderLogo(g){
+  g.push();
+  g.background(255);
+  g.fill(0); g.noStroke();
+
+  const fit = computeLayoutFit();
+  const { tEff, rowPitchNow, left, top, sFit } = fit;
   g.translate(left, top);
   g.scale(sFit, sFit);
-
-  // compute row centres (local/unscaled space) and store for later use
+  // (Debug rendering of packed letter boxes removed for clarity)
   rowYsCanvas = Array.from({ length: rowsSetting }, (_, r) => r * rowPitchNow + rowPitchNow * 0.5);
 
+  const { offsets } = computeSpacedOffsets();
   for (let li = 0; li < layout.lettersOrder.length; li++){
     const letterKey   = layout.lettersOrder[li];
     const rowsForLetter = layout.letters[letterKey];
-    // Scale base letter position so inter-letter spacing stays consistent when widening
-    const baseX       = layout.letterX[li] * tEff; // tracking groeit minder hard dan de interne verbreding
+    // Use spaced baseX (actual letter start + spacing offset)
+    const baseX = layout.letterX[li] * tEff + offsets[li]; // apply spacing offset
 
     for (let r = 0; r < rowsForLetter.length; r++){
       const y = rowYsCanvas[r];
@@ -265,7 +377,7 @@ function draw(){
   background(250);
   noStroke();
   renderLogo(this);
-  if (DEBUG) drawDebugOverlay();
+  if (debugMode) drawdebugModeOverlay();
   positionUI();
 }
 
@@ -319,31 +431,74 @@ function drawStraightTaper(g, rightX, cy, len, h){
 }
 
 // ====== SCANNING HELPERS ======
-function isInk(g, x, y){
+function isInkAt(g, x, y){
   if (x < 0 || y < 0 || x >= g.width || y >= g.height) return false;
-  const idx = 4 * (y * g.width + (x | 0));
+  const yi = y | 0, xi = x | 0;
+  const idx = 4 * (yi * g.width + xi);
   return g.pixels[idx] < INK_THRESHOLD; // sample red channel
 }
 
-function scanRowInRange(g, y, x1, x2){
+function isInkRowKernel(g, x, y, halfK){
+  // check a small vertical window around y; returns true if any pixel is ink
+  const yi = y | 0;
+  for (let ky = -halfK; ky <= halfK; ky++){
+    const yy = yi + ky;
+    if (yy < 0 || yy >= g.height) continue;
+    const idx = 4 * (yy * g.width + (x | 0));
+    if (g.pixels[idx] < INK_THRESHOLD) return true;
+  }
+  return false;
+}
+
+function scanRowInRange(g, y, x1, x2, halfKernel){
   // Returns [ [start, endExclusive], ... ] across [x1,x2]
   const spans = [];
   const yi = Math.max(0, Math.min(g.height - 1, y | 0));
+  const xmin = Math.max(0, x1 | 0);
+  const xmax = Math.min(g.width - 1, x2 | 0);
   let inside = false, start = 0, gap = 0;
-  for (let x = x1; x <= x2; x++){
-    const on = isInk(g, x, yi);
+  for (let x = xmin; x <= xmax; x++){
+    const on = isInkRowKernel(g, x, yi, halfKernel);
     if (on){
       if (!inside){ inside = true; start = x; gap = 0; } else gap = 0;
     } else if (inside){
       gap++;
       if (gap > BRIDGE_PIXELS){
-        const e = x - gap; if (e >= start) spans.push([start, e + 1]);
+        const e = x - gap; 
+        if (e >= start){
+          if ((e + 1 - start) >= MIN_RUN_PX_BUFFER) spans.push([start, e + 1]);
+        }
         inside = false; gap = 0;
       }
     }
   }
-  if (inside) spans.push([start, x2 + 1]);
+  if (inside){
+    const e = xmax;
+    if ((e + 1 - start) >= MIN_RUN_PX_BUFFER) spans.push([start, e + 1]);
+  }
   return spans;
+}
+
+// Helper: Measure actual vertical ink bounds in an offscreen buffer, scanning for black ink
+function measureInkVerticalBounds(g, x1 = 0, x2 = null){
+  if (x2 == null) x2 = g.width - 1;
+  const xmin = Math.max(0, Math.floor(x1));
+  const xmax = Math.min(g.width - 1, Math.ceil(x2));
+  g.loadPixels();
+  let top = g.height, bot = -1;
+  for (let y = 0; y < g.height; y++){
+    const rowIdx = 4 * y * g.width;
+    for (let x = xmin; x <= xmax; x++){
+      const idx = rowIdx + 4 * x;
+      if (g.pixels[idx] < INK_THRESHOLD){
+        if (y < top) top = y;
+        if (y > bot) bot = y;
+        break; // go to next row once ink is found
+      }
+    }
+  }
+  if (bot < 0) return { top: 0, bot: g.height - 1 }; // no ink fallback
+  return { top, bot };
 }
 
 // ====== LAYOUT PIPELINE ======
@@ -388,12 +543,19 @@ function buildLayout(word, rowsCount = rowsSetting){
   }
   glyphBuffer.loadPixels();
 
-  // 4) Prepare vertical scan band
-  let bandTop = baseline - asc * BAND_TOP_FACTOR;
-  let bandBot = baseline + desc * BAND_BOT_FACTOR;
-  bandTop = Math.max(0, Math.min(BUFFER_H - 1, bandTop));
-  bandBot = 100;
+  // 4) Prepare vertical scan band (robust): measure actual ink bounds instead of trusting font metrics
+  const { top: inkTop, bot: inkBot } = measureInkVerticalBounds(
+    glyphBuffer,
+    Math.floor(startX),
+    Math.ceil(startX + totalW) - 1
+  );
+  const pad = Math.round(0.02 * BUFFER_H); // small breathing space (2%)
+  let bandTop = Math.max(0, inkTop - pad);
+  let bandBot = Math.min(BUFFER_H - 1, inkBot + pad);
   if (bandTop > bandBot){ const t = bandTop; bandTop = bandBot; bandBot = t; }
+
+  const bandH = Math.max(1, bandBot - bandTop);
+  const halfKernel = Math.max(1, Math.round(bandH * ROW_KERNEL_Y_FRAC));
 
   const rowsY = [];
   for (let r = 0; r < rowsCount; r++) rowsY.push( lerp(bandTop, bandBot, (r + 0.5) / rowsCount) );
@@ -407,7 +569,7 @@ function buildLayout(word, rowsCount = rowsSetting){
     const y = rowsY[r];
     for (let li = 0; li < ranges.length; li++){
       const { x1, x2 } = ranges[li];
-      const spans = scanRowInRange(glyphBuffer, y, x1, x2);
+      const spans = scanRowInRange(glyphBuffer, y, x1, x2, halfKernel);
       for (const [s, e] of spans){
         const rightRel = (e - 1) - x1; // right edge relative to letter start
         const runLen   = (e - s);      // black run length from right → left
@@ -428,8 +590,7 @@ function buildLayout(word, rowsCount = rowsSetting){
     scale,
     rowPitch,
     rowsY,
-    ranges,
-    wordWScaled: totalW * scale
+    ranges
   };
 }
 
@@ -448,41 +609,35 @@ function initInterface(){
       sliderDisplacement.value(dispStep);
     }
     layout = buildLayout(TEXT, rowsSetting);
-    redraw();
-    positionUI();
-    redrawUI();
+    redraw(); positionUI(); redrawUI();
   });
 
   sliderThickness = createSlider(1, 25, lineThickness, 1);
   sliderThickness.style('width', '180px');
-  sliderThickness.input(() => { lineThickness = sliderThickness.value(); redraw(); positionUI(); redrawUI(); });
+  sliderThickness.input(() => {
+    lineThickness = sliderThickness.value();
+    redraw(); positionUI(); redrawUI();});
 
   sliderHeight = createSlider(50, 200, Math.round(heightScale * 100), 1);
   sliderHeight.style('width', '180px');
   sliderHeight.input(() => {
     heightScale = sliderHeight.value() / 100;
     resizeCanvas(width, desiredCanvasHeight(), true);
-    redraw();
-    positionUI();
-    redrawUI();
+    redraw(); positionUI(); redrawUI();
   });
 
   sliderDisplacement = createSlider(-rowsSetting, rowsSetting, dispStep, 1);
   sliderDisplacement.style('width', '180px');
   sliderDisplacement.input(() => {
     dispStep = sliderDisplacement.value();
-    redraw();
-    positionUI();
-    redrawUI();
+    redraw(); positionUI(); redrawUI();
   });
   
   sliderWidth = createSlider(50, 300, Math.round(widthFactor * 100), 1);
   sliderWidth.style('width', '180px');
   sliderWidth.input(() => {
     widthFactor = sliderWidth.value() / 100;
-    redraw();
-    positionUI();
-    redrawUI();
+    redraw(); positionUI(); redrawUI();
   });
 
   positionControls();
@@ -490,94 +645,60 @@ function initInterface(){
   checkboxRounded = createCheckbox('Rounded edges', roundedEdges);
   checkboxRounded.changed(() => {
     roundedEdges = checkboxRounded.checked();
-    redraw();
-    positionUI();
-    redrawUI();
+    redraw(); positionUI(); redrawUI();
   });
 
-  checkboxDebug = createCheckbox('Debug mode', DEBUG);
-  checkboxDebug.changed(() => {
-    DEBUG = checkboxDebug.checked();
-    redraw();
-    positionUI();
-    redrawUI();
+  checkboxdebugMode = createCheckbox('Debug mode', debugMode);
+  checkboxdebugMode.changed(() => {
+    debugMode = checkboxdebugMode.checked();
+    redraw(); positionUI(); redrawUI();
   });
 }
 
-// ====== DEBUG OVERLAY ======
-function drawDebugOverlay(){
+// ====== debugMode OVERLAY ======
+function drawdebugModeOverlay(){
   push();
   noFill(); stroke(0, 60); strokeWeight(1);
 
-  const tEff = 1 + (widthFactor - 1) * TRACK_STRENGTH;
-  const rowPitchNow = (height - 2 * PADDING) / rowsSetting;
-
-  // Measure true content bounds with internal widening
-  let leftmost = Infinity;
-  let rightmost = -Infinity;
-  for (let li = 0; li < layout.lettersOrder.length; li++){
-    const baseX = layout.letterX[li] * tEff;
-    if (baseX < leftmost) leftmost = baseX;
-    const letterKey = layout.lettersOrder[li];
-    const rows = layout.letters[letterKey];
-    let maxRel = 0;
-    for (let r = 0; r < rows.length; r++){
-      for (const seg of rows[r]){ if (seg.rightRel > maxRel) maxRel = seg.rightRel; }
-    }
-    const candidateRight = baseX + maxRel * layout.scale * widthFactor;
-    if (candidateRight > rightmost) rightmost = candidateRight;
-  }
-  if (!isFinite(leftmost)) leftmost = 0;
-  if (!isFinite(rightmost)) rightmost = width - 2 * PADDING;
-  const contentW0 = Math.max(1, rightmost - leftmost);
-  const contentH0 = rowsSetting * rowPitchNow;
-
-  const sFit = Math.min(
-    (width  - 2 * SAFE_MARGIN) / contentW0,
-    (height - 2 * SAFE_MARGIN) / contentH0,
-    1
-  );
-  const contentW = contentW0 * sFit;
-  const contentH = contentH0 * sFit;
-  const left = (width  - contentW) * 0.5 - leftmost * sFit;
-  const top  = (height - contentH) * 0.5;
+  const fit = computeLayoutFit();
+  const { tEff, rowPitchNow, left, top, sFit } = fit;
   translate(left, top);
   scale(sFit, sFit);
 
-  // row guides
+  // reconstruct bandH from layout rows for kernel estimation
+  const totalBandH = (layout.rowsY.length > 1) ? ((layout.rowsY[layout.rowsY.length-1] - layout.rowsY[0]) + rowPitchNow) : rowPitchNow;
+  const halfKernel = Math.max(1, Math.round(totalBandH * ROW_KERNEL_Y_FRAC / rowsSetting));
+
+  // letter boxes — spaced (fixed gap) based on visual widths
+  stroke(0, 160);
+  const { targetLeft, widths, start, end } = computeSpacedOffsets();
+  const totalH = layout.rowsY.length * rowPitchNow;
+  for (let i = 0; i < widths.length; i++){
+    rect(targetLeft[i], 0, widths[i], totalH);
+  }
+
+  // row guides spanning the spaced bounds
+  stroke(0, 60);
   for (let r = 0; r < layout.rowsY.length; r++){
     const y = rowYsCanvas[r] ?? (rowPitchNow * r + rowPitchNow * 0.5);
-    line(leftmost, y, leftmost + contentW0, y);
+    line(start, y, end, y);
   }
 
-  // letter boxes
-  stroke(0, 160);
-  for (let i = 0; i < layout.ranges.length; i++){
-    const lx = layout.letterX[i] * tEff;
-    const lw = layout.letterW[i] * layout.scale * tEff;
-    rect(lx, 0, lw, layout.rowsY.length * rowPitchNow);
-  }
-
-  // scanned spans + right edges
+  // scanned spans + right edges (using spaced baseX)
+  const { offsets } = computeSpacedOffsets();
   for (let li = 0; li < layout.lettersOrder.length; li++){
     const letterKey = layout.lettersOrder[li];
     const rows = layout.letters[letterKey];
-    const baseX = layout.letterX[li] * tEff;
+    const baseX = layout.letterX[li] * tEff + offsets[li];
     for (let r = 0; r < rows.length; r++){
       const y = rowYsCanvas[r] ?? (rowPitchNow * r + rowPitchNow * 0.5);
       for (const seg of rows[r]){
-        const x2 = baseX + seg.rightRel * layout.scale * widthFactor; // match render
-        const x1 = x2 - seg.runLen * layout.scale;                    // base run length (unscaled)
+        const x2 = baseX + seg.rightRel * layout.scale * widthFactor;
+        const x1 = x2 - seg.runLen * layout.scale;
         stroke(0,180,0); line(x1, y, x2, y);
         noStroke(); fill(255,0,0); circle(x2, y, 3);
       }
     }
   }
   pop();
-}
-function windowResized(){
-  // Keep the canvas visually full-screen and UI locked to the corner on resize
-  fitCanvasToWindow();
-  positionUI();
-  redraw();
 }
