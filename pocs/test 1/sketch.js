@@ -41,10 +41,11 @@ let sliderRows;
 let lineThickness = LINE_HEIGHT;
 let heightScale   = 1.0;
 let dispStep = 1;                    // -N..+N → per-row shift = dispStep * DISPLACE_UNIT * rowIndex
-let sliderThickness, sliderHeight, sliderDisplacement, sliderPixelate;
+let sliderThickness, sliderHeight, sliderDisplacement, sliderPixelate, sliderWidth;
 let roundedEdges = true; // toggle between rounded and straight taper
 let checkboxRounded;
 let pixelStep = 1;       // cell size voor pixelation; 1 = uit
+let widthFactor = 1.0;
 const DEBUG = false;
 
 let baseRowPitch;   // baseline row pitch derived at startup

@@ -14,7 +14,7 @@
   <button onclick="save('sketch.svg')">Export SVG</button>
   <button onclick="exportPDF()">Export PDF (vector)</button>
   <button onclick="exportPNG()">Export PNG</button>
-  <button onclick="exportMP4()">Export MP4</button>
+  <button onclick="exportWebM()">Export WebM</button>
   <button onclick="exportHTML({ filename: 'sketch.html', title: 'pagina naam' })">Export HTML</button>
   <button onclick="exportLottie()">Export Lottie</button>
 
@@ -79,8 +79,53 @@
       
     }
 
-    async function exportWebM() {
-        
+    async function exportWebM({ fps = 60, seconds = 4, filename = 'sketch.webm', bitrateMbps = 8 } = {}) {
+      // Zet sketch in 'recording' modus (tekent mee naar bitmap alleen tijdens opname)
+      if (typeof window.__startRecording === 'function') window.__startRecording();
+    
+      // Gebruik het bitmap-canvas dat je in sketch.js expose't (NIET het SVG-canvas)
+      const canvas = (typeof window.captureCanvas !== 'undefined' && window.captureCanvas)
+        ? window.captureCanvas
+        : (typeof window.getRecCanvas === 'function' ? window.getRecCanvas() : null);
+      if (!canvas) {
+        alert('Recorder canvas not found. Zorg dat sketch.js window.captureCanvas of window.getRecCanvas() zet.');
+        if (typeof window.__stopRecording === 'function') window.__stopRecording();
+        return;
+      }
+    
+      // Start de recorder
+      const stream = canvas.captureStream(fps);
+      const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+        ? 'video/webm;codecs=vp9'
+        : (MediaRecorder.isTypeSupported('video/webm;codecs=vp8') ? 'video/webm;codecs=vp8' : 'video/webm');
+      const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bitrateMbps * 1_000_000 });
+    
+      const chunks = [];
+      recorder.ondataavailable = e => e.data && e.data.size && chunks.push(e.data);
+      recorder.onstop = () => {
+        // Recording modus uitzetten
+        if (typeof window.__stopRecording === 'function') window.__stopRecording();
+        const blob = new Blob(chunks, { type: mime });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      };
+    
+      recorder.start();
+    
+      // Drive frames deterministisch: roep p5's draw() aan met redraw() op exact FPS
+      const total = Math.max(1, Math.round(fps * seconds));
+      let i = 0;
+      const handle = setInterval(() => {
+        if (typeof window.redraw === 'function') window.redraw(); // triggert draw()
+        i++;
+        if (i >= total) {
+          clearInterval(handle);
+          recorder.stop();
+        }
+      }, 1000 / fps);
     }
 
     function exportHTML({ filename = 'sketch.html', title = 'Sketch Export' } = {}) {
