@@ -33,6 +33,9 @@ const BAND_TOP_FACTOR   = 0.92;      // baseline - asc * factor
 const BAND_BOT_FACTOR   = 1.04;      // baseline + desc * factor
 
 const FONT_PATH         = './src/Machine-Bold.otf';
+const LETTERS_PATH      = './src/letters/'; // expects A.svg, B.svg, ...
+let glyphImgs = {};   // map: char -> p5.Image (SVG rasterized)
+let glyphDims = {};   // map: char -> {w,h}
 
 // ====== STATE ======
 let glyphBuffer;      // offscreen p5.Graphics used for scanning
@@ -113,7 +116,11 @@ function redrawUI(){
 }
 
 function preload(){
-  if (FONT_PATH) loadedFont = loadFont(FONT_PATH, () => {}, err => console.error(err));
+  const uniq = Array.from(new Set(TEXT.split('').map(c => c.toUpperCase())));
+  uniq.forEach(ch => {
+    const p = LETTERS_PATH + ch + '.svg';
+    glyphImgs[ch] = loadImage(p, img => { glyphDims[ch] = { w: img.width, h: img.height }; }, err => console.error('Failed to load', p, err));
+  });
 }
 
 function setup(){
@@ -137,7 +144,6 @@ function setup(){
 
   // Second p5 instance for the UI canvas
   uiP5 = new p5((p) => {
-
     p.setup = function(){
       const cnv = p.createCanvas(uiWidth, uiHeight);
       cnv.parent(uiContainer);
@@ -510,37 +516,43 @@ function buildLayout(word, rowsCount = rowsSetting){
   glyphBuffer.background(255);
   glyphBuffer.fill(0);
   glyphBuffer.noStroke();
-  if (loadedFont) glyphBuffer.textFont(loadedFont); else glyphBuffer.textFont('sans-serif');
-  glyphBuffer.textAlign(LEFT, BASELINE);
 
-  // 2) Auto-fit text size to buffer
-  let fontSize = Math.floor(BUFFER_H * 0.5); // initial guess
-  let totalW = Infinity, asc = 0, desc = 0, letterWidths = [];
-  for (let i = 0; i < 8; i++){
-    glyphBuffer.textSize(fontSize);
-    asc = glyphBuffer.textAscent();
-    desc = glyphBuffer.textDescent();
-    totalW = 0; letterWidths = [];
-    for (const ch of word){ const w = glyphBuffer.textWidth(ch); letterWidths.push(w); totalW += w; }
-    const fitH = (BUFFER_H * FIT_HEIGHT_FRAC) / (asc + desc);
-    const fitW = (BUFFER_W * FIT_WIDTH_FRAC) / totalW;
-    const fit  = Math.min(fitH, fitW, 1.0);
-    const next = Math.max(8, Math.floor(fontSize * fit));
-    if (Math.abs(next - fontSize) < 1) break;
-    fontSize = next;
-  }
+  // 2) Compute per-letter SVG layout and draw
+  const up = word.split('').map(c => c.toUpperCase());
+  // Measure natural sizes
+  const naturalDims = up.map(ch => glyphDims[ch] || { w: 0, h: 0 });
+  const maxH = Math.max(1, ...naturalDims.map(d => d.h));
+  const sumW = naturalDims.reduce((s,d) => s + d.w, 0);
+  // Target fit: tallest letter uses FIT_HEIGHT_FRAC of buffer height
+  const sH = (BUFFER_H * FIT_HEIGHT_FRAC) / maxH;
+  const sW = (BUFFER_W * FIT_WIDTH_FRAC) / Math.max(1, sumW);
+  const scaleUniform = Math.min(sH, sW, 1.0);
 
-  const baseline = (BUFFER_H + asc - desc) * 0.5;
-  const startX   = (BUFFER_W - totalW) * 0.5;
+  // Compute total scaled width and start X for centering
+  const letterWidths = naturalDims.map(d => d.w * scaleUniform);
+  const totalW = letterWidths.reduce((a,b)=>a+b,0);
+  const startX = (BUFFER_W - totalW) * 0.5;
 
-  // 3) Draw each glyph at its pen position
+  // Vertical center (we’ll scan actual ink bounds later anyway)
+  const yTop = (BUFFER_H - maxH * scaleUniform) * 0.5;
+
+  // Draw each SVG at pen position
   const letterX = [];
   let pen = startX;
-  for (let i = 0; i < word.length; i++){
+  up.forEach((ch, i) => {
     letterX.push(pen);
-    glyphBuffer.text(word[i], pen, baseline);
-    pen += letterWidths[i];
-  }
+    const img = glyphImgs[ch];
+    const dims = naturalDims[i];
+    if (img && dims.w > 0 && dims.h > 0){
+      const w = dims.w * scaleUniform;
+      const h = dims.h * scaleUniform;
+      glyphBuffer.image(img, pen, yTop, w, h);
+      pen += w;
+    } else {
+      // fallback spacing if missing
+      const w = 40 * scaleUniform; pen += w;
+    }
+  });
   glyphBuffer.loadPixels();
 
   // 4) Prepare vertical scan band (robust): measure actual ink bounds instead of trusting font metrics
@@ -579,7 +591,7 @@ function buildLayout(word, rowsCount = rowsSetting){
   }
 
   // 6) Map to output canvas coordinates (non-uniform: width locked, height stretches)
-  const scale    = (width  - 2 * PADDING) / totalW;           // X-scale fixed by width
+  const scale    = (width  - 2 * PADDING) / Math.max(1, totalW);           // X-scale fixed by width
   const rowPitch = (height - 2 * PADDING) / rowsCount;        // Y-scale from canvas height
 
   return {
