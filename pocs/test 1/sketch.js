@@ -121,6 +121,7 @@ function redrawUI(){
 
 function preload(){
   if (FONT_PATH) loadedFont = loadFont(FONT_PATH, () => {}, err => console.error(err));
+  logo = loadShape('./src/albion-logo.svg');
 }
 
 function setup(){
