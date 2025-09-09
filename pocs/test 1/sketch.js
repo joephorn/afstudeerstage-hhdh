@@ -1,18 +1,15 @@
 // ====== CONFIG ======
-const TEXT              = "ALBION";
+const LOGO_TEXT              = "ALBION";
 const ROWS              = 12;
 const LINE_HEIGHT       = 8;
 const TIP_RATIO         = 0.25;
 const PADDING           = 40;        // canvas padding
-const DISPLACEMENT_LVL  = 1;
 const DISPLACE_UNIT     = 20;        // px per row step for displacement
-const LEN_SCALE_STRENGTH = 1;     // 0..1 — hoeveel van (widthFactor-1) wordt toegepast op lange runs (lager = minder snel meeschalen)
+const LEN_SCALE_STRENGTH = 1;     // 0..1 — hoeveel van (widthSetting-1) wordt toegepast op lange runs (lager = minder snel meeschalen)
 const TRACK_STRENGTH    = 1;    // meeschalen van lange lijnen (horizontaal)
 const SMALL_LEN_BIAS   = 1;    // meeschalen van korte lijnen (verticaal)
 const VIEW_SCALE        = 0.8;   // visual CSS scale of the canvas (no change to drawing scale)
 const SAFE_MARGIN      = 0;    // keep content this far from canvas edges when auto-fitting
-const LETTER_GAP       = 0;    // px fixed spacing between letters (visual)
-const BOUND_MIN_LEN    = 2;
 
 // Scan behavior
 const BRIDGE_PIXELS     = 2;         // allow bridging small white gaps (0 = off)
@@ -37,18 +34,16 @@ let glyphDims = {};   // map: char -> {w,h}
 let glyphBuffer;      // offscreen p5.Graphics used for scanning
 let layout;           // computed positions + spans
 let rowsSetting = ROWS;
-let sliderRows;
 let lineThickness = LINE_HEIGHT;
 let heightScale   = 1.0;
-let displacementLevel = 1;
-let sliderThickness, sliderHeight, sliderDisplacement, sliderWidth, sliderGap;
-let letterGap = 5;
+let sliderRows, sliderThickness, sliderHeight, sliderDisplacement, sliderWidth, sliderGap;
+let gapSetting = 5;
 let displaceGroupSize = 3;
 let displaceGroupCount = 2;
 let checkboxRounded, checkboxdebugMode;
 let roundedEdges = true;
 let debugMode = false;
-let widthFactor = 0.96;
+let widthSetting = 0.96;
 let lenThreshold = 65;
 
 let baseRowPitch;   // baseline row pitch derived at startup
@@ -156,7 +151,7 @@ function redrawUI(){
 }
 
 function preload(){
-  const uniq = Array.from(new Set(TEXT.split('').map(c => c.toUpperCase())));
+  const uniq = Array.from(new Set(LOGO_TEXT.split('').map(c => c.toUpperCase())));
   uniq.forEach(ch => {
     const p = LETTERS_PATH + ch + '.svg';
     glyphImgs[ch] = loadImage(p, img => { glyphDims[ch] = { w: img.width, h: img.height }; }, err => console.error('Failed to load', p, err));
@@ -168,7 +163,7 @@ function setup(){
   pixelDensity(1);
   baseRowPitch = (height - 2 * PADDING) / rowsSetting;
   noLoop();
-  layout = buildLayout(TEXT);
+  layout = buildLayout(LOGO_TEXT);
   initInterface();
   resizeCanvas(width, desiredCanvasHeight(), true);
   positionUI();
@@ -197,8 +192,8 @@ function setup(){
       p.text(`Rows: ${rowsSetting}`, 12, top);  top += interval;
       p.text(`Line: ${lineThickness}px`, 12, top);  top += interval;
       p.text(`Height: ${Math.round(heightScale*100)}%`, 12, top);  top += interval;
-      p.text(`Width: ${Math.round(widthFactor*100)}%`, 12, top);  top += interval;
-      p.text(`Gap: ${letterGap}px`, 12, top);  top += interval;
+      p.text(`Width: ${Math.round(widthSetting*100)}%`, 12, top);  top += interval;
+      p.text(`Gap: ${gapSetting}px`, 12, top);  top += interval;
       const gsize = Math.max(1, Math.floor(rowsSetting / Math.max(1, displaceGroupCount)));
       p.text(`Groups: ${displaceGroupCount} × (each ${gsize} rows)`, 12, top);  top += interval;
     };
@@ -218,13 +213,13 @@ function dashLenForSpan(baseLen, maxRunLen){
   const lenBiasBase  = (maxRunLen > 0) ? (baseLen / maxRunLen) : 0;  // 0..1
   const lenBiasShort = SMALL_LEN_BIAS;                                // kleine vaste bias voor korte runs
   const lenBias      = eligible ? lenBiasBase : lenBiasShort;
-  return baseLen * (1 + (widthFactor - 1) * lenBias * LEN_SCALE_STRENGTH);
+  return baseLen * (1 + (widthSetting - 1) * lenBias * LEN_SCALE_STRENGTH);
 }
 
 // Measure per-letter bounds (visual left/right) using the same math as the renderer
 
 function computePerLetterBounds(){
-  const tEff = 1 + (widthFactor - 1) * TRACK_STRENGTH;
+  const tEff = 1 + (widthSetting - 1) * TRACK_STRENGTH;
   const letterLeft = new Array(layout.lettersOrder.length).fill(Infinity);
   const letterRight = new Array(layout.lettersOrder.length).fill(-Infinity);
 
@@ -246,7 +241,7 @@ function computePerLetterBounds(){
         xShift = centered * DISPLACE_UNIT;                        // fixed offset per section
       }
       for (const seg of rows[r]){
-        const rightEdgeX = baseX + seg.rightRel * layout.scale * widthFactor;
+        const rightEdgeX = baseX + seg.rightRel * layout.scale * widthSetting;
         const baseLen    = Math.max(0, seg.runLen * layout.scale);
         const dlen       = dashLenForSpan(baseLen, maxRunLen);
         const rightX     = rightEdgeX + xShift;
@@ -262,54 +257,8 @@ function computePerLetterBounds(){
   return { tEff, letterLeft, letterRight };
 }
 
-// Compute per-letter offsets so that visual left edges are spaced by a fixed gap
-function computeSpacedOffsets(gapPx = LETTER_GAP){
-  const { letterLeft, letterRight } = computePerLetterBounds();
-  const n = letterLeft.length;
-  const widths = new Array(n);
-  for (let i = 0; i < n; i++) widths[i] = Math.max(0, letterRight[i] - letterLeft[i]);
-
-  // Start at the global left so word remains centred by our later fit
-  let globalLeft = Infinity; for (let i = 0; i < n; i++) if (letterLeft[i] < globalLeft) globalLeft = letterLeft[i];
-  if (!isFinite(globalLeft)) globalLeft = 0;
-
-  const targetLeft = new Array(n);
-  if (n > 0){
-    targetLeft[0] = globalLeft;
-    for (let i = 1; i < n; i++) targetLeft[i] = targetLeft[i-1] + widths[i-1] + gapPx;
-  }
-
-  // Offsets to add to the original tracked baseX so that the visual left becomes targetLeft
-  const offsets = new Array(n);
-  for (let i = 0; i < n; i++) offsets[i] = targetLeft[i] - letterLeft[i];
-
-  const start = n > 0 ? targetLeft[0] : 0;
-  const end   = n > 0 ? targetLeft[n-1] + widths[n-1] : 0;
-  return { offsets, targetLeft, widths, start, end };
-}
-
-// Build contiguous (packed) letter boxes so each next box starts where the previous ends
-function computePackedLetterBoxes(){
-  const { letterLeft, letterRight } = computePerLetterBounds();
-  const n = letterLeft.length;
-  const widths = new Array(n);
-  for (let i = 0; i < n; i++) widths[i] = Math.max(0, letterRight[i] - letterLeft[i]);
-  // start at global leftmost across all letters so the word stays centred later
-  let globalLeft = Infinity; for (let i = 0; i < n; i++) if (letterLeft[i] < globalLeft) globalLeft = letterLeft[i];
-  if (!isFinite(globalLeft)) globalLeft = 0;
-  const packedLeft = new Array(n);
-  if (n > 0){
-    packedLeft[0] = globalLeft;
-    for (let i = 1; i < n; i++) packedLeft[i] = packedLeft[i-1] + widths[i-1];
-  }
-  const start = n > 0 ? packedLeft[0] : 0;
-  const end   = n > 0 ? packedLeft[n-1] + widths[n-1] : 0;
-  const packedWidth = Math.max(0, end - start);
-  return { packedLeft, widths, start, end, packedWidth };
-}
-
 function computeLayoutFit(){
-  const tEff = 1 + (widthFactor - 1) * TRACK_STRENGTH;
+  const tEff = 1 + (widthSetting - 1) * TRACK_STRENGTH;
   const rowPitchNow = (rowsSetting <= 1)
     ? (height - 2 * PADDING)
     : (height - 2 * PADDING) / (rowsSetting - 1);
@@ -337,7 +286,7 @@ function computeLayoutFit(){
       }
 
       for (const seg of rows[r]){
-        const rightEdgeX = baseX + seg.rightRel * layout.scale * widthFactor;
+        const rightEdgeX = baseX + seg.rightRel * layout.scale * widthSetting;
         const baseLen    = Math.max(0, seg.runLen * layout.scale);
         const dlen       = dashLenForSpan(baseLen, maxRunLen);
         const rightX     = rightEdgeX + xShift;
@@ -396,14 +345,14 @@ function renderLogo(g){
         if (s.runLen > maxRunLen) maxRunLen = s.runLen;
       }
       for (const span of rowsForLetter[r]){
-        const rightEdgeX = baseX + span.rightRel * layout.scale * widthFactor; // widen x-distance inside glyph
+        const rightEdgeX = baseX + span.rightRel * layout.scale * widthSetting; // widen x-distance inside glyph
         const baseLen = Math.max(0, span.runLen * layout.scale);
         // Alleen runs die groter zijn dan de instelbare drempel schalen mee
         const eligible     = baseLen >= lenThreshold;
         const lenBiasBase  = (maxRunLen > 0) ? (span.runLen / maxRunLen) : 0;  // 0..1
         const lenBiasShort = SMALL_LEN_BIAS;                                    // kleine vaste bias voor korte runs
         const lenBias      = eligible ? lenBiasBase : lenBiasShort;
-        const dashLen      = baseLen * (1 + (widthFactor - 1) * lenBias * LEN_SCALE_STRENGTH);
+        const dashLen      = baseLen * (1 + (widthSetting - 1) * lenBias * LEN_SCALE_STRENGTH);
         // Clamp dash length to the letter’s left edge (no wider than SVG envelope)
         const maxDash = Math.max(0, rightEdgeX - baseX);
         const dashLenClamped = Math.min(dashLen, maxDash);
@@ -485,12 +434,6 @@ function drawStraightTaper(g, rightX, cy, len, h){
 }
 
 // ====== SCANNING HELPERS ======
-function isInkAt(g, x, y){
-  if (x < 0 || y < 0 || x >= g.width || y >= g.height) return false;
-  const yi = y | 0, xi = x | 0;
-  const idx = 4 * (yi * g.width + xi);
-  return g.pixels[idx] < INK_THRESHOLD; // sample red channel
-}
 
 function isInkRowKernel(g, x, y, halfK){
   // check a small vertical window around y; returns true if any pixel is ink
@@ -533,28 +476,6 @@ function scanRowInRange(g, y, x1, x2, halfKernel){
   return spans;
 }
 
-// Helper: Measure actual vertical ink bounds in an offscreen buffer, scanning for black ink
-function measureInkVerticalBounds(g, x1 = 0, x2 = null){
-  if (x2 == null) x2 = g.width - 1;
-  const xmin = Math.max(0, Math.floor(x1));
-  const xmax = Math.min(g.width - 1, Math.ceil(x2));
-  g.loadPixels();
-  let top = g.height, bot = -1;
-  for (let y = 0; y < g.height; y++){
-    const rowIdx = 4 * y * g.width;
-    for (let x = xmin; x <= xmax; x++){
-      const idx = rowIdx + 4 * x;
-      if (g.pixels[idx] < INK_THRESHOLD){
-        if (y < top) top = y;
-        if (y > bot) bot = y;
-        break; // go to next row once ink is found
-      }
-    }
-  }
-  if (bot < 0) return { top: 0, bot: g.height - 1 }; // no ink fallback
-  return { top, bot };
-}
-
 // Robust vertical bounds: require a minimum continuous run length across the word
 function measureInkVerticalBoundsRobust(g, x1 = 0, x2 = null){
   if (x2 == null) x2 = g.width - 1;
@@ -575,7 +496,7 @@ function measureInkVerticalBoundsRobust(g, x1 = 0, x2 = null){
       } else {
         if (run > 0){ if (run > best) best = run; run = 0; }
         gap++;
-        if (gap > BRIDGE_PIXELS) gap = 0; // stop bridging after threshold
+        if (gap > BRIDGE_PIXELS) gap = 0;
       }
     }
     if (run > best) best = run; // flush tail
@@ -642,9 +563,8 @@ function buildLayout(word, rowsCount = rowsSetting){
     Math.floor(startX),
     Math.ceil(startX + totalW) - 1
   );
-  const pad = 0; // small breathing space (2%)
-  let bandTop = Math.max(0, inkTop - pad);
-  let bandBot = Math.min(BUFFER_H - 1, inkBot + pad);
+  let bandTop = Math.max(0, inkTop);
+  let bandBot = Math.min(BUFFER_H - 1, inkBot);
   if (bandTop > bandBot){ const t = bandTop; bandTop = bandBot; bandBot = t; }
 
   const bandH = Math.max(1, bandBot - bandTop);
@@ -685,7 +605,7 @@ function buildLayout(word, rowsCount = rowsSetting){
   return {
     letters: perLetter,
     lettersOrder,
-    letterX: letterX.map((x, i) => (x - startX) * scale + (i * Math.max(0, letterGap) * scale)),
+    letterX: letterX.map((x, i) => (x - startX) * scale + (i * Math.max(0, gapSetting) * scale)),
     letterW: letterWidths,
     scale,
     rowPitch,
@@ -701,7 +621,7 @@ function initInterface(){
   sliderRows.input(() => {
     rowsSetting = sliderRows.value();
     rebuildGroupSlider();
-    layout = buildLayout(TEXT, rowsSetting);
+    layout = buildLayout(LOGO_TEXT, rowsSetting);
     redraw(); positionUI(); redrawUI();
   });
 
@@ -719,21 +639,20 @@ function initInterface(){
     redraw(); positionUI(); redrawUI();
   });
 
-  // Displace groups (number of groups; options are divisors of rowsSetting)
   rebuildGroupSlider();
   
-  sliderWidth = createSlider(50, 300, Math.round(widthFactor * 100), 1);
+  sliderWidth = createSlider(50, 300, Math.round(widthSetting * 100), 1);
   sliderWidth.style('width', '180px');
   sliderWidth.input(() => {
-    widthFactor = sliderWidth.value() / 100;
+    widthSetting = sliderWidth.value() / 100;
     redraw(); positionUI(); redrawUI();
   });
 
-  sliderGap = createSlider(0, 150, letterGap, 1);
+  sliderGap = createSlider(0, 150, gapSetting, 1);
   sliderGap.style('width', '180px');
   sliderGap.input(() => {
-    letterGap = sliderGap.value();
-    layout = buildLayout(TEXT, rowsSetting);
+    gapSetting = sliderGap.value();
+    layout = buildLayout(LOGO_TEXT, rowsSetting);
     redraw(); positionUI(); redrawUI();
   });
 
@@ -763,7 +682,7 @@ function drawdebugModeOverlay(){
   scale(sFit, sFit);
 
   // letter boxes based on original SVG layout
-  const tEff2 = 1 + (widthFactor - 1) * TRACK_STRENGTH;
+  const tEff2 = 1 + (widthSetting - 1) * TRACK_STRENGTH;
   const boxesLeft = layout.letterX.map(x => x * tEff2);
   const boxesW    = layout.letterW.map(w => w * layout.scale);
   const start = Math.min(...boxesLeft);
@@ -791,7 +710,7 @@ function drawdebugModeOverlay(){
     for (let r = 0; r < rows.length; r++){
       const y = rowYsCanvas[r] ?? (rowPitchNow * r + rowPitchNow * 0.5);
       for (const seg of rows[r]){
-        const x2Raw = baseX + seg.rightRel * layout.scale * widthFactor;
+        const x2Raw = baseX + seg.rightRel * layout.scale * widthSetting;
         const maxDash = Math.max(0, x2Raw - baseX);
         const baseLen = Math.max(0, seg.runLen * layout.scale);
         const dlen    = Math.min(baseLen, maxDash);
