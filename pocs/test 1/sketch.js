@@ -40,13 +40,16 @@ let rowsSetting = ROWS;
 let sliderRows;
 let lineThickness = LINE_HEIGHT;
 let heightScale   = 1.0;
-let dispStep = 1;                    // -N..+N → per-row shift = dispStep * DISPLACE_UNIT * rowIndex
-let sliderThickness, sliderHeight, sliderDisplacement, sliderWidth;
+let displacementLevel = 1;
+let sliderThickness, sliderHeight, sliderDisplacement, sliderWidth, sliderGap;
+let letterGap = 5;
+let displaceGroupSize = 3;
+let displaceGroupCount = 2;
 let checkboxRounded, checkboxdebugMode;
 let roundedEdges = true;
-let debugMode = true;
-let widthFactor = 1.0;
-let lenThresholdPx = 65;
+let debugMode = false;
+let widthFactor = 0.96;
+let lenThreshold = 65;
 
 let baseRowPitch;   // baseline row pitch derived at startup
 
@@ -61,6 +64,47 @@ let rowYsCanvas = []; // y-position of each row in canvas coordinates
 
 function desiredCanvasHeight(){
   return Math.ceil(PADDING * 2 + baseRowPitch * ROWS * heightScale);
+}
+
+function divisorsAsc(n){
+  const d = [];
+  for (let i = 1; i <= n; i++) if (n % i === 0) d.push(i);
+  return d; // e.g. 12 -> [1,2,3,4,6,12]
+}
+
+let _groupsOpts = [1]; // valid groups for current rowsSetting
+function rebuildGroupSlider(){
+  _groupsOpts = divisorsAsc(rowsSetting);
+  let idx = _groupsOpts.indexOf(displaceGroupCount);
+  if (idx === -1){
+    // pick nearest valid option to current displaceGroupCount
+    let best = 0, bestDiff = Infinity;
+    for (let i = 0; i < _groupsOpts.length; i++){
+      const diff = Math.abs(_groupsOpts[i] - displaceGroupCount);
+      if (diff < bestDiff){ bestDiff = diff; best = i; }
+    }
+    idx = best;
+    displaceGroupCount = _groupsOpts[idx];
+  }
+  if (!sliderDisplacement){
+    // create the slider once; it selects an INDEX into _groupsOpts
+    sliderDisplacement = createSlider(0, Math.max(0, _groupsOpts.length - 1), idx, 1);
+    sliderDisplacement.style('width','180px');
+    sliderDisplacement.input(()=>{
+      const i = sliderDisplacement.value();
+      displaceGroupCount = _groupsOpts[i];              // number of groups
+      displaceGroupSize  = Math.max(1, Math.floor(rowsSetting / displaceGroupCount));
+      redraw(); positionUI(); redrawUI();
+    });
+  } else {
+    // update range and current index when rowsSetting changes
+    sliderDisplacement.attribute('min', 0);
+    sliderDisplacement.attribute('max', Math.max(0, _groupsOpts.length - 1));
+    sliderDisplacement.attribute('step', 1);
+    sliderDisplacement.value(idx);
+  }
+  // keep derived size in sync
+  displaceGroupSize = Math.max(1, Math.floor(rowsSetting / displaceGroupCount));
 }
 
 function positionUI(){
@@ -101,6 +145,7 @@ function positionControls(){
   if (sliderThickness)      { sliderThickness.parent(uiContainer);      sliderThickness.position(left, top); sliderThickness.style('z-index', '1000'); }  top += interval;
   if (sliderHeight)         { sliderHeight.parent(uiContainer);         sliderHeight.position(left, top); sliderHeight.style('z-index', '1000'); }  top += interval;
   if (sliderWidth)          { sliderWidth.parent(uiContainer);          sliderWidth.position(left, top); sliderWidth.style('z-index','1000'); }  top += interval;
+  if (sliderGap)            { sliderGap.parent(uiContainer);              sliderGap.position(left, top); sliderGap.style('z-index','1000'); }  top += interval;
   if (sliderDisplacement)   { sliderDisplacement.parent(uiContainer);   sliderDisplacement.position(left, top); sliderDisplacement.style('z-index', '1000'); }  top += interval;
   if (checkboxRounded)      { checkboxRounded.parent(uiContainer);      checkboxRounded.position(left, top); }  top += interval;
   if (checkboxdebugMode)    { checkboxdebugMode.parent(uiContainer);    checkboxdebugMode.position(left, top); }  top += interval;
@@ -153,7 +198,9 @@ function setup(){
       p.text(`Line: ${lineThickness}px`, 12, top);  top += interval;
       p.text(`Height: ${Math.round(heightScale*100)}%`, 12, top);  top += interval;
       p.text(`Width: ${Math.round(widthFactor*100)}%`, 12, top);  top += interval;
-      p.text(`Displace: ${dispStep} steps (×${DISPLACE_UNIT}px/step)`, 12, top);  top += interval;
+      p.text(`Gap: ${letterGap}px`, 12, top);  top += interval;
+      const gsize = Math.max(1, Math.floor(rowsSetting / Math.max(1, displaceGroupCount)));
+      p.text(`Groups: ${displaceGroupCount} × (each ${gsize} rows)`, 12, top);  top += interval;
     };
   });
 
@@ -167,7 +214,7 @@ function setup(){
 
 // Compute the effective dash length for a span (same math as in renderLogo)
 function dashLenForSpan(baseLen, maxRunLen){
-  const eligible     = baseLen >= lenThresholdPx;
+  const eligible     = baseLen >= lenThreshold;
   const lenBiasBase  = (maxRunLen > 0) ? (baseLen / maxRunLen) : 0;  // 0..1
   const lenBiasShort = SMALL_LEN_BIAS;                                // kleine vaste bias voor korte runs
   const lenBias      = eligible ? lenBiasBase : lenBiasShort;
@@ -191,11 +238,12 @@ function computePerLetterBounds(){
       let maxRunLen = 0; for (const s of rows[r]) if (s.runLen > maxRunLen) maxRunLen = s.runLen;
       // displacement for this row
       let xShift = 0;
-      if (dispStep !== 0){
-        const denom = Math.max(1, rowsSetting - 1);
-        const t = r / denom;
-        const stepIndex = Math.round(t * dispStep);
-        xShift = stepIndex * DISPLACE_UNIT;
+      const gsize = Math.max(1, displaceGroupSize);
+      if (rowsSetting % gsize === 0){
+        const groups = Math.max(1, Math.floor(rowsSetting / gsize));
+        const sectionIndex = Math.floor(r / gsize);               // 0..groups-1
+        const centered = sectionIndex - (groups - 1) * 0.5;       // symmetric around 0
+        xShift = centered * DISPLACE_UNIT;                        // fixed offset per section
       }
       for (const seg of rows[r]){
         const rightEdgeX = baseX + seg.rightRel * layout.scale * widthFactor;
@@ -266,11 +314,6 @@ function computeLayoutFit(){
     ? (height - 2 * PADDING)
     : (height - 2 * PADDING) / (rowsSetting - 1);
 
-  // const contentH0 = (rowsSetting <= 1)
-  //   ? rowPitchNow
-  //   : (rowsSetting - 1) * rowPitchNow;
-
-  // Use original SVG spacing for bounds (no offsets)
   let leftmost = Infinity;
   let rightmost = -Infinity;
   for (let li = 0; li < layout.lettersOrder.length; li++){
@@ -285,11 +328,12 @@ function computeLayoutFit(){
 
       // displacement in this row
       let xShift = 0;
-      if (dispStep !== 0){
-        const denom = Math.max(1, rowsSetting - 1);
-        const t = r / denom;
-        const stepIndex = Math.round(t * dispStep);
-        xShift = stepIndex * DISPLACE_UNIT;
+      const gsize = Math.max(1, displaceGroupSize);
+      if (rowsSetting % gsize === 0){
+        const groups = Math.max(1, Math.floor(rowsSetting / gsize));
+        const sectionIndex = Math.floor(r / gsize);               // 0..groups-1
+        const centered = sectionIndex - (groups - 1) * 0.5;       // symmetric around 0
+        xShift = centered * DISPLACE_UNIT;                        // fixed offset per section
       }
 
       for (const seg of rows[r]){
@@ -355,7 +399,7 @@ function renderLogo(g){
         const rightEdgeX = baseX + span.rightRel * layout.scale * widthFactor; // widen x-distance inside glyph
         const baseLen = Math.max(0, span.runLen * layout.scale);
         // Alleen runs die groter zijn dan de instelbare drempel schalen mee
-        const eligible     = baseLen >= lenThresholdPx;
+        const eligible     = baseLen >= lenThreshold;
         const lenBiasBase  = (maxRunLen > 0) ? (span.runLen / maxRunLen) : 0;  // 0..1
         const lenBiasShort = SMALL_LEN_BIAS;                                    // kleine vaste bias voor korte runs
         const lenBias      = eligible ? lenBiasBase : lenBiasShort;
@@ -365,11 +409,12 @@ function renderLogo(g){
         const dashLenClamped = Math.min(dashLen, maxDash);
         // Displacement by snapped intervals across rows (optional)
         let xShift = 0;
-        if (dispStep !== 0){
-          const denom = Math.max(1, rowsSetting - 1);
-          const t = r / denom; // 0..1 over rows
-          const stepIndex = Math.round(t * dispStep); // signed steps
-          xShift = stepIndex * DISPLACE_UNIT;
+        const gsize = Math.max(1, displaceGroupSize);
+        if (rowsSetting % gsize === 0){
+          const groups = Math.max(1, Math.floor(rowsSetting / gsize));
+          const sectionIndex = Math.floor(r / gsize);               // 0..groups-1
+          const centered = sectionIndex - (groups - 1) * 0.5;       // symmetric around 0
+          xShift = centered * DISPLACE_UNIT;                        // fixed offset per section
         }
         if (roundedEdges) {
           drawRoundedTaper(g, rightEdgeX + xShift, y, dashLenClamped, lineThickness, TIP_RATIO);
@@ -555,7 +600,6 @@ function buildLayout(word, rowsCount = rowsSetting){
 
   // 2) Compute per-letter SVG layout and draw
   const up = word.split('').map(c => c.toUpperCase());
-  // Measure natural sizes
   const naturalDims = up.map(ch => glyphDims[ch] || { w: 0, h: 0 });
   const maxH = Math.max(1, ...naturalDims.map(d => d.h));
   const sumW = naturalDims.reduce((s,d) => s + d.w, 0);
@@ -564,15 +608,17 @@ function buildLayout(word, rowsCount = rowsSetting){
   const sW = (BUFFER_W * FIT_WIDTH_FRAC) / Math.max(1, sumW);
   const scaleUniform = Math.min(sH, sW, 1.0);
 
-  // Compute total scaled width and start X for centering
+  // Compute total scaled width and start X for centering (NO gaps in buffer)
   const letterWidths = naturalDims.map(d => d.w * scaleUniform);
-  const totalW = letterWidths.reduce((a,b)=>a+b,0);
+  const totalWLetters = letterWidths.reduce((a,b)=>a+b,0);
+  // GAP DOES NOT AFFECT BUFFER DRAWING — keep buffer tight to letters only
+  const totalW = totalWLetters;
   const startX = (BUFFER_W - totalW) * 0.5;
 
   // Vertical center (we’ll scan actual ink bounds later anyway)
   const yTop = (BUFFER_H - maxH * scaleUniform) * 0.5;
 
-  // Draw each SVG at pen position
+  // Draw each SVG at pen position, NO gap added in buffer
   const letterX = [];
   let pen = startX;
   up.forEach((ch, i) => {
@@ -585,7 +631,6 @@ function buildLayout(word, rowsCount = rowsSetting){
       glyphBuffer.image(img, pen, yTop, w, h);
       pen += w;
     } else {
-      // fallback spacing if missing
       const w = 40 * scaleUniform; pen += w;
     }
   });
@@ -606,7 +651,6 @@ function buildLayout(word, rowsCount = rowsSetting){
   const halfKernel = Math.max(1, Math.round(bandH * ROW_KERNEL_Y_FRAC));
 
   const rowsY = [];
-  // for (let r = 0; r < rowsCount; r++) rowsY.push( lerp(bandTop, bandBot, (r + 0.5) / rowsCount) );
 
   if (rowsCount <= 1){
     rowsY.push( (bandTop + bandBot) * 0.5 );
@@ -641,7 +685,7 @@ function buildLayout(word, rowsCount = rowsSetting){
   return {
     letters: perLetter,
     lettersOrder,
-    letterX: letterX.map(x => (x - startX) * scale),
+    letterX: letterX.map((x, i) => (x - startX) * scale + (i * Math.max(0, letterGap) * scale)),
     letterW: letterWidths,
     scale,
     rowPitch,
@@ -656,14 +700,7 @@ function initInterface(){
   sliderRows.style('width', '180px');
   sliderRows.input(() => {
     rowsSetting = sliderRows.value();
-    // keep displacement slider in sync with new rowsSetting
-    if (sliderDisplacement) {
-      sliderDisplacement.attribute('min', -rowsSetting);
-      sliderDisplacement.attribute('max', rowsSetting);
-      // clamp current dispStep to new range
-      dispStep = Math.max(-rowsSetting, Math.min(rowsSetting, dispStep));
-      sliderDisplacement.value(dispStep);
-    }
+    rebuildGroupSlider();
     layout = buildLayout(TEXT, rowsSetting);
     redraw(); positionUI(); redrawUI();
   });
@@ -682,17 +719,21 @@ function initInterface(){
     redraw(); positionUI(); redrawUI();
   });
 
-  sliderDisplacement = createSlider(-rowsSetting, rowsSetting, dispStep, 1);
-  sliderDisplacement.style('width', '180px');
-  sliderDisplacement.input(() => {
-    dispStep = sliderDisplacement.value();
-    redraw(); positionUI(); redrawUI();
-  });
+  // Displace groups (number of groups; options are divisors of rowsSetting)
+  rebuildGroupSlider();
   
   sliderWidth = createSlider(50, 300, Math.round(widthFactor * 100), 1);
   sliderWidth.style('width', '180px');
   sliderWidth.input(() => {
     widthFactor = sliderWidth.value() / 100;
+    redraw(); positionUI(); redrawUI();
+  });
+
+  sliderGap = createSlider(0, 150, letterGap, 1);
+  sliderGap.style('width', '180px');
+  sliderGap.input(() => {
+    letterGap = sliderGap.value();
+    layout = buildLayout(TEXT, rowsSetting);
     redraw(); positionUI(); redrawUI();
   });
 
@@ -711,7 +752,7 @@ function initInterface(){
   });
 }
 
-// ====== debugMode OVERLAY ======
+// ====== debug OVERLAY ======
 function drawdebugModeOverlay(){
   push();
   noFill(); stroke(0, 60); strokeWeight(1);
@@ -721,11 +762,7 @@ function drawdebugModeOverlay(){
   translate(left, top);
   scale(sFit, sFit);
 
-  // reconstruct bandH from layout rows for kernel estimation
-  const totalBandH = (layout.rowsY.length > 1) ? ((layout.rowsY[layout.rowsY.length-1] - layout.rowsY[0]) + rowPitchNow) : rowPitchNow;
-  const halfKernel = Math.max(1, Math.round(totalBandH * ROW_KERNEL_Y_FRAC / rowsSetting));
-
-  // letter boxes — based on original SVG layout (no offsets)
+  // letter boxes based on original SVG layout
   const tEff2 = 1 + (widthFactor - 1) * TRACK_STRENGTH;
   const boxesLeft = layout.letterX.map(x => x * tEff2);
   const boxesW    = layout.letterW.map(w => w * layout.scale);
