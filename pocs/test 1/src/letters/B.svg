@@ -1,18 +1,6 @@
-<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<!-- Created with Inkscape (http://www.inkscape.org/) -->
-
-<svg
-   width="21.166695mm"
-   height="29.977289mm"
-   viewBox="0 0 21.166695 29.977289"
-   version="1.1"
-   id="svg1"
-   xml:space="preserve"
-   xmlns="http://www.w3.org/2000/svg"
-   xmlns:svg="http://www.w3.org/2000/svg"><defs
-     id="defs1" /><g
-     id="layer1"
-     transform="translate(-41.425064,-178.46127)"><path
-       d="m 58.649439,178.46126 2.46063,2.72521 1.08479,2.72521 0.0794,2.72521 -0.37042,2.72521 -1.79917,2.72521 0.71438,2.7252 1.32292,2.72521 0.44979,2.72521 v 2.72521 l -1.21709,2.72521 -2.0902,2.72521 H 41.451523 l -0.02646,-29.9773 z m -8.46667,24.55334 h 3.54542 v -5.47688 h -3.54542 z m -0.0265,-13.6525 h 3.54542 v -2.72521 h -3.54542 z"
-       stroke-width="0"
-       id="path1-8" /></g></svg>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="b" data-name="Layer 2" xmlns="http://www.w3.org/2000/svg" width="80.05" height="113.386" viewBox="0 0 80.05 113.386">
+  <g id="c" data-name="Laag 1">
+    <path d="m65.115,0l9.303,10.308,4.07,10.308.291,10.308-1.454,10.308-6.787,10.308,2.724,10.308,5.042,10.308,1.744,10.308v10.308l-4.652,10.308-7.85,10.308H.107L0,0h65.115Zm-32.031,97.573h13.407v-30.035h-13.407v30.035Zm-.107-51.318h13.407v-20.788h-13.407v20.788Z" stroke-width="0"/>
+  </g>
+</svg>

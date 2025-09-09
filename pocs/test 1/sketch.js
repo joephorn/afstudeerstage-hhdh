@@ -6,41 +6,36 @@ const TIP_RATIO         = 0.25;
 const PADDING           = 40;        // canvas padding
 const DISPLACEMENT_LVL  = 1;
 const DISPLACE_UNIT     = 20;        // px per row step for displacement
-const LEN_SCALE_STRENGTH = 0.5;     // 0..1 — hoeveel van (widthFactor-1) wordt toegepast op lange runs (lager = minder snel meeschalen)
+const LEN_SCALE_STRENGTH = 1;     // 0..1 — hoeveel van (widthFactor-1) wordt toegepast op lange runs (lager = minder snel meeschalen)
 const TRACK_STRENGTH    = 1;    // meeschalen van lange lijnen (horizontaal)
 const SMALL_LEN_BIAS   = 1;    // meeschalen van korte lijnen (verticaal)
 const VIEW_SCALE        = 0.8;   // visual CSS scale of the canvas (no change to drawing scale)
-const SAFE_MARGIN      = 16;    // keep content this far from canvas edges when auto-fitting
+const SAFE_MARGIN      = 0;    // keep content this far from canvas edges when auto-fitting
 const LETTER_GAP       = 0;    // px fixed spacing between letters (visual)
-const BOUND_MIN_LEN    = 4;
+const BOUND_MIN_LEN    = 2;
 
 // Scan behavior
 const BRIDGE_PIXELS     = 2;         // allow bridging small white gaps (0 = off)
-const INK_THRESHOLD     = 160;
+const INK_THRESHOLD     = 140;
+const BAND_MIN_COVER_FRAC = 0.035; // ≥3.5% of word width must be continuous ink for a row to count
 
 // Row sampling kernel (vertical) in the glyph buffer
-const ROW_KERNEL_Y_FRAC = 0.015; // ~1.5% van bandhoogte → 1–3px meestal
-const MIN_RUN_PX_BUFFER = 2;     // filter micro-runs die ruis veroorzaken
+const ROW_KERNEL_Y_FRAC = 0.015; // % van bandhoogte → 1–3px meestal
+const MIN_RUN_PX_BUFFER = 0;     // filter micro-runs die ruis veroorzaken
 
 // Offscreen buffer + auto-fit targets
 const BUFFER_W          = 2600;
 const BUFFER_H          = 700;
-const FIT_HEIGHT_FRAC   = 0.70;      // asc+dsc should use ≤ this of buffer height
-const FIT_WIDTH_FRAC    = 0.80;      // total word width ≤ this of buffer width
+const FIT_HEIGHT_FRAC   = 1;      // asc+dsc should use ≤ this of buffer height
+const FIT_WIDTH_FRAC    = 1;      // total word width ≤ this of buffer width
 
-// Vertical scan band (relative to asc/desc around baseline)
-const BAND_TOP_FACTOR   = 0.92;      // baseline - asc * factor
-const BAND_BOT_FACTOR   = 1.04;      // baseline + desc * factor
-
-const FONT_PATH         = './src/Machine-Bold.otf';
-const LETTERS_PATH      = './src/letters/'; // expects A.svg, B.svg, ...
+const LETTERS_PATH      = './src/letters/';
 let glyphImgs = {};   // map: char -> p5.Image (SVG rasterized)
 let glyphDims = {};   // map: char -> {w,h}
 
 // ====== STATE ======
 let glyphBuffer;      // offscreen p5.Graphics used for scanning
 let layout;           // computed positions + spans
-let loadedFont;
 let rowsSetting = ROWS;
 let sliderRows;
 let lineThickness = LINE_HEIGHT;
@@ -49,7 +44,7 @@ let dispStep = 1;                    // -N..+N → per-row shift = dispStep * DI
 let sliderThickness, sliderHeight, sliderDisplacement, sliderWidth;
 let checkboxRounded, checkboxdebugMode;
 let roundedEdges = true;
-let debugMode = false;
+let debugMode = true;
 let widthFactor = 1.0;
 let lenThresholdPx = 65;
 
@@ -267,15 +262,19 @@ function computePackedLetterBoxes(){
 
 function computeLayoutFit(){
   const tEff = 1 + (widthFactor - 1) * TRACK_STRENGTH;
-  const rowPitchNow = (height - 2 * PADDING) / rowsSetting;
+  const rowPitchNow = (rowsSetting <= 1)
+    ? (height - 2 * PADDING)
+    : (height - 2 * PADDING) / (rowsSetting - 1);
 
-  const { offsets } = computeSpacedOffsets();
+  // const contentH0 = (rowsSetting <= 1)
+  //   ? rowPitchNow
+  //   : (rowsSetting - 1) * rowPitchNow;
 
-  // Use spaced letter positions for bounds
+  // Use original SVG spacing for bounds (no offsets)
   let leftmost = Infinity;
   let rightmost = -Infinity;
   for (let li = 0; li < layout.lettersOrder.length; li++){
-    const baseX = layout.letterX[li] * tEff + offsets[li];
+    const baseX = layout.letterX[li] * tEff;
     const letterKey = layout.lettersOrder[li];
     const rows = layout.letters[letterKey];
 
@@ -335,14 +334,15 @@ function renderLogo(g){
   g.translate(left, top);
   g.scale(sFit, sFit);
   // (Debug rendering of packed letter boxes removed for clarity)
-  rowYsCanvas = Array.from({ length: rowsSetting }, (_, r) => r * rowPitchNow + rowPitchNow * 0.5);
+  rowYsCanvas = (rowsSetting <= 1)
+    ? [0]
+    : Array.from({ length: rowsSetting }, (_, r) => r * rowPitchNow);
 
-  const { offsets } = computeSpacedOffsets();
+  // Use original SVG letter positions (no offsets)
   for (let li = 0; li < layout.lettersOrder.length; li++){
     const letterKey   = layout.lettersOrder[li];
     const rowsForLetter = layout.letters[letterKey];
-    // Use spaced baseX (actual letter start + spacing offset)
-    const baseX = layout.letterX[li] * tEff + offsets[li]; // apply spacing offset
+    const baseX = layout.letterX[li] * tEff;
 
     for (let r = 0; r < rowsForLetter.length; r++){
       const y = rowYsCanvas[r];
@@ -360,6 +360,9 @@ function renderLogo(g){
         const lenBiasShort = SMALL_LEN_BIAS;                                    // kleine vaste bias voor korte runs
         const lenBias      = eligible ? lenBiasBase : lenBiasShort;
         const dashLen      = baseLen * (1 + (widthFactor - 1) * lenBias * LEN_SCALE_STRENGTH);
+        // Clamp dash length to the letter’s left edge (no wider than SVG envelope)
+        const maxDash = Math.max(0, rightEdgeX - baseX);
+        const dashLenClamped = Math.min(dashLen, maxDash);
         // Displacement by snapped intervals across rows (optional)
         let xShift = 0;
         if (dispStep !== 0){
@@ -369,9 +372,9 @@ function renderLogo(g){
           xShift = stepIndex * DISPLACE_UNIT;
         }
         if (roundedEdges) {
-          drawRoundedTaper(g, rightEdgeX + xShift, y, dashLen, lineThickness, TIP_RATIO);
+          drawRoundedTaper(g, rightEdgeX + xShift, y, dashLenClamped, lineThickness, TIP_RATIO);
         } else {
-          drawStraightTaper(g, rightEdgeX + xShift, y, dashLen, lineThickness);
+          drawStraightTaper(g, rightEdgeX + xShift, y, dashLenClamped, lineThickness);
         }
       }
     }
@@ -507,6 +510,39 @@ function measureInkVerticalBounds(g, x1 = 0, x2 = null){
   return { top, bot };
 }
 
+// Robust vertical bounds: require a minimum continuous run length across the word
+function measureInkVerticalBoundsRobust(g, x1 = 0, x2 = null){
+  if (x2 == null) x2 = g.width - 1;
+  const xmin = Math.max(0, Math.floor(x1));
+  const xmax = Math.min(g.width - 1, Math.ceil(x2));
+  const spanW = Math.max(1, xmax - xmin + 1);
+  const minCover = Math.max(1, Math.round(spanW * BAND_MIN_COVER_FRAC));
+  g.loadPixels();
+  let top = g.height, bot = -1;
+  for (let y = 0; y < g.height; y++){
+    let best = 0, run = 0, gap = 0; // allow tiny bridges like scanRowInRange
+    for (let x = xmin; x <= xmax; x++){
+      const idx = 4 * (y * g.width + x);
+      const on = g.pixels[idx] < INK_THRESHOLD;
+      if (on){
+        if (gap > 0 && gap <= BRIDGE_PIXELS){ run += gap; gap = 0; }
+        run++;
+      } else {
+        if (run > 0){ if (run > best) best = run; run = 0; }
+        gap++;
+        if (gap > BRIDGE_PIXELS) gap = 0; // stop bridging after threshold
+      }
+    }
+    if (run > best) best = run; // flush tail
+    if (best >= minCover){
+      if (y < top) top = y;
+      if (y > bot) bot = y;
+    }
+  }
+  if (bot < 0) return { top: 0, bot: g.height - 1 };
+  return { top, bot };
+}
+
 // ====== LAYOUT PIPELINE ======
 function buildLayout(word, rowsCount = rowsSetting){
   // 1) Create offscreen buffer with no smoothing (hard edges for scanning)
@@ -556,12 +592,12 @@ function buildLayout(word, rowsCount = rowsSetting){
   glyphBuffer.loadPixels();
 
   // 4) Prepare vertical scan band (robust): measure actual ink bounds instead of trusting font metrics
-  const { top: inkTop, bot: inkBot } = measureInkVerticalBounds(
+  const { top: inkTop, bot: inkBot } = measureInkVerticalBoundsRobust(
     glyphBuffer,
     Math.floor(startX),
     Math.ceil(startX + totalW) - 1
   );
-  const pad = Math.round(0.02 * BUFFER_H); // small breathing space (2%)
+  const pad = 0; // small breathing space (2%)
   let bandTop = Math.max(0, inkTop - pad);
   let bandBot = Math.min(BUFFER_H - 1, inkBot + pad);
   if (bandTop > bandBot){ const t = bandTop; bandTop = bandBot; bandBot = t; }
@@ -570,7 +606,15 @@ function buildLayout(word, rowsCount = rowsSetting){
   const halfKernel = Math.max(1, Math.round(bandH * ROW_KERNEL_Y_FRAC));
 
   const rowsY = [];
-  for (let r = 0; r < rowsCount; r++) rowsY.push( lerp(bandTop, bandBot, (r + 0.5) / rowsCount) );
+  // for (let r = 0; r < rowsCount; r++) rowsY.push( lerp(bandTop, bandBot, (r + 0.5) / rowsCount) );
+
+  if (rowsCount <= 1){
+    rowsY.push( (bandTop + bandBot) * 0.5 );
+  } else {
+    for (let r = 0; r < rowsCount; r++){
+      rowsY.push( lerp(bandTop, bandBot, r / (rowsCount - 1)) ); // hits both ends
+    }
+  }
 
   // 5) Build letter ranges and scan per row
   const ranges = letterWidths.map((w, i) => ({ x1: Math.floor(letterX[i]), x2: Math.ceil(letterX[i] + w) - 1 }));
@@ -681,32 +725,41 @@ function drawdebugModeOverlay(){
   const totalBandH = (layout.rowsY.length > 1) ? ((layout.rowsY[layout.rowsY.length-1] - layout.rowsY[0]) + rowPitchNow) : rowPitchNow;
   const halfKernel = Math.max(1, Math.round(totalBandH * ROW_KERNEL_Y_FRAC / rowsSetting));
 
-  // letter boxes — spaced (fixed gap) based on visual widths
-  stroke(0, 160);
-  const { targetLeft, widths, start, end } = computeSpacedOffsets();
+  // letter boxes — based on original SVG layout (no offsets)
+  const tEff2 = 1 + (widthFactor - 1) * TRACK_STRENGTH;
+  const boxesLeft = layout.letterX.map(x => x * tEff2);
+  const boxesW    = layout.letterW.map(w => w * layout.scale);
+  const start = Math.min(...boxesLeft);
+  const end   = Math.max(...boxesLeft.map((x,i)=> x + boxesW[i]));
   const totalH = layout.rowsY.length * rowPitchNow;
-  for (let i = 0; i < widths.length; i++){
-    rect(targetLeft[i], 0, widths[i], totalH);
+  stroke(0,160);
+  for (let i = 0; i < boxesLeft.length; i++){
+    rect(boxesLeft[i], 0, boxesW[i], totalH);
   }
 
-  // row guides spanning the spaced bounds
+  // row guides spanning the original bounds
   stroke(0, 60);
   for (let r = 0; r < layout.rowsY.length; r++){
-    const y = rowYsCanvas[r] ?? (rowPitchNow * r + rowPitchNow * 0.5);
+    const y = (rowYsCanvas[r] !== undefined)
+      ? rowYsCanvas[r]
+      : (rowsSetting <= 1 ? 0 : r * rowPitchNow);
     line(start, y, end, y);
   }
 
-  // scanned spans + right edges (using spaced baseX)
-  const { offsets } = computeSpacedOffsets();
+  // scanned spans + right edges (using original baseX, clamp dash to box)
   for (let li = 0; li < layout.lettersOrder.length; li++){
     const letterKey = layout.lettersOrder[li];
     const rows = layout.letters[letterKey];
-    const baseX = layout.letterX[li] * tEff + offsets[li];
+    const baseX = layout.letterX[li] * tEff;
     for (let r = 0; r < rows.length; r++){
       const y = rowYsCanvas[r] ?? (rowPitchNow * r + rowPitchNow * 0.5);
       for (const seg of rows[r]){
-        const x2 = baseX + seg.rightRel * layout.scale * widthFactor;
-        const x1 = x2 - seg.runLen * layout.scale;
+        const x2Raw = baseX + seg.rightRel * layout.scale * widthFactor;
+        const maxDash = Math.max(0, x2Raw - baseX);
+        const baseLen = Math.max(0, seg.runLen * layout.scale);
+        const dlen    = Math.min(baseLen, maxDash);
+        const x1 = x2Raw - dlen;
+        const x2 = x2Raw;
         stroke(0,180,0); line(x1, y, x2, y);
         noStroke(); fill(255,0,0); circle(x2, y, 3);
       }

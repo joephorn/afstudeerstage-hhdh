@@ -1,19 +1,6 @@
-<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<!-- Created with Inkscape (http://www.inkscape.org/) -->
-
-<svg
-   width="23.759581mm"
-   height="30.003759mm"
-   viewBox="0 0 23.759581 30.003759"
-   version="1.1"
-   id="svg1"
-   xml:space="preserve"
-   xmlns="http://www.w3.org/2000/svg"
-   xmlns:svg="http://www.w3.org/2000/svg"><defs
-     id="defs1" /><g
-     id="layer1"
-     transform="translate(-94.229969,-179.63274)"><polygon
-       points="89.8,0 57,0 57,41.2 50.2,41.2 32.7,0 0,0 0,113.4 32.8,113.4 32.8,72.1 39.7,72.1 57.2,113.4 89.8,113.4 "
-       stroke-width="0"
-       id="polygon1"
-       transform="matrix(0.26458333,0,0,0.26458333,94.229972,179.63274)" /></g></svg>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="b" data-name="Layer 2" xmlns="http://www.w3.org/2000/svg" width="89.792" height="113.386" viewBox="0 0 89.792 113.386">
+  <g id="c" data-name="Laag 1">
+    <polygon points="0 0 .107 113.386 32.793 113.386 32.793 66.738 37.382 66.763 57.106 113.386 89.792 113.386 89.684 0 56.998 0 56.998 45.585 51.898 45.531 32.686 0 0 0" stroke-width="0"/>
+  </g>
+</svg>
