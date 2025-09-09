@@ -123,5 +123,3 @@ window.draw  = drawFn;
 
 window.__startRecording = () => { window.__recording = true; };
 window.__stopRecording  = () => { window.__recording  = false; };
-
-// (remove mouse/touch input handlers for redraw)

@@ -40,7 +40,7 @@ let sliderRows, sliderThickness, sliderHeight, sliderDisplacement, sliderWidth, 
 let gapSetting = 5;
 let displaceGroupSize = 3;
 let displaceGroupCount = 2;
-let checkboxRounded, checkboxdebugMode;
+let checkboxRounded, checkboxdebugMode, checkboxAutoRandom;
 let roundedEdges = true;
 let debugMode = false;
 let widthSetting = 0.96;
@@ -48,11 +48,16 @@ let lenThreshold = 65;
 
 let baseRowPitch;   // baseline row pitch derived at startup
 
+// random animate
+let lastAutoRandomMs = 0;
+const RANDOM_INTERVAL_MS = 1000;
+let autoRandomActive = false;
+
 // UI canvas (separate)
 let canvasContainer;
 let uiContainer;
 let uiWidth = 360;
-let uiHeight = 250;
+let uiHeight = 300;
 let uiP5 = null;             // p5 instance for the UI canvas (instance mode)
 
 let rowYsCanvas = []; // y-position of each row in canvas coordinates
@@ -102,6 +107,70 @@ function rebuildGroupSlider(){
   displaceGroupSize = Math.max(1, Math.floor(rowsSetting / displaceGroupCount));
 }
 
+function randInt(min, max){ return Math.floor(Math.random() * (max - min + 1)) + min; }
+function randFloat(min, max){ return Math.random() * (max - min) + min; }
+
+function applyOneRandomTweak(){
+  // kies 1 parameter
+  const choices = ['width','gap','groups','line','height'];
+  const pick = choices[randInt(0, choices.length - 1)];
+  let needsLayout = false;
+  let needsResize = false;
+
+  if (pick === 'width'){
+    // 0.85..1.20
+    widthSetting = Math.max(0.5, Math.min(3.0, randFloat(0.85, 1.20)));
+    if (sliderWidth) sliderWidth.value(Math.round(widthSetting * 100));
+  } else if (pick === 'gap'){
+    // 0..120 px
+    gapSetting = randInt(0, 120);
+    if (sliderGap) sliderGap.value(gapSetting);
+    needsLayout = true;
+  } else if (pick === 'groups'){
+    // kies geldige groepsaantallen (delers van rowsSetting)
+    const opts = divisorsAsc(rowsSetting);
+    const curIdx = Math.max(0, opts.indexOf(displaceGroupCount));
+    let idx = randInt(0, Math.max(0, opts.length - 1));
+    if (opts.length > 1 && idx === curIdx){ idx = (idx + 1) % opts.length; }
+    displaceGroupCount = opts[idx];
+    displaceGroupSize  = Math.max(1, Math.floor(rowsSetting / displaceGroupCount));
+    // UI-slider updaten als aanwezig (index-slider over _groupsOpts)
+    if (sliderDisplacement && typeof sliderDisplacement.value === 'function'){
+      const i = Math.max(0, opts.indexOf(displaceGroupCount));
+      sliderDisplacement.value(i);
+    }
+  } else if (pick === 'line'){
+    // 1..25 px
+    lineThickness = randInt(1, 25);
+    if (sliderThickness) sliderThickness.value(lineThickness);
+  } else if (pick === 'height'){
+    // 70%..130% (geclamped binnen je slider 50..200)
+    heightScale = Math.max(0.5, Math.min(2.0, randFloat(0.70, 1.30)));
+    if (sliderHeight) sliderHeight.value(Math.round(heightScale * 100));
+    needsResize = true;
+  }
+
+  if (needsResize){
+    resizeCanvas(width, desiredCanvasHeight(), true);
+  }
+  if (needsLayout){
+    layout = buildLayout(LOGO_TEXT, rowsSetting);
+  }
+
+  // redraw + UI
+  redraw();
+  redrawUI();
+}
+
+function autoRandomizeTick(){
+  if (!autoRandomActive || !checkboxAutoRandom || !checkboxAutoRandom.checked()) return;
+  const now = millis();
+  if (now - lastAutoRandomMs >= RANDOM_INTERVAL_MS){
+    lastAutoRandomMs = now;
+    applyOneRandomTweak();
+  }
+}
+
 function positionUI(){
   if (!mainCanvas || !uiContainer) return;
   const x = Math.max(0, windowWidth - uiWidth - 16);
@@ -140,10 +209,11 @@ function positionControls(){
   if (sliderThickness)      { sliderThickness.parent(uiContainer);      sliderThickness.position(left, top); sliderThickness.style('z-index', '1000'); }  top += interval;
   if (sliderHeight)         { sliderHeight.parent(uiContainer);         sliderHeight.position(left, top); sliderHeight.style('z-index', '1000'); }  top += interval;
   if (sliderWidth)          { sliderWidth.parent(uiContainer);          sliderWidth.position(left, top); sliderWidth.style('z-index','1000'); }  top += interval;
-  if (sliderGap)            { sliderGap.parent(uiContainer);              sliderGap.position(left, top); sliderGap.style('z-index','1000'); }  top += interval;
+  if (sliderGap)            { sliderGap.parent(uiContainer);            sliderGap.position(left, top); sliderGap.style('z-index','1000'); }  top += interval;
   if (sliderDisplacement)   { sliderDisplacement.parent(uiContainer);   sliderDisplacement.position(left, top); sliderDisplacement.style('z-index', '1000'); }  top += interval;
   if (checkboxRounded)      { checkboxRounded.parent(uiContainer);      checkboxRounded.position(left, top); }  top += interval;
   if (checkboxdebugMode)    { checkboxdebugMode.parent(uiContainer);    checkboxdebugMode.position(left, top); }  top += interval;
+  if (checkboxAutoRandom)   { checkboxAutoRandom.parent(uiContainer);   checkboxAutoRandom.position(left, top); }  top += interval;
 }
 
 function redrawUI(){
@@ -377,11 +447,11 @@ function renderLogo(g){
 }
 
 function draw(){
+  autoRandomizeTick();
   background(250);
   noStroke();
   renderLogo(this);
   if (debugMode) drawdebugModeOverlay();
-  positionUI();
 }
 
 // ====== DRAWING ======
@@ -668,6 +738,20 @@ function initInterface(){
   checkboxdebugMode.changed(() => {
     debugMode = checkboxdebugMode.checked();
     redraw(); positionUI(); redrawUI();
+  });
+
+  checkboxAutoRandom = createCheckbox('Auto randomize', false);
+  checkboxAutoRandom.changed(() => {
+    lastAutoRandomMs = millis();
+    autoRandomActive = checkboxAutoRandom.checked();
+    if (checkboxAutoRandom.checked()){
+      loop();
+    } else {
+      noLoop();
+      lastAutoRandomMs = millis();
+      redraw();
+    }
+    positionUI(); redrawUI();
   });
 }
 
