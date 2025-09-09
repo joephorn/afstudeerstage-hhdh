@@ -3,20 +3,33 @@
 <head>
   <meta charset="utf-8" />
   <title>p5 export poc</title>
+
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
   <script src="https://unpkg.com/p5.js-svg@1.6.0"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/3.0.2/jspdf.umd.min.js"></script>
   <script src="https://unpkg.com/svg2pdf.js@2.2.4/dist/svg2pdf.umd.min.js"></script>
-  <script type="module" src="./sketch.js"></script>
+
+  <!-- CCapture stack -->
+  <script src="./src/CCapture.js"></script>
+  <script src="./src/webm-writer-0.2.0.js"></script>
+  <script src="./src/download.js"></script>
+
   <style>button{margin-right:8px;margin-top:8px}</style>
 </head>
 <body>
   <button onclick="save('sketch.svg')">Export SVG</button>
   <button onclick="exportPDF()">Export PDF (vector)</button>
   <button onclick="exportPNG()">Export PNG</button>
-  <button onclick="exportWebM()">Export WebM</button>
+
+  <!-- nieuwe knop die direct CCapture aanstuurt -->
+  <button onclick="startWebMCapture({ fps: 60, seconds: 4, filename: 'sketch.webm' })">
+    Export WebM (CCapture)
+  </button>
+
   <button onclick="exportHTML({ filename: 'sketch.html', title: 'pagina naam' })">Export HTML</button>
-  <button onclick="exportLottie()">Export Lottie</button>
+
+  <!-- je sketch (houd als module uit als je dat al had; hier non-module) -->
+  <script src="./sketch.js"></script>
 
   <script>
     async function exportPDF() {
@@ -26,7 +39,6 @@
         unit: "pt",
         format: [width, height],
       });
-      // Try multiple attachment patterns for svg2pdf
       const pickFn = (...cands) => cands.find(fn => typeof fn === "function") || null;
       const svg2pdfFn = pickFn(
         window.svg2pdf,
@@ -43,11 +55,7 @@
       }
       const svg = document.querySelector("svg");
       await svg2pdfFn(svg, pdf, {
-        x: 0,
-        y: 0,
-        width: width,
-        height: height,
-        useCSS: true,
+        x: 0, y: 0, width: width, height: height, useCSS: true,
       });
       pdf.save("sketch.pdf");
     }
@@ -75,72 +83,16 @@
       c.toBlob(b => { const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download=filename; a.click(); }, 'image/png');
     }
 
-    async function exportMP4() {
-      
-    }
-
-    async function exportWebM({ fps = 60, seconds = 4, filename = 'sketch.webm', bitrateMbps = 8 } = {}) {
-      // Zet sketch in 'recording' modus (tekent mee naar bitmap alleen tijdens opname)
-      if (typeof window.__startRecording === 'function') window.__startRecording();
-    
-      // Gebruik het bitmap-canvas dat je in sketch.js expose't (NIET het SVG-canvas)
-      const canvas = (typeof window.captureCanvas !== 'undefined' && window.captureCanvas)
-        ? window.captureCanvas
-        : (typeof window.getRecCanvas === 'function' ? window.getRecCanvas() : null);
-      if (!canvas) {
-        alert('Recorder canvas not found. Zorg dat sketch.js window.captureCanvas of window.getRecCanvas() zet.');
-        if (typeof window.__stopRecording === 'function') window.__stopRecording();
-        return;
-      }
-    
-      // Start de recorder
-      const stream = canvas.captureStream(fps);
-      const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-        ? 'video/webm;codecs=vp9'
-        : (MediaRecorder.isTypeSupported('video/webm;codecs=vp8') ? 'video/webm;codecs=vp8' : 'video/webm');
-      const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bitrateMbps * 1_000_000 });
-    
-      const chunks = [];
-      recorder.ondataavailable = e => e.data && e.data.size && chunks.push(e.data);
-      recorder.onstop = () => {
-        // Recording modus uitzetten
-        if (typeof window.__stopRecording === 'function') window.__stopRecording();
-        const blob = new Blob(chunks, { type: mime });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = filename;
-        a.click();
-        URL.revokeObjectURL(a.href);
-      };
-    
-      recorder.start();
-    
-      // Drive frames deterministisch: roep p5's draw() aan met redraw() op exact FPS
-      const total = Math.max(1, Math.round(fps * seconds));
-      let i = 0;
-      const handle = setInterval(() => {
-        if (typeof window.redraw === 'function') window.redraw(); // triggert draw()
-        i++;
-        if (i >= total) {
-          clearInterval(handle);
-          recorder.stop();
-        }
-      }, 1000 / fps);
-    }
-
     function exportHTML({ filename = 'sketch.html', title = 'Sketch Export' } = {}) {
       const svg = document.querySelector('svg');
       if (!svg) { console.error('SVG not ready'); return; }
 
-      // Clone met namespaces
       const clone = svg.cloneNode(true);
       if (!clone.getAttribute('xmlns')) clone.setAttribute('xmlns','http://www.w3.org/2000/svg');
       if (!clone.getAttribute('xmlns:xlink')) clone.setAttribute('xmlns:xlink','http://www.w3.org/1999/xlink');
 
-      // Maak een nieuw HTML-document in memory
       const doc = document.implementation.createHTMLDocument(title);
 
-      // Style
       const style = doc.createElement('style');
       style.textContent = `
         html,body { margin:0; padding:0; background:#f0f0f0; }
@@ -149,13 +101,11 @@
       `;
       doc.head.appendChild(style);
 
-      // Content
       const wrap = doc.createElement('div');
       wrap.className = 'wrap';
       wrap.appendChild(doc.importNode(clone, true));
       doc.body.appendChild(wrap);
 
-      // Serialize + download
       const htmlString = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
       const blob = new Blob([htmlString], { type: 'text/html;charset=utf-8' });
       const a = document.createElement('a');
@@ -163,10 +113,6 @@
       a.href = URL.createObjectURL(blob);
       a.click();
       URL.revokeObjectURL(a.href);
-    }
-
-    async function exportLottie() {
-        
     }
   </script>
 </body>
