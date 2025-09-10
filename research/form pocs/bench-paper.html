@@ -26,31 +26,68 @@
 <script src="https://unpkg.com/paper/dist/paper-full.min.js"></script>
 <script src="https://unpkg.com/gsap@3/dist/gsap.min.js"></script>
 <script>
-/* ===== Bench helper (zelfde API als p5-versie) ===== */
-const bench = {tStart:0,frames:0,samples:[],inputMarks:[],inputLatencies:[],overruns:0,last:0};
+// ===== Realistic RAF-based benchmark (Paper) =====
+const bench = {
+  tStart: 0,
+  frames: 0,
+  fps: [],            // per-RAF fps samples
+  overruns: 0,        // frames > 16.7ms
+  lastRAF: 0,
+  inputMarks: [],     // UI change timestamps
+  inputLatencies: [], // UI->next frame latencies
+  rafId: 0
+};
+
 function markInput(){ bench.inputMarks.push(performance.now()); }
-function onAfterDraw(){
-  const now = performance.now();
-  bench.frames++;
-  const dt = now - (bench.last||now);
-  bench.last = now;
-  bench.samples.push(1000/Math.max(0.0001,dt));
-  if (dt>16.7) bench.overruns++;
+
+function _rafSample(now){
+  if (!bench.lastRAF) bench.lastRAF = now;
+  const dt = now - bench.lastRAF;
+  bench.lastRAF = now;
+
+  if (dt > 0){
+    bench.fps.push(1000 / dt);
+    if (dt > 16.7) bench.overruns++;
+  }
   if (bench.inputMarks.length){
     bench.inputLatencies.push(now - bench.inputMarks.shift());
   }
+
+  bench.frames++;
+  bench.rafId = requestAnimationFrame(_rafSample);
 }
-function benchStart(){ bench.tStart=performance.now(); }
+
+function benchStart(){
+  bench.tStart = performance.now();
+  bench.frames = 0;
+  bench.fps = [];
+  bench.overruns = 0;
+  bench.lastRAF = 0;
+  bench.inputMarks = [];
+  bench.inputLatencies = [];
+  cancelAnimationFrame(bench.rafId);
+  bench.rafId = requestAnimationFrame(_rafSample);
+}
+
 function benchEnd(){
-  const dur=(performance.now()-bench.tStart)/1000;
-  const s=bench.samples.slice().sort((a,b)=>a-b);
-  const p1=s[Math.floor(0.01*s.length)]||0;
-  const avg=bench.samples.reduce((a,x)=>a+x,0)/Math.max(1,s.length);
-  const mem=performance.memory?Math.round(performance.memory.usedJSHeapSize/1048576):-1;
-  const medLat=bench.inputLatencies.length?bench.inputLatencies.sort((a,b)=>a-b)[Math.floor(bench.inputLatencies.length/2)]:-1;
-  console.table({stack:'Paper+GSAP',duration_s:dur.toFixed(1),avgFPS:avg.toFixed(1),p1LowFPS:p1.toFixed(1),
-    frameBudgetOverruns_pct:((bench.overruns/Math.max(1,bench.samples.length))*100).toFixed(1),
-    medianInputLatency_ms:medLat.toFixed(1),heapMB:mem});
+  cancelAnimationFrame(bench.rafId);
+  const dur = (performance.now() - bench.tStart) / 1000;
+  const fpsSorted = bench.fps.slice().sort((a,b)=>a-b);
+  const avg = bench.fps.reduce((s,x)=>s+x,0) / Math.max(1, bench.fps.length);
+  const p1  = fpsSorted[Math.floor(0.01 * fpsSorted.length)] || 0;
+  const overrunsPct = bench.fps.length ? (bench.overruns / bench.fps.length) * 100 : 0;
+  const medLat = bench.inputLatencies.length ? bench.inputLatencies.slice().sort((a,b)=>a-b)[Math.floor(bench.inputLatencies.length/2)] : -1;
+  const heapMB = performance.memory ? Math.round(performance.memory.usedJSHeapSize/1048576) : -1;
+
+  console.table({
+    stack: 'Paper+GSAP',
+    duration_s: dur.toFixed(1),
+    avgFPS: avg.toFixed(1),
+    p1LowFPS: p1.toFixed(1),
+    frameBudgetOverruns_pct: overrunsPct.toFixed(1),
+    medianInputLatency_ms: medLat.toFixed(1),
+    heapMB
+  });
 }
 
 /* ===== Setup Paper ===== */
@@ -87,12 +124,14 @@ function spawnScene(){
   // non-text vectors
   for (let i=0;i<SHAPES;i++){
     const p = makePolygon(random(0,view.size.width), random(0,view.size.height), random(6,60), randint(3,8));
-    p.fillColor = new paper.Color(0.92,0.92,0.92);
+    const v = 0.85 + Math.random() * 0.15; // 0.85..1.0
+    p.fillColor = new paper.Color(v, v, v);
+    p.strokeColor = null;
     p.data = { rot: random(0,Math.PI*2), k: random(0.3,1.2), rBase: p.bounds.width*0.5 };
     ringItems.push(p);
   }
 
-  // “vector text”: echte vector glyphs (Paper TextItem → convert to paths)
+  // “vector text”: gebruik PointText direct (exporteert als <text> in SVG)
   for (let i=0;i<TEXTS;i++){
     const ti = new paper.PointText({
       point: [random(0,view.size.width), random(0,view.size.height)],
@@ -102,11 +141,8 @@ function spawnScene(){
       fontWeight: txtStyle.fontWeight,
       fontSize: random(16, 48)
     });
-    // maak er echte paden van zodat manipulatie/export eerlijk is
-    const outlines = ti.createOutline();
-    ti.remove();
-    outlines.data = { rot: random(0,Math.PI*2), s: random(0.5,2.0) };
-    textItems.push(outlines);
+    ti.data = { rot: random(0,Math.PI*2), s: random(0.5,2.0) };
+    textItems.push(ti);
   }
 }
 
@@ -132,23 +168,34 @@ function animate(dt){
 
   // animate non-text vectors
   ringItems.forEach((p,i)=>{
-    const rr = p.data.rBase * (1 + 0.25*Math.sin(t*p.data.k + i*0.02));
-    // scale around center by matching bounds
+    // target scale around base radius (stable, non-compounding)
+    const targetScale = 1 + 0.25 * Math.sin(t * p.data.k + i * 0.02);
     const c = p.position.clone();
-    const s = rr / (p.bounds.width*0.5);
-    p.rotate(0.3*Math.sin(t*0.7 + i*0.01), c);
-    p.scale(s, c);
-    // keep on screen
-    if (p.position.x<0) p.position.x=w; if (p.position.x>w) p.position.x=0;
-    if (p.position.y<0) p.position.y=h; if (p.position.y>h) p.position.y=0;
+    p.rotate(0.3 * Math.sin(t * 0.7 + i * 0.01), c);
+    // make scaling relative to current uniform scaling
+    const factor = targetScale / p.scaling.x; // assume uniform
+    p.scale(factor, c);
+
+    // simple drift to avoid heavy overlap
+    p.position.x += Math.sin((t + i) * 0.03);
+    p.position.y += Math.cos((t + i) * 0.025);
+
+    // wrap around
+    const w = view.size.width, h = view.size.height;
+    if (p.position.x < -50) p.position.x = w + 50;
+    if (p.position.x >  w+50) p.position.x = -50;
+    if (p.position.y < -50) p.position.y = h + 50;
+    if (p.position.y >  h+50) p.position.y = -50;
   });
 
-  // animate text outlines
-  textItems.forEach((g,i)=>{
-    const c = g.position.clone();
-    const sc = g.data.s * (1 + 0.15*Math.sin(t + i*0.3));
-    g.rotate(0.2*Math.sin(t*0.6 + i*0.05), c);
-    g.scale(sc / g.scaling.x, sc / g.scaling.y, c); // keep uniform
+  // animate text (PointText)
+  textItems.forEach((ti,i)=>{
+    const c = ti.position.clone();
+    const sc = ti.data.s * (1 + 0.15 * Math.sin(t + i * 0.3));
+    ti.rotate(0.2 * Math.sin(t * 0.6 + i * 0.05), c);
+    // uniform scale relative to current
+    const factor = sc / ti.scaling.x;
+    ti.scale(factor, c);
   });
 }
 
@@ -187,7 +234,6 @@ gsap.ticker.add(()=>{
 
   animate(dt);
   paper.view.update();
-  onAfterDraw();
 });
 
 /* ===== Boot ===== */
