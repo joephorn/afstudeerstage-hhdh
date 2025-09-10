@@ -46,11 +46,11 @@ let debugMode = false;
 let widthSetting = 0.96;
 let lenThreshold = 65;
 
-let baseRowPitch;   // baseline row pitch derived at startup
+let baseRowPitch;
 
 // random animate
 let lastAutoRandomMs = 0;
-const RANDOM_INTERVAL_MS = 1000;
+const RANDOM_INTERVAL_MS = 500;
 let autoRandomActive = false;
 
 // UI canvas (separate)

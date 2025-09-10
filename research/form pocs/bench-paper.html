@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Paper+GSAP benchmark – vectors & auto manipulation</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<style>
+  html,body{margin:0;height:100%;background:#0b0b0b;color:#ddd;font-family:system-ui}
+  #ui{position:fixed;inset:auto 12px 12px auto;display:grid;gap:6px;background:#111a;padding:10px 12px;border:1px solid #222;border-radius:10px}
+  #ui label{font-size:12px;opacity:.85}
+  #ui input{width:220px}
+  .row{display:flex;gap:8px;align-items:center}
+  canvas{display:block}
+</style>
+</head>
+<body>
+<canvas id="paper" resize></canvas>
+<div id="ui">
+  <div class="row"><label>Shapes</label><input id="shapes" type="range" min="200" max="3000" step="100" value="1200"><span id="shapesOut">1200</span></div>
+  <div class="row"><label>Text copies</label><input id="texts" type="range" min="10" max="300" step="10" value="80"><span id="textsOut">80</span></div>
+  <div class="row"><label>Auto change (ms)</label><input id="auto" type="range" min="200" max="2000" step="50" value="600"><span id="autoOut">600</span></div>
+  <div class="row"><button id="toggle">Pause/Play</button><button id="export">Export SVG</button></div>
+  <div class="row"><button id="benchStart">Start Bench (30s)</button><button id="benchEnd">End Bench</button></div>
+</div>
+
+<script src="https://unpkg.com/paper/dist/paper-full.min.js"></script>
+<script src="https://unpkg.com/gsap@3/dist/gsap.min.js"></script>
+<script>
+/* ===== Bench helper (zelfde API als p5-versie) ===== */
+const bench = {tStart:0,frames:0,samples:[],inputMarks:[],inputLatencies:[],overruns:0,last:0};
+function markInput(){ bench.inputMarks.push(performance.now()); }
+function onAfterDraw(){
+  const now = performance.now();
+  bench.frames++;
+  const dt = now - (bench.last||now);
+  bench.last = now;
+  bench.samples.push(1000/Math.max(0.0001,dt));
+  if (dt>16.7) bench.overruns++;
+  if (bench.inputMarks.length){
+    bench.inputLatencies.push(now - bench.inputMarks.shift());
+  }
+}
+function benchStart(){ bench.tStart=performance.now(); }
+function benchEnd(){
+  const dur=(performance.now()-bench.tStart)/1000;
+  const s=bench.samples.slice().sort((a,b)=>a-b);
+  const p1=s[Math.floor(0.01*s.length)]||0;
+  const avg=bench.samples.reduce((a,x)=>a+x,0)/Math.max(1,s.length);
+  const mem=performance.memory?Math.round(performance.memory.usedJSHeapSize/1048576):-1;
+  const medLat=bench.inputLatencies.length?bench.inputLatencies.sort((a,b)=>a-b)[Math.floor(bench.inputLatencies.length/2)]:-1;
+  console.table({stack:'Paper+GSAP',duration_s:dur.toFixed(1),avgFPS:avg.toFixed(1),p1LowFPS:p1.toFixed(1),
+    frameBudgetOverruns_pct:((bench.overruns/Math.max(1,bench.samples.length))*100).toFixed(1),
+    medianInputLatency_ms:medLat.toFixed(1),heapMB:mem});
+}
+
+/* ===== Setup Paper ===== */
+paper.setup(document.getElementById('paper'));
+const view = paper.view;
+const layer = new paper.Layer();
+
+/* ===== Params ===== */
+let SHAPES=1200, TEXTS=80, AUTO_MS=600;
+let running=true, t=0, nextAuto=0;
+
+/* ===== Data ===== */
+let ringItems=[], textItems=[];
+const STR="TEKST";
+const txtStyle = { fontFamily: 'Arial, Helvetica, sans-serif', fontWeight:'bold' };
+
+/* ===== Helpers ===== */
+function random(min, max){ return min + Math.random()*(max-min); }
+function randint(a,b){ return Math.floor(random(a,b)); }
+
+function makePolygon(cx,cy,r,n){
+  const path = new paper.Path({ closed:true, fillColor:'#eee' });
+  for (let i=0;i<n;i++){
+    const a = i/n * Math.PI*2;
+    path.add(new paper.Point(cx + Math.cos(a)*r, cy + Math.sin(a)*r));
+  }
+  return path;
+}
+
+function spawnScene(){
+  layer.removeChildren();
+  ringItems.length=0; textItems.length=0;
+
+  // non-text vectors
+  for (let i=0;i<SHAPES;i++){
+    const p = makePolygon(random(0,view.size.width), random(0,view.size.height), random(6,60), randint(3,8));
+    p.fillColor = new paper.Color(0.92,0.92,0.92);
+    p.data = { rot: random(0,Math.PI*2), k: random(0.3,1.2), rBase: p.bounds.width*0.5 };
+    ringItems.push(p);
+  }
+
+  // “vector text”: echte vector glyphs (Paper TextItem → convert to paths)
+  for (let i=0;i<TEXTS;i++){
+    const ti = new paper.PointText({
+      point: [random(0,view.size.width), random(0,view.size.height)],
+      content: STR,
+      fillColor: new paper.Color(0.82,0.82,0.82),
+      fontFamily: txtStyle.fontFamily,
+      fontWeight: txtStyle.fontWeight,
+      fontSize: random(16, 48)
+    });
+    // maak er echte paden van zodat manipulatie/export eerlijk is
+    const outlines = ti.createOutline();
+    ti.remove();
+    outlines.data = { rot: random(0,Math.PI*2), s: random(0.5,2.0) };
+    textItems.push(outlines);
+  }
+}
+
+function autoChange(){
+  const which = randint(0,3);
+  if (which===0){
+    // bulk mutate count (stress re-create)
+    SHAPES = Math.max(200, Math.min(3000, SHAPES + randint(-200,200)));
+    spawnScene();
+  } else if (which===1){
+    TEXTS = Math.max(10, Math.min(300, TEXTS + randint(-20,20)));
+    spawnScene();
+  } else {
+    // global rotation nudge
+    ringItems.forEach(p => p.data.rot += random(-0.4,0.4));
+  }
+  markInput();
+}
+
+function animate(dt){
+  t += dt;
+  const w=view.size.width, h=view.size.height;
+
+  // animate non-text vectors
+  ringItems.forEach((p,i)=>{
+    const rr = p.data.rBase * (1 + 0.25*Math.sin(t*p.data.k + i*0.02));
+    // scale around center by matching bounds
+    const c = p.position.clone();
+    const s = rr / (p.bounds.width*0.5);
+    p.rotate(0.3*Math.sin(t*0.7 + i*0.01), c);
+    p.scale(s, c);
+    // keep on screen
+    if (p.position.x<0) p.position.x=w; if (p.position.x>w) p.position.x=0;
+    if (p.position.y<0) p.position.y=h; if (p.position.y>h) p.position.y=0;
+  });
+
+  // animate text outlines
+  textItems.forEach((g,i)=>{
+    const c = g.position.clone();
+    const sc = g.data.s * (1 + 0.15*Math.sin(t + i*0.3));
+    g.rotate(0.2*Math.sin(t*0.6 + i*0.05), c);
+    g.scale(sc / g.scaling.x, sc / g.scaling.y, c); // keep uniform
+  });
+}
+
+function exportSVG(){
+  const svg = paper.project.exportSVG({asString:true, bounds:'content'});
+  const blob = new Blob([svg], {type:'image/svg+xml'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href=url; a.download='paper_export.svg'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* ===== UI ===== */
+function hookUI(){
+  const $=id=>document.getElementById(id);
+  const bind=(id,setter,out)=>{
+    const el=$(id), oo=$(out);
+    const apply=()=>{ setter(+el.value); oo.textContent=el.value; markInput(); spawnScene(); };
+    el.addEventListener('input', apply); apply();
+  };
+  bind('shapes', v=>{SHAPES=v;}, 'shapesOut');
+  bind('texts', v=>{TEXTS=v;}, 'textsOut');
+  bind('auto', v=>{AUTO_MS=v;}, 'autoOut');
+  document.getElementById('toggle').onclick = ()=> running=!running;
+  document.getElementById('export').onclick = exportSVG;
+  document.getElementById('benchStart').onclick = benchStart;
+  document.getElementById('benchEnd').onclick = benchEnd;
+}
+
+/* ===== Main loop (GSAP ticker = stabiel timing) ===== */
+let last = performance.now();
+gsap.ticker.add(()=>{
+  const now=performance.now(), dt=(now-last)/1000; last=now;
+
+  if (running && now>nextAuto){ autoChange(); nextAuto=now+AUTO_MS; }
+
+  animate(dt);
+  paper.view.update();
+  onAfterDraw();
+});
+
+/* ===== Boot ===== */
+hookUI();
+spawnScene();
+</script>
+</body>
+</html>
