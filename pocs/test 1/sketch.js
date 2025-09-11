@@ -1,17 +1,17 @@
 // ====== CONFIG ======
 const LOGO_TEXT         = "ALBION";
-const ROWS_DEFAULT              = 12;
+const ROWS_DEFAULT      = 12;
 const LINE_HEIGHT       = 8;
-const TIP_RATIO         = 0.25;
+const TIP_RATIO         = 0.3;
 const PADDING           = 40;        // canvas padding
 const DISPLACE_UNIT     = 20;        // px per row step for displacement
 const LEN_SCALE_STRENGTH = 1;     // 0..1 — hoeveel van (widthSetting-1) wordt toegepast op lange runs (lager = minder snel meeschalen)
 const TRACK_STRENGTH    = 1;    // meeschalen van lange lijnen (horizontaal)
-const SMALL_LEN_BIAS   = 1;    // meeschalen van korte lijnen (verticaal)
+const SMALL_LEN_BIAS    = 1;    // meeschalen van korte lijnen (verticaal)
 const VIEW_SCALE        = 0.8;   // visual CSS scale of the canvas (no change to drawing scale)
 
 // Scan behavior
-const BRIDGE_PIXELS     = 2;         // allow bridging small white gaps (0 = off)
+const BRIDGE_PIXELS     = 0;         // allow bridging small white gaps (0 = off)
 const INK_THRESHOLD     = 140;
 const BAND_MIN_COVER_FRAC = 0.035; // ≥3.5% of word width must be continuous ink for a row to count
 
@@ -30,19 +30,19 @@ let glyphDims = {};   // map: char -> {w,h}
 // ====== STATE ======
 let glyphBuffer;      // offscreen p5.Graphics used for scanning
 let layout;           // computed positions + spans
-let rowsSetting = ROWS_DEFAULT;
-let lineThickness = LINE_HEIGHT;
+let rows = ROWS_DEFAULT;          // number of horizontal scan rows
+let linePx = LINE_HEIGHT;         // stroke thickness in px
 // HTML UI elements (wired via index.html)
 let elRows, elThickness, elWidth, elGap, elGroups, elGroupsOut;
 let elRowsOut, elThicknessOut, elWidthOut, elGapOut;
 let elRounded, elDebug, elAuto;
-let gapSetting = 5;
-let displaceGroupSize = 3;
-let displaceGroupCount = 2;
+let gapPx = 5;                    // letter gap in px (can be negative)
+let displaceGroupSize = 3;        // derived: rows / |displaceGroups|
+let displaceGroups = 2;           // signed: negative flips direction
 let roundedEdges = true;
 let debugMode = false;
-let widthSetting = 0.96;
-let lenThreshold = 65;
+let widthScale = 0.96;            // overall width scaling factor
+let minDashLenPx = 65;            // threshold for “long run” behaviour
 
 let baseRowPitch;
 
@@ -51,17 +51,10 @@ let lastAutoRandomMs = 0;
 const RANDOM_INTERVAL_MS = 1000;
 let autoRandomActive = false;
 
-// UI canvas (separate)
-let canvasContainer;
-let uiContainer;
-let uiWidth = 360;
-let uiHeight = 300;
-let uiP5 = null;             // p5 instance for the UI canvas (instance mode)
-
 let rowYsCanvas = []; // y-position of each row in canvas coordinates
 
 function desiredCanvasHeight(){
-  return Math.ceil(PADDING * 2 + baseRowPitch * rowsSetting);
+  return Math.ceil(PADDING * 2 + baseRowPitch * rows);
 }
 
 function divisorsAsc(n){
@@ -71,48 +64,12 @@ function divisorsAsc(n){
 }
 
 function divisorsDescSigned(n){
-  // Smooth sequence across zero: negatives in descending magnitude, then positives ascending
-  // e.g., n=12 → [-12,-6,-4,-3,-2,-1, 1,2,3,4,6,12]
   const asc = divisorsAsc(n);                 // [1,2,3,4,6,12]
   const negDesc = asc.slice().reverse().map(v => -v); // [-12,-6,-4,-3,-2,-1]
   const posAsc  = asc.slice();                // [1,2,3,4,6,12]
   return negDesc.concat(posAsc);
 }
 
-let _groupsOpts = [1]; // valid groups for current rowsSetting
-function rebuildGroupSlider(){
-  _groupsOpts = divisorsAsc(rowsSetting);
-  let idx = _groupsOpts.indexOf(displaceGroupCount);
-  if (idx === -1){
-    // pick nearest valid option to current displaceGroupCount
-    let best = 0, bestDiff = Infinity;
-    for (let i = 0; i < _groupsOpts.length; i++){
-      const diff = Math.abs(_groupsOpts[i] - displaceGroupCount);
-      if (diff < bestDiff){ bestDiff = diff; best = i; }
-    }
-    idx = best;
-    displaceGroupCount = _groupsOpts[idx];
-  }
-  if (!sliderDisplacement){
-    // create the slider once; it selects an INDEX into _groupsOpts
-    sliderDisplacement = createSlider(0, Math.max(0, _groupsOpts.length - 1), idx, 1);
-    sliderDisplacement.style('width','180px');
-    sliderDisplacement.input(()=>{
-      const i = sliderDisplacement.value();
-      displaceGroupCount = _groupsOpts[i];              // number of groups
-      displaceGroupSize  = Math.max(1, Math.floor(rowsSetting / displaceGroupCount));
-      redraw(); positionUI(); redrawUI();
-    });
-  } else {
-    // update range and current index when rowsSetting changes
-    sliderDisplacement.attribute('min', 0);
-    sliderDisplacement.attribute('max', Math.max(0, _groupsOpts.length - 1));
-    sliderDisplacement.attribute('step', 1);
-    sliderDisplacement.value(idx);
-  }
-  // keep derived size in sync
-  displaceGroupSize = Math.max(1, Math.floor(rowsSetting / displaceGroupCount));
-}
 
 function randInt(min, max){ return Math.floor(Math.random() * (max - min + 1)) + min; }
 function randFloat(min, max){ return Math.random() * (max - min) + min; }
@@ -146,46 +103,46 @@ function applyOneRandomTweak(){
   // 1) Width (percent slider → 0.xx scale)
   if (elWidth){
     const wPerc = randFromInputFloat(elWidth, 50, 300, 1); // fallback matches index.html defaults
-    widthSetting = Math.max(0.05, wPerc / 100);
-    elWidth.value = Math.round(widthSetting * 100);
-    if (elWidthOut) elWidthOut.textContent = `${Math.round(widthSetting * 100)} %`;
+    widthScale = Math.max(0.05, wPerc / 100);
+    elWidth.value = Math.round(widthScale * 100);
+    if (elWidthOut) elWidthOut.textContent = `${Math.round(widthScale * 100)} %`;
   }
 
   // 2) Gap (px) — allow negatives if the input allows it
   let layoutNeedsRebuild = false;
   if (elGap){
-    gapSetting = randFromInputInt(elGap, -100, 150, 1);
-    elGap.value = gapSetting;
-    if (elGapOut) elGapOut.textContent = `${gapSetting} px`;
+    gapPx = randFromInputInt(elGap, -100, 150, 1);
+    elGap.value = gapPx;
+    if (elGapOut) elGapOut.textContent = `${gapPx} px`;
     layoutNeedsRebuild = true; // gap affects buildLayout letter positions
   }
 
   // 3) Line height (px)
   if (elThickness){
-    lineThickness = randFromInputInt(elThickness, 1, 25, 1);
-    elThickness.value = lineThickness;
-    if (elThicknessOut) elThicknessOut.textContent = `${lineThickness} px`;
+    linePx = randFromInputInt(elThickness, 1, 25, 1);
+    elThickness.value = linePx;
+    if (elThicknessOut) elThicknessOut.textContent = `${linePx} px`;
   }
 
   // 4) Displacement groups (signed options derived from rows)
   // Use divisorsDescSigned so order matches the UI options
-  let opts = divisorsDescSigned(rowsSetting);
+  let opts = divisorsDescSigned(rows);
   if (opts.length){
     let newIdx = randInt(0, opts.length - 1);
-    const curIdx = Math.max(0, opts.indexOf(displaceGroupCount));
+    const curIdx = Math.max(0, opts.indexOf(displaceGroups));
     if (opts.length > 1 && newIdx === curIdx) newIdx = (newIdx + 1) % opts.length;
-    displaceGroupCount = opts[newIdx];
-    const groupsAbs = Math.max(1, Math.abs(displaceGroupCount));
-    displaceGroupSize = Math.max(1, Math.floor(rowsSetting / groupsAbs));
+    displaceGroups = opts[newIdx];
+    const groupsAbs = Math.max(1, Math.abs(displaceGroups));
+    displaceGroupSize = Math.max(1, Math.floor(rows / groupsAbs));
     if (elGroups){
       // keep slider in sync with the chosen option index
       elGroups.min = 0; elGroups.max = Math.max(0, opts.length - 1); elGroups.step = 1; elGroups.value = newIdx;
     }
-    if (elGroupsOut) elGroupsOut.textContent = String(displaceGroupCount);
+    if (elGroupsOut) elGroupsOut.textContent = String(displaceGroups);
   }
 
   if (layoutNeedsRebuild){
-    layout = buildLayout(LOGO_TEXT, rowsSetting);
+    layout = buildLayout(LOGO_TEXT, rows);
   }
   redraw();
 }
@@ -228,7 +185,7 @@ function preload(){
 function setup(){
   mainCanvas = createCanvas(800, 250, SVG);
   pixelDensity(1);
-  baseRowPitch = (height - 2 * PADDING) / rowsSetting;
+  baseRowPitch = (height - 2 * PADDING) / rows;
   noLoop();
   layout = buildLayout(LOGO_TEXT);
   resizeCanvas(width, desiredCanvasHeight(), true);
@@ -250,24 +207,24 @@ function setup(){
   elGapOut       = byId('gapOut');
 
   // initialize values to current state
-  elRows.value = rowsSetting;
-  elThickness.value = lineThickness;
-  elWidth.value = Math.round(widthSetting * 100);
-  elGap.value = gapSetting;
+  elRows.value = rows;
+  elThickness.value = linePx;
+  elWidth.value = Math.round(widthScale * 100);
+  elGap.value = gapPx;
   elRounded.checked = roundedEdges;
   elDebug.checked = debugMode;
   elAuto.checked = false;
-  if (elRowsOut)      elRowsOut.textContent      = String(rowsSetting);
-  if (elThicknessOut) elThicknessOut.textContent = `${lineThickness} px`;
-  if (elWidthOut)     elWidthOut.textContent     = `${Math.round(widthSetting * 100)} %`;
-  if (elGapOut)       elGapOut.textContent       = `${gapSetting} px`;
+  if (elRowsOut)      elRowsOut.textContent      = String(rows);
+  if (elThicknessOut) elThicknessOut.textContent = `${linePx} px`;
+  if (elWidthOut)     elWidthOut.textContent     = `${Math.round(widthScale * 100)} %`;
+  if (elGapOut)       elGapOut.textContent       = `${gapPx} px`;
 
   let _signedGroupOptions = [];
   function rebuildGroupsSelect(){
-    _signedGroupOptions = divisorsDescSigned(rowsSetting); // [-rows..-1, rows..1]
+    _signedGroupOptions = divisorsDescSigned(rows); // [-rows..-1, rows..1]
 
     // vorige waarde respecteren: zelfde sign, en grootste geldige |v| die ≤ vorige |v|
-    const prev = displaceGroupCount || 1;
+    const prev = displaceGroups || 1;
     const sign = Math.sign(prev) || 1;
     const targetAbs = Math.max(1, Math.abs(prev));
     const posOptions = _signedGroupOptions
@@ -278,55 +235,55 @@ function setup(){
     let chosenAbs = posOptions.find(v => v <= targetAbs);
     if (!chosenAbs) chosenAbs = posOptions[posOptions.length - 1] || 1; // val naar kleinste
 
-    displaceGroupCount = sign * chosenAbs;
+    displaceGroups = sign * chosenAbs;
 
     // slider = index in de options-array
-    const idx = _signedGroupOptions.indexOf(displaceGroupCount);
+    const idx = _signedGroupOptions.indexOf(displaceGroups);
     elGroups.min = 0;
     elGroups.max = Math.max(0, _signedGroupOptions.length - 1);
     elGroups.step = 1;
     elGroups.value = (idx >= 0) ? idx : 0;
 
-    const groupsAbs = Math.max(1, Math.abs(displaceGroupCount));
-    displaceGroupSize = Math.max(1, Math.floor(rowsSetting / groupsAbs));
-    if (elGroupsOut) elGroupsOut.textContent = String(displaceGroupCount);
+    const groupsAbs = Math.max(1, Math.abs(displaceGroups));
+    displaceGroupSize = Math.max(1, Math.floor(rows / groupsAbs));
+    if (elGroupsOut) elGroupsOut.textContent = String(displaceGroups);
   }
   rebuildGroupsSelect();
 
   // listeners
   elRows.addEventListener('input', ()=>{
-    rowsSetting = parseInt(elRows.value,10);
-    if (elRowsOut) elRowsOut.textContent = String(rowsSetting);
+    rows = parseInt(elRows.value,10);
+    if (elRowsOut) elRowsOut.textContent = String(rows);
     rebuildGroupsSelect();             // behoudt sign en clamp ≤
-    layout = buildLayout(LOGO_TEXT, rowsSetting);
+    layout = buildLayout(LOGO_TEXT, rows);
     redraw();
   });
 
   elThickness.addEventListener('input', ()=>{
-    lineThickness = parseInt(elThickness.value,10);
-    if (elThicknessOut) elThicknessOut.textContent = `${lineThickness} px`;
+    linePx = parseInt(elThickness.value,10);
+    if (elThicknessOut) elThicknessOut.textContent = `${linePx} px`;
     redraw();
   });
 
   elWidth.addEventListener('input', ()=>{
-    widthSetting = parseInt(elWidth.value,10) / 100;
-    if (elWidthOut) elWidthOut.textContent = `${Math.round(widthSetting * 100)} %`;
+    widthScale = parseInt(elWidth.value,10) / 100;
+    if (elWidthOut) elWidthOut.textContent = `${Math.round(widthScale * 100)} %`;
     redraw();
   });
 
   elGap.addEventListener('input', ()=>{
-    gapSetting = parseInt(elGap.value,10);
-    if (elGapOut) elGapOut.textContent = `${gapSetting} px`;
-    layout = buildLayout(LOGO_TEXT, rowsSetting);
+    gapPx = parseInt(elGap.value,10);
+    if (elGapOut) elGapOut.textContent = `${gapPx} px`;
+    layout = buildLayout(LOGO_TEXT, rows);
     redraw();
   });
 
   elGroups.addEventListener('input', ()=>{
     const idx = parseInt(elGroups.value,10) || 0;
-    displaceGroupCount = _signedGroupOptions[idx] || 1; // gesigneerd
-    const groupsAbs = Math.max(1, Math.abs(displaceGroupCount));
-    displaceGroupSize  = Math.max(1, Math.floor(rowsSetting / groupsAbs));
-    if (elGroupsOut) elGroupsOut.textContent = String(displaceGroupCount);
+    displaceGroups = _signedGroupOptions[idx] || 1; // gesigneerd
+    const groupsAbs = Math.max(1, Math.abs(displaceGroups));
+    displaceGroupSize  = Math.max(1, Math.floor(rows / groupsAbs));
+    if (elGroupsOut) elGroupsOut.textContent = String(displaceGroups);
     redraw();
   });
 
@@ -356,37 +313,30 @@ function setup(){
 
 // Compute the effective dash length for a span (same math as in renderLogo)
 function dashLenForSpan(baseLen, maxRunLen){
-  const eligible     = baseLen >= lenThreshold;
-  const lenBiasBase  = (maxRunLen > 0) ? (baseLen / maxRunLen) : 0;  // 0..1
-  const lenBiasShort = SMALL_LEN_BIAS;                                // kleine vaste bias voor korte runs
+  const eligible     = baseLen >= minDashLenPx;
+  const lenBiasBase  = (maxRunLen > 0) ? (baseLen / maxRunLen) : 0;
+  const lenBiasShort = SMALL_LEN_BIAS;
   const lenBias      = eligible ? lenBiasBase : lenBiasShort;
-  return baseLen * (1 + (widthSetting - 1) * lenBias * LEN_SCALE_STRENGTH);
+  return baseLen * (1 + (widthScale - 1) * lenBias * LEN_SCALE_STRENGTH);
 }
 
 // Measure per-letter bounds (visual left/right) using the same math as the renderer
 
 function computePerLetterBounds(){
-  const tEff = 1 + (widthSetting - 1) * TRACK_STRENGTH;
+  const tEff = 1 + (widthScale - 1) * TRACK_STRENGTH;
   const letterLeft = new Array(layout.lettersOrder.length).fill(Infinity);
   const letterRight = new Array(layout.lettersOrder.length).fill(-Infinity);
 
   for (let li = 0; li < layout.lettersOrder.length; li++){
     const baseX = layout.letterX[li] * tEff; // tracking-applied start of letter box
     const letterKey = layout.lettersOrder[li];
-    const rows = layout.letters[letterKey];
+    const rowsArr = layout.letters[letterKey];
 
-    for (let r = 0; r < rows.length; r++){
-      // max run length in this row for bias
-      let maxRunLen = 0; for (const s of rows[r]) if (s.runLen > maxRunLen) maxRunLen = s.runLen;
-      // displacement for this row
-      const groupsAbs = Math.max(1, Math.abs(displaceGroupCount));
-      const gsize = Math.max(1, Math.floor(rowsSetting / groupsAbs));
-      const sectionIndex = Math.floor(r / gsize) % groupsAbs;   // 0..groupsAbs-1
-      const centered = sectionIndex - (groupsAbs - 1) * 0.5;    // symmetrisch rondom 0
-      const sign = Math.sign(displaceGroupCount) || 1;          // negatief = spiegel
-      const xShift = sign * centered * DISPLACE_UNIT;
-      for (const seg of rows[r]){
-        const rightEdgeX = baseX + seg.rightRel * layout.scale * widthSetting;
+    for (let r = 0; r < rowsArr.length; r++){
+      const maxRunLen = maxRunLength(rowsArr[r]);
+      const xShift = computeXShift(r, rows, displaceGroups);
+      for (const seg of rowsArr[r]){
+        const rightEdgeX = baseX + seg.rightRel * layout.scale * widthScale;
         const baseLen    = Math.max(0, seg.runLen * layout.scale);
         const dlen       = dashLenForSpan(baseLen, maxRunLen);
         const rightX     = rightEdgeX + xShift;
@@ -403,33 +353,24 @@ function computePerLetterBounds(){
 }
 
 function computeLayoutFit(){
-  const tEff = 1 + (widthSetting - 1) * TRACK_STRENGTH;
-  const rowPitchNow = (rowsSetting <= 1)
+  const tEff = 1 + (widthScale - 1) * TRACK_STRENGTH;
+  const rowPitchNow = (rows <= 1)
     ? (height - 2 * PADDING)
-    : (height - 2 * PADDING) / (rowsSetting - 1);
+    : (height - 2 * PADDING) / (rows - 1);
 
   let leftmost = Infinity;
   let rightmost = -Infinity;
   for (let li = 0; li < layout.lettersOrder.length; li++){
     const baseX = layout.letterX[li] * tEff;
     const letterKey = layout.lettersOrder[li];
-    const rows = layout.letters[letterKey];
+    const rowsArr = layout.letters[letterKey];
 
-    for (let r = 0; r < rows.length; r++){
-      // max run length in this row (for bias), same as render loop
-      let maxRunLen = 0;
-      for (const s of rows[r]) if (s.runLen > maxRunLen) maxRunLen = s.runLen;
+    for (let r = 0; r < rowsArr.length; r++){
+      const maxRunLen = maxRunLength(rowsArr[r]);
+      const xShift = computeXShift(r, rows, displaceGroups);
 
-      // displacement in this row
-      const groupsAbs = Math.max(1, Math.abs(displaceGroupCount));
-      const gsize = Math.max(1, Math.floor(rowsSetting / groupsAbs));
-      const sectionIndex = Math.floor(r / gsize) % groupsAbs;   // 0..groupsAbs-1
-      const centered = sectionIndex - (groupsAbs - 1) * 0.5;    // symmetrisch rondom 0
-      const sign = Math.sign(displaceGroupCount) || 1;          // negatief = spiegel
-      const xShift = sign * centered * DISPLACE_UNIT;
-
-      for (const seg of rows[r]){
-        const rightEdgeX = baseX + seg.rightRel * layout.scale * widthSetting;
+      for (const seg of rowsArr[r]){
+        const rightEdgeX = baseX + seg.rightRel * layout.scale * widthScale;
         const baseLen    = Math.max(0, seg.runLen * layout.scale);
         const dlen       = dashLenForSpan(baseLen, maxRunLen);
         const rightX     = rightEdgeX + xShift;
@@ -444,7 +385,7 @@ function computeLayoutFit(){
   if (!isFinite(rightmost)) rightmost = width - 2 * PADDING;
 
   const contentW0 = Math.max(1, rightmost - leftmost);
-  const contentH0 = rowsSetting * rowPitchNow;
+  const contentH0 = rows * rowPitchNow;
 
   const sFit = Math.min(
     (width  - 2) / contentW0,
@@ -470,46 +411,33 @@ function renderLogo(g){
   g.translate(left, top);
   g.scale(sFit, sFit);
   // (Debug rendering of packed letter boxes removed for clarity)
-  rowYsCanvas = (rowsSetting <= 1)
+  rowYsCanvas = (rows <= 1)
     ? [0]
-    : Array.from({ length: rowsSetting }, (_, r) => r * rowPitchNow);
+    : Array.from({ length: rows }, (_, r) => r * rowPitchNow);
 
   // Use original SVG letter positions (no offsets)
   for (let li = 0; li < layout.lettersOrder.length; li++){
     const letterKey   = layout.lettersOrder[li];
     const rowsForLetter = layout.letters[letterKey];
     const baseX = layout.letterX[li] * tEff;
+    const rowsArr = layout.letters[letterKey];
 
     for (let r = 0; r < rowsForLetter.length; r++){
       const y = rowYsCanvas[r];
-      // Determine max run length in this row to bias length scaling
-      let maxRunLen = 0;
-      for (const s of rowsForLetter[r]) {
-        if (s.runLen > maxRunLen) maxRunLen = s.runLen;
-      }
+      const maxRunLen = maxRunLength(rowsArr[r]);
       for (const span of rowsForLetter[r]){
-        const rightEdgeX = baseX + span.rightRel * layout.scale * widthSetting; // widen x-distance inside glyph
+        const rightEdgeX = baseX + span.rightRel * layout.scale * widthScale; // widen x-distance inside glyph
         const baseLen = Math.max(0, span.runLen * layout.scale);
         // Alleen runs die groter zijn dan de instelbare drempel schalen mee
-        const eligible     = baseLen >= lenThreshold;
-        const lenBiasBase  = (maxRunLen > 0) ? (span.runLen / maxRunLen) : 0;  // 0..1
-        const lenBiasShort = SMALL_LEN_BIAS;                                    // kleine vaste bias voor korte runs
-        const lenBias      = eligible ? lenBiasBase : lenBiasShort;
-        const dashLen      = baseLen * (1 + (widthSetting - 1) * lenBias * LEN_SCALE_STRENGTH);
+        const dashLen = dashLenForSpan(baseLen, maxRunLen);
         // Clamp dash length to the letter’s left edge (no wider than SVG envelope)
         const maxDash = Math.max(0, rightEdgeX - baseX);
         const dashLenClamped = Math.min(dashLen, maxDash);
-        // Displacement by snapped intervals across rows (optional)
-        const groupsAbs = Math.max(1, Math.abs(displaceGroupCount));
-        const gsize = Math.max(1, Math.floor(rowsSetting / groupsAbs));
-        const sectionIndex = Math.floor(r / gsize) % groupsAbs;   // 0..groupsAbs-1
-        const centered = sectionIndex - (groupsAbs - 1) * 0.5;    // symmetrisch rondom 0
-        const sign = Math.sign(displaceGroupCount) || 1;          // negatief = spiegel
-        const xShift = sign * centered * DISPLACE_UNIT;
+        const xShift = computeXShift(r, rows, displaceGroups);
         if (roundedEdges) {
-          drawRoundedTaper(g, rightEdgeX + xShift, y, dashLenClamped, lineThickness, TIP_RATIO);
+          drawRoundedTaper(g, rightEdgeX + xShift, y, dashLenClamped, linePx, TIP_RATIO);
         } else {
-          drawStraightTaper(g, rightEdgeX + xShift, y, dashLenClamped, lineThickness);
+          drawStraightTaper(g, rightEdgeX + xShift, y, dashLenClamped, linePx);
         }
       }
     }
@@ -651,7 +579,7 @@ function measureInkVerticalBoundsRobust(g, x1 = 0, x2 = null){
 }
 
 // ====== LAYOUT PIPELINE ======
-function buildLayout(word, rowsCount = rowsSetting){
+function buildLayout(word, rowsCount = rows){
   // 1) Create offscreen buffer with no smoothing (hard edges for scanning)
   glyphBuffer = createGraphics(BUFFER_W, BUFFER_H);
   glyphBuffer.pixelDensity(1);
@@ -676,7 +604,7 @@ function buildLayout(word, rowsCount = rowsSetting){
   const totalW = totalWLetters;
   const startX = (BUFFER_W - totalW) * 0.5;
 
-  // Vertical center (we’ll scan actual ink bounds later anyway)
+  // Vertical center
   const yTop = (BUFFER_H - maxH * scaleUniform) * 0.5;
 
   // Draw each SVG at pen position, NO gap added in buffer
@@ -745,8 +673,8 @@ function buildLayout(word, rowsCount = rowsSetting){
   return {
     letters: perLetter,
     lettersOrder,
-    letterX: letterX.map((x, i) => 
-      (x - startX) * scale + (i * gapSetting * scale)
+    letterX: letterX.map((x, i) =>
+      (x - startX) * scale + (i * gapPx * scale)
     ),
     letterW: letterWidths,
     scale,
@@ -758,7 +686,7 @@ function buildLayout(word, rowsCount = rowsSetting){
 
 // ====== INTERFACE ======
 
-// ====== debug OVERLAY ======
+// ====== DEBUG OVERLAY ======
 function drawdebugModeOverlay(){
   push();
   noFill(); stroke(0, 60); strokeWeight(1);
@@ -769,7 +697,7 @@ function drawdebugModeOverlay(){
   scale(sFit, sFit);
 
   // letter boxes based on original SVG layout
-  const tEff2 = 1 + (widthSetting - 1) * TRACK_STRENGTH;
+  const tEff2 = 1 + (widthScale - 1) * TRACK_STRENGTH;
   const boxesLeft = layout.letterX.map(x => x * tEff2);
   const boxesW    = layout.letterW.map(w => w * layout.scale);
   const start = Math.min(...boxesLeft);
@@ -785,19 +713,19 @@ function drawdebugModeOverlay(){
   for (let r = 0; r < layout.rowsY.length; r++){
     const y = (rowYsCanvas[r] !== undefined)
       ? rowYsCanvas[r]
-      : (rowsSetting <= 1 ? 0 : r * rowPitchNow);
+      : (rows <= 1 ? 0 : r * rowPitchNow);
     line(start, y, end, y);
   }
 
   // scanned spans + right edges (using original baseX, clamp dash to box)
   for (let li = 0; li < layout.lettersOrder.length; li++){
     const letterKey = layout.lettersOrder[li];
-    const rows = layout.letters[letterKey];
+    const rowsArr = layout.letters[letterKey];
     const baseX = layout.letterX[li] * tEff;
-    for (let r = 0; r < rows.length; r++){
+    for (let r = 0; r < rowsArr.length; r++){
       const y = rowYsCanvas[r] ?? (rowPitchNow * r + rowPitchNow * 0.5);
-      for (const seg of rows[r]){
-        const x2Raw = baseX + seg.rightRel * layout.scale * widthSetting;
+      for (const seg of rowsArr[r]){
+        const x2Raw = baseX + seg.rightRel * layout.scale * widthScale;
         const maxDash = Math.max(0, x2Raw - baseX);
         const baseLen = Math.max(0, seg.runLen * layout.scale);
         const dlen    = Math.min(baseLen, maxDash);
@@ -809,4 +737,20 @@ function drawdebugModeOverlay(){
     }
   }
   pop();
+}
+
+// EXTRA BEREKENINGEN
+function maxRunLength(row){
+  let maxRunLen = 0;
+  for (const s of row) if (s.runLen > maxRunLen) maxRunLen = s.runLen;
+  return maxRunLen;
+}
+
+function computeXShift(r, rows, displaceGroups){
+  const groupsAbs = Math.max(1, Math.abs(displaceGroups));
+  const gsize = Math.max(1, Math.floor(rows / groupsAbs));
+  const sectionIndex = Math.floor(r / gsize) % groupsAbs;
+  const centered = sectionIndex - (groupsAbs - 1) * 0.5;
+  const sign = Math.sign(displaceGroups) || 1;
+  return sign * centered * DISPLACE_UNIT;
 }
