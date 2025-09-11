@@ -1,6 +1,6 @@
 // ====== CONFIG ======
-const LOGO_TEXT              = "ALBION";
-const ROWS              = 12;
+const LOGO_TEXT         = "ALBION";
+const ROWS_DEFAULT              = 12;
 const LINE_HEIGHT       = 8;
 const TIP_RATIO         = 0.25;
 const PADDING           = 40;        // canvas padding
@@ -9,7 +9,6 @@ const LEN_SCALE_STRENGTH = 1;     // 0..1 — hoeveel van (widthSetting-1) wordt
 const TRACK_STRENGTH    = 1;    // meeschalen van lange lijnen (horizontaal)
 const SMALL_LEN_BIAS   = 1;    // meeschalen van korte lijnen (verticaal)
 const VIEW_SCALE        = 0.8;   // visual CSS scale of the canvas (no change to drawing scale)
-const SAFE_MARGIN      = 0;    // keep content this far from canvas edges when auto-fitting
 
 // Scan behavior
 const BRIDGE_PIXELS     = 2;         // allow bridging small white gaps (0 = off)
@@ -23,8 +22,6 @@ const MIN_RUN_PX_BUFFER = 0;     // filter micro-runs die ruis veroorzaken
 // Offscreen buffer + auto-fit targets
 const BUFFER_W          = 2600;
 const BUFFER_H          = 700;
-const FIT_HEIGHT_FRAC   = 1;      // asc+dsc should use ≤ this of buffer height
-const FIT_WIDTH_FRAC    = 1;      // total word width ≤ this of buffer width
 
 const LETTERS_PATH      = './src/letters/';
 let glyphImgs = {};   // map: char -> p5.Image (SVG rasterized)
@@ -33,14 +30,15 @@ let glyphDims = {};   // map: char -> {w,h}
 // ====== STATE ======
 let glyphBuffer;      // offscreen p5.Graphics used for scanning
 let layout;           // computed positions + spans
-let rowsSetting = ROWS;
+let rowsSetting = ROWS_DEFAULT;
 let lineThickness = LINE_HEIGHT;
-let heightScale   = 1.0;
-let sliderRows, sliderThickness, sliderHeight, sliderDisplacement, sliderWidth, sliderGap;
+// HTML UI elements (wired via index.html)
+let elRows, elThickness, elWidth, elGap, elGroups, elGroupsOut;
+let elRowsOut, elThicknessOut, elWidthOut, elGapOut;
+let elRounded, elDebug, elAuto;
 let gapSetting = 5;
 let displaceGroupSize = 3;
 let displaceGroupCount = 2;
-let checkboxRounded, checkboxdebugMode, checkboxAutoRandom;
 let roundedEdges = true;
 let debugMode = false;
 let widthSetting = 0.96;
@@ -50,7 +48,7 @@ let baseRowPitch;
 
 // random animate
 let lastAutoRandomMs = 0;
-const RANDOM_INTERVAL_MS = 500;
+const RANDOM_INTERVAL_MS = 1000;
 let autoRandomActive = false;
 
 // UI canvas (separate)
@@ -63,13 +61,22 @@ let uiP5 = null;             // p5 instance for the UI canvas (instance mode)
 let rowYsCanvas = []; // y-position of each row in canvas coordinates
 
 function desiredCanvasHeight(){
-  return Math.ceil(PADDING * 2 + baseRowPitch * ROWS * heightScale);
+  return Math.ceil(PADDING * 2 + baseRowPitch * rowsSetting);
 }
 
 function divisorsAsc(n){
   const d = [];
   for (let i = 1; i <= n; i++) if (n % i === 0) d.push(i);
   return d; // e.g. 12 -> [1,2,3,4,6,12]
+}
+
+function divisorsDescSigned(n){
+  // Smooth sequence across zero: negatives in descending magnitude, then positives ascending
+  // e.g., n=12 → [-12,-6,-4,-3,-2,-1, 1,2,3,4,6,12]
+  const asc = divisorsAsc(n);                 // [1,2,3,4,6,12]
+  const negDesc = asc.slice().reverse().map(v => -v); // [-12,-6,-4,-3,-2,-1]
+  const posAsc  = asc.slice();                // [1,2,3,4,6,12]
+  return negDesc.concat(posAsc);
 }
 
 let _groupsOpts = [1]; // valid groups for current rowsSetting
@@ -110,60 +117,81 @@ function rebuildGroupSlider(){
 function randInt(min, max){ return Math.floor(Math.random() * (max - min + 1)) + min; }
 function randFloat(min, max){ return Math.random() * (max - min) + min; }
 
+// ---- Random helpers that read ranges from the actual HTML inputs ----
+function getInputRange(el, fallbackMin, fallbackMax, fallbackStep){
+  const min  = (el && el.min  !== undefined && el.min  !== '') ? parseFloat(el.min)  : fallbackMin;
+  const max  = (el && el.max  !== undefined && el.max  !== '') ? parseFloat(el.max)  : fallbackMax;
+  const step = (el && el.step !== undefined && el.step !== '' && el.step !== 'any') ? parseFloat(el.step) : fallbackStep;
+  return { min, max, step };
+}
+function randFromRangeInt(min, max, step){
+  if (!isFinite(step) || step <= 0) step = 1;
+  const nSteps = Math.max(1, Math.floor((max - min) / step));
+  const k = randInt(0, nSteps);
+  return min + k * step;
+}
+function randFromInputInt(el, fallbackMin, fallbackMax, fallbackStep){
+  const {min, max, step} = getInputRange(el, fallbackMin, fallbackMax, fallbackStep);
+  return Math.round(randFromRangeInt(min, max, step));
+}
+function randFromInputFloat(el, fallbackMin, fallbackMax, fallbackStep){
+  const {min, max, step} = getInputRange(el, fallbackMin, fallbackMax, fallbackStep);
+  const val = randFromRangeInt(min, max, step);
+  return val;
+}
+
 function applyOneRandomTweak(){
-  // kies 1 parameter
-  const choices = ['width','gap','groups','line','height'];
-  const pick = choices[randInt(0, choices.length - 1)];
-  let needsLayout = false;
-  let needsResize = false;
+  // Randomize ALL relevant controls based on their actual input ranges
 
-  if (pick === 'width'){
-    // 0.85..1.20
-    widthSetting = Math.max(0.5, Math.min(3.0, randFloat(0.85, 1.20)));
-    if (sliderWidth) sliderWidth.value(Math.round(widthSetting * 100));
-  } else if (pick === 'gap'){
-    // 0..120 px
-    gapSetting = randInt(0, 120);
-    if (sliderGap) sliderGap.value(gapSetting);
-    needsLayout = true;
-  } else if (pick === 'groups'){
-    // kies geldige groepsaantallen (delers van rowsSetting)
-    const opts = divisorsAsc(rowsSetting);
+  // 1) Width (percent slider → 0.xx scale)
+  if (elWidth){
+    const wPerc = randFromInputFloat(elWidth, 50, 300, 1); // fallback matches index.html defaults
+    widthSetting = Math.max(0.05, wPerc / 100);
+    elWidth.value = Math.round(widthSetting * 100);
+    if (elWidthOut) elWidthOut.textContent = `${Math.round(widthSetting * 100)} %`;
+  }
+
+  // 2) Gap (px) — allow negatives if the input allows it
+  let layoutNeedsRebuild = false;
+  if (elGap){
+    gapSetting = randFromInputInt(elGap, -100, 150, 1);
+    elGap.value = gapSetting;
+    if (elGapOut) elGapOut.textContent = `${gapSetting} px`;
+    layoutNeedsRebuild = true; // gap affects buildLayout letter positions
+  }
+
+  // 3) Line height (px)
+  if (elThickness){
+    lineThickness = randFromInputInt(elThickness, 1, 25, 1);
+    elThickness.value = lineThickness;
+    if (elThicknessOut) elThicknessOut.textContent = `${lineThickness} px`;
+  }
+
+  // 4) Displacement groups (signed options derived from rows)
+  // Use divisorsDescSigned so order matches the UI options
+  let opts = divisorsDescSigned(rowsSetting);
+  if (opts.length){
+    let newIdx = randInt(0, opts.length - 1);
     const curIdx = Math.max(0, opts.indexOf(displaceGroupCount));
-    let idx = randInt(0, Math.max(0, opts.length - 1));
-    if (opts.length > 1 && idx === curIdx){ idx = (idx + 1) % opts.length; }
-    displaceGroupCount = opts[idx];
-    displaceGroupSize  = Math.max(1, Math.floor(rowsSetting / displaceGroupCount));
-    // UI-slider updaten als aanwezig (index-slider over _groupsOpts)
-    if (sliderDisplacement && typeof sliderDisplacement.value === 'function'){
-      const i = Math.max(0, opts.indexOf(displaceGroupCount));
-      sliderDisplacement.value(i);
+    if (opts.length > 1 && newIdx === curIdx) newIdx = (newIdx + 1) % opts.length;
+    displaceGroupCount = opts[newIdx];
+    const groupsAbs = Math.max(1, Math.abs(displaceGroupCount));
+    displaceGroupSize = Math.max(1, Math.floor(rowsSetting / groupsAbs));
+    if (elGroups){
+      // keep slider in sync with the chosen option index
+      elGroups.min = 0; elGroups.max = Math.max(0, opts.length - 1); elGroups.step = 1; elGroups.value = newIdx;
     }
-  } else if (pick === 'line'){
-    // 1..25 px
-    lineThickness = randInt(1, 25);
-    if (sliderThickness) sliderThickness.value(lineThickness);
-  } else if (pick === 'height'){
-    // 70%..130% (geclamped binnen je slider 50..200)
-    heightScale = Math.max(0.5, Math.min(2.0, randFloat(0.70, 1.30)));
-    if (sliderHeight) sliderHeight.value(Math.round(heightScale * 100));
-    needsResize = true;
+    if (elGroupsOut) elGroupsOut.textContent = String(displaceGroupCount);
   }
 
-  if (needsResize){
-    resizeCanvas(width, desiredCanvasHeight(), true);
-  }
-  if (needsLayout){
+  if (layoutNeedsRebuild){
     layout = buildLayout(LOGO_TEXT, rowsSetting);
   }
-
-  // redraw + UI
   redraw();
-  redrawUI();
 }
 
 function autoRandomizeTick(){
-  if (!autoRandomActive || !checkboxAutoRandom || !checkboxAutoRandom.checked()) return;
+  if (!autoRandomActive) return;
   const now = millis();
   if (now - lastAutoRandomMs >= RANDOM_INTERVAL_MS){
     lastAutoRandomMs = now;
@@ -171,19 +199,8 @@ function autoRandomizeTick(){
   }
 }
 
-function positionUI(){
-  if (!mainCanvas || !uiContainer) return;
-  const x = Math.max(0, windowWidth - uiWidth - 16);
-  const y = 16;
-  uiContainer.style('position', 'fixed');
-  uiContainer.style('z-index', '1000');
-  uiContainer.position(x, y);
-  positionControls();
-  redrawUI();
-}
 // Helper to visually scale and center the canvas in the window via CSS (does not alter p5 width/height)
 function fitCanvasToWindow(){
-  // Compute a CSS size that fits inside the window, with a slight margin via VIEW_SCALE
   const base = Math.min(windowWidth / width, windowHeight / height);
   const s    = base * VIEW_SCALE;
   const cssW = Math.max(1, Math.floor(width  * s));
@@ -200,26 +217,6 @@ function fitCanvasToWindow(){
   el.style.top      = top  + 'px';
 }
 
-function positionControls(){
-  if (!uiContainer) return;
-  const left = uiContainer.position.x + 12;
-  let top  = 16;
-  const interval = 30;
-  if (sliderRows)           { sliderRows.parent(uiContainer);           sliderRows.position(left, top); } sliderRows.style('z-index', '1000');  top += interval;
-  if (sliderThickness)      { sliderThickness.parent(uiContainer);      sliderThickness.position(left, top); sliderThickness.style('z-index', '1000'); }  top += interval;
-  if (sliderHeight)         { sliderHeight.parent(uiContainer);         sliderHeight.position(left, top); sliderHeight.style('z-index', '1000'); }  top += interval;
-  if (sliderWidth)          { sliderWidth.parent(uiContainer);          sliderWidth.position(left, top); sliderWidth.style('z-index','1000'); }  top += interval;
-  if (sliderGap)            { sliderGap.parent(uiContainer);            sliderGap.position(left, top); sliderGap.style('z-index','1000'); }  top += interval;
-  if (sliderDisplacement)   { sliderDisplacement.parent(uiContainer);   sliderDisplacement.position(left, top); sliderDisplacement.style('z-index', '1000'); }  top += interval;
-  if (checkboxRounded)      { checkboxRounded.parent(uiContainer);      checkboxRounded.position(left, top); }  top += interval;
-  if (checkboxdebugMode)    { checkboxdebugMode.parent(uiContainer);    checkboxdebugMode.position(left, top); }  top += interval;
-  if (checkboxAutoRandom)   { checkboxAutoRandom.parent(uiContainer);   checkboxAutoRandom.position(left, top); }  top += interval;
-}
-
-function redrawUI(){
-  if (uiP5 && uiP5.redraw) uiP5.redraw();
-}
-
 function preload(){
   const uniq = Array.from(new Set(LOGO_TEXT.split('').map(c => c.toUpperCase())));
   uniq.forEach(ch => {
@@ -234,43 +231,123 @@ function setup(){
   baseRowPitch = (height - 2 * PADDING) / rowsSetting;
   noLoop();
   layout = buildLayout(LOGO_TEXT);
-  initInterface();
   resizeCanvas(width, desiredCanvasHeight(), true);
-  positionUI();
-  fitCanvasToWindow();
 
-  // Create UI holder + UI canvas (instance-mode p5)
-  if (uiContainer) uiContainer.remove();
-  uiContainer = createDiv();
-  uiContainer.style('width', uiWidth + 'px');
-  uiContainer.style('height', uiHeight + 'px');
-  uiContainer.style('padding', '0');
-  uiContainer.style('margin', '0');
+  // Hook up HTML controls from index.html
+  function byId(id){ return document.getElementById(id); }
+  elRows      = byId('rows');
+  elThickness = byId('thickness');
+  elWidth     = byId('widthScale');
+  elGap       = byId('gap');
+  elGroups    = byId('groups');
+  elGroupsOut = byId('groupsOut');
+  elRounded   = byId('rounded');
+  elDebug     = byId('debug');
+  elAuto      = byId('autorand');
+  elRowsOut      = byId('rowsOut');
+  elThicknessOut = byId('thicknessOut');
+  elWidthOut     = byId('widthOut');
+  elGapOut       = byId('gapOut');
 
-  // Second p5 instance for the UI canvas
-  uiP5 = new p5((p) => {
-    p.setup = function(){
-      const cnv = p.createCanvas(uiWidth, uiHeight);
-      cnv.parent(uiContainer);
-      p.frameRate(12); // light loop so labels always reflect latest values
-    };
-    p.draw = function(){
-      var top = 4;
-      const interval = 30;
-      p.background(250);
-      p.noStroke(); p.fill(0); p.textSize(12); p.textAlign(p.LEFT, p.TOP);
-      p.text(`Rows: ${rowsSetting}`, 12, top);  top += interval;
-      p.text(`Line: ${lineThickness}px`, 12, top);  top += interval;
-      p.text(`Height: ${Math.round(heightScale*100)}%`, 12, top);  top += interval;
-      p.text(`Width: ${Math.round(widthSetting*100)}%`, 12, top);  top += interval;
-      p.text(`Gap: ${gapSetting}px`, 12, top);  top += interval;
-      const gsize = Math.max(1, Math.floor(rowsSetting / Math.max(1, displaceGroupCount)));
-      p.text(`Groups: ${displaceGroupCount} × (each ${gsize} rows)`, 12, top);  top += interval;
-    };
+  // initialize values to current state
+  elRows.value = rowsSetting;
+  elThickness.value = lineThickness;
+  elWidth.value = Math.round(widthSetting * 100);
+  elGap.value = gapSetting;
+  elRounded.checked = roundedEdges;
+  elDebug.checked = debugMode;
+  elAuto.checked = false;
+  if (elRowsOut)      elRowsOut.textContent      = String(rowsSetting);
+  if (elThicknessOut) elThicknessOut.textContent = `${lineThickness} px`;
+  if (elWidthOut)     elWidthOut.textContent     = `${Math.round(widthSetting * 100)} %`;
+  if (elGapOut)       elGapOut.textContent       = `${gapSetting} px`;
+
+  let _signedGroupOptions = [];
+  function rebuildGroupsSelect(){
+    _signedGroupOptions = divisorsDescSigned(rowsSetting); // [-rows..-1, rows..1]
+
+    // vorige waarde respecteren: zelfde sign, en grootste geldige |v| die ≤ vorige |v|
+    const prev = displaceGroupCount || 1;
+    const sign = Math.sign(prev) || 1;
+    const targetAbs = Math.max(1, Math.abs(prev));
+    const posOptions = _signedGroupOptions
+      .filter(v => Math.sign(v) === sign)
+      .map(v => Math.abs(v))
+      .sort((a,b)=>b-a); // groot → klein
+
+    let chosenAbs = posOptions.find(v => v <= targetAbs);
+    if (!chosenAbs) chosenAbs = posOptions[posOptions.length - 1] || 1; // val naar kleinste
+
+    displaceGroupCount = sign * chosenAbs;
+
+    // slider = index in de options-array
+    const idx = _signedGroupOptions.indexOf(displaceGroupCount);
+    elGroups.min = 0;
+    elGroups.max = Math.max(0, _signedGroupOptions.length - 1);
+    elGroups.step = 1;
+    elGroups.value = (idx >= 0) ? idx : 0;
+
+    const groupsAbs = Math.max(1, Math.abs(displaceGroupCount));
+    displaceGroupSize = Math.max(1, Math.floor(rowsSetting / groupsAbs));
+    if (elGroupsOut) elGroupsOut.textContent = String(displaceGroupCount);
+  }
+  rebuildGroupsSelect();
+
+  // listeners
+  elRows.addEventListener('input', ()=>{
+    rowsSetting = parseInt(elRows.value,10);
+    if (elRowsOut) elRowsOut.textContent = String(rowsSetting);
+    rebuildGroupsSelect();             // behoudt sign en clamp ≤
+    layout = buildLayout(LOGO_TEXT, rowsSetting);
+    redraw();
   });
 
-  redrawUI();
-  positionUI();
+  elThickness.addEventListener('input', ()=>{
+    lineThickness = parseInt(elThickness.value,10);
+    if (elThicknessOut) elThicknessOut.textContent = `${lineThickness} px`;
+    redraw();
+  });
+
+  elWidth.addEventListener('input', ()=>{
+    widthSetting = parseInt(elWidth.value,10) / 100;
+    if (elWidthOut) elWidthOut.textContent = `${Math.round(widthSetting * 100)} %`;
+    redraw();
+  });
+
+  elGap.addEventListener('input', ()=>{
+    gapSetting = parseInt(elGap.value,10);
+    if (elGapOut) elGapOut.textContent = `${gapSetting} px`;
+    layout = buildLayout(LOGO_TEXT, rowsSetting);
+    redraw();
+  });
+
+  elGroups.addEventListener('input', ()=>{
+    const idx = parseInt(elGroups.value,10) || 0;
+    displaceGroupCount = _signedGroupOptions[idx] || 1; // gesigneerd
+    const groupsAbs = Math.max(1, Math.abs(displaceGroupCount));
+    displaceGroupSize  = Math.max(1, Math.floor(rowsSetting / groupsAbs));
+    if (elGroupsOut) elGroupsOut.textContent = String(displaceGroupCount);
+    redraw();
+  });
+
+  elRounded.addEventListener('change', ()=>{
+    roundedEdges = elRounded.checked;
+    redraw();
+  });
+
+  elDebug.addEventListener('change', ()=>{
+    debugMode = elDebug.checked;
+    redraw();
+  });
+
+  elAuto.addEventListener('change', ()=>{
+    autoRandomActive = elAuto.checked;
+    lastAutoRandomMs = millis();
+    if (autoRandomActive) { loop(); } else { noLoop(); redraw(); }
+  });
+
+  // keep canvas fitted on resize
+  window.addEventListener('resize', fitCanvasToWindow);
   fitCanvasToWindow();
 
   noLoop();
@@ -302,14 +379,12 @@ function computePerLetterBounds(){
       // max run length in this row for bias
       let maxRunLen = 0; for (const s of rows[r]) if (s.runLen > maxRunLen) maxRunLen = s.runLen;
       // displacement for this row
-      let xShift = 0;
-      const gsize = Math.max(1, displaceGroupSize);
-      if (rowsSetting % gsize === 0){
-        const groups = Math.max(1, Math.floor(rowsSetting / gsize));
-        const sectionIndex = Math.floor(r / gsize);               // 0..groups-1
-        const centered = sectionIndex - (groups - 1) * 0.5;       // symmetric around 0
-        xShift = centered * DISPLACE_UNIT;                        // fixed offset per section
-      }
+      const groupsAbs = Math.max(1, Math.abs(displaceGroupCount));
+      const gsize = Math.max(1, Math.floor(rowsSetting / groupsAbs));
+      const sectionIndex = Math.floor(r / gsize) % groupsAbs;   // 0..groupsAbs-1
+      const centered = sectionIndex - (groupsAbs - 1) * 0.5;    // symmetrisch rondom 0
+      const sign = Math.sign(displaceGroupCount) || 1;          // negatief = spiegel
+      const xShift = sign * centered * DISPLACE_UNIT;
       for (const seg of rows[r]){
         const rightEdgeX = baseX + seg.rightRel * layout.scale * widthSetting;
         const baseLen    = Math.max(0, seg.runLen * layout.scale);
@@ -346,14 +421,12 @@ function computeLayoutFit(){
       for (const s of rows[r]) if (s.runLen > maxRunLen) maxRunLen = s.runLen;
 
       // displacement in this row
-      let xShift = 0;
-      const gsize = Math.max(1, displaceGroupSize);
-      if (rowsSetting % gsize === 0){
-        const groups = Math.max(1, Math.floor(rowsSetting / gsize));
-        const sectionIndex = Math.floor(r / gsize);               // 0..groups-1
-        const centered = sectionIndex - (groups - 1) * 0.5;       // symmetric around 0
-        xShift = centered * DISPLACE_UNIT;                        // fixed offset per section
-      }
+      const groupsAbs = Math.max(1, Math.abs(displaceGroupCount));
+      const gsize = Math.max(1, Math.floor(rowsSetting / groupsAbs));
+      const sectionIndex = Math.floor(r / gsize) % groupsAbs;   // 0..groupsAbs-1
+      const centered = sectionIndex - (groupsAbs - 1) * 0.5;    // symmetrisch rondom 0
+      const sign = Math.sign(displaceGroupCount) || 1;          // negatief = spiegel
+      const xShift = sign * centered * DISPLACE_UNIT;
 
       for (const seg of rows[r]){
         const rightEdgeX = baseX + seg.rightRel * layout.scale * widthSetting;
@@ -374,8 +447,8 @@ function computeLayoutFit(){
   const contentH0 = rowsSetting * rowPitchNow;
 
   const sFit = Math.min(
-    (width  - 2 * SAFE_MARGIN) / contentW0,
-    (height - 2 * SAFE_MARGIN) / contentH0,
+    (width  - 2) / contentW0,
+    (height - 2) / contentH0,
     1
   );
 
@@ -427,14 +500,12 @@ function renderLogo(g){
         const maxDash = Math.max(0, rightEdgeX - baseX);
         const dashLenClamped = Math.min(dashLen, maxDash);
         // Displacement by snapped intervals across rows (optional)
-        let xShift = 0;
-        const gsize = Math.max(1, displaceGroupSize);
-        if (rowsSetting % gsize === 0){
-          const groups = Math.max(1, Math.floor(rowsSetting / gsize));
-          const sectionIndex = Math.floor(r / gsize);               // 0..groups-1
-          const centered = sectionIndex - (groups - 1) * 0.5;       // symmetric around 0
-          xShift = centered * DISPLACE_UNIT;                        // fixed offset per section
-        }
+        const groupsAbs = Math.max(1, Math.abs(displaceGroupCount));
+        const gsize = Math.max(1, Math.floor(rowsSetting / groupsAbs));
+        const sectionIndex = Math.floor(r / gsize) % groupsAbs;   // 0..groupsAbs-1
+        const centered = sectionIndex - (groupsAbs - 1) * 0.5;    // symmetrisch rondom 0
+        const sign = Math.sign(displaceGroupCount) || 1;          // negatief = spiegel
+        const xShift = sign * centered * DISPLACE_UNIT;
         if (roundedEdges) {
           drawRoundedTaper(g, rightEdgeX + xShift, y, dashLenClamped, lineThickness, TIP_RATIO);
         } else {
@@ -594,9 +665,8 @@ function buildLayout(word, rowsCount = rowsSetting){
   const naturalDims = up.map(ch => glyphDims[ch] || { w: 0, h: 0 });
   const maxH = Math.max(1, ...naturalDims.map(d => d.h));
   const sumW = naturalDims.reduce((s,d) => s + d.w, 0);
-  // Target fit: tallest letter uses FIT_HEIGHT_FRAC of buffer height
-  const sH = (BUFFER_H * FIT_HEIGHT_FRAC) / maxH;
-  const sW = (BUFFER_W * FIT_WIDTH_FRAC) / Math.max(1, sumW);
+  const sH = BUFFER_H / maxH;
+  const sW = BUFFER_W / Math.max(1, sumW);
   const scaleUniform = Math.min(sH, sW, 1.0);
 
   // Compute total scaled width and start X for centering (NO gaps in buffer)
@@ -675,7 +745,9 @@ function buildLayout(word, rowsCount = rowsSetting){
   return {
     letters: perLetter,
     lettersOrder,
-    letterX: letterX.map((x, i) => (x - startX) * scale + (i * Math.max(0, gapSetting) * scale)),
+    letterX: letterX.map((x, i) => 
+      (x - startX) * scale + (i * gapSetting * scale)
+    ),
     letterW: letterWidths,
     scale,
     rowPitch,
@@ -685,75 +757,6 @@ function buildLayout(word, rowsCount = rowsSetting){
 }
 
 // ====== INTERFACE ======
-function initInterface(){
-  sliderRows = createSlider(4, 4*8, rowsSetting, 4);
-  sliderRows.style('width', '180px');
-  sliderRows.input(() => {
-    rowsSetting = sliderRows.value();
-    rebuildGroupSlider();
-    layout = buildLayout(LOGO_TEXT, rowsSetting);
-    redraw(); positionUI(); redrawUI();
-  });
-
-  sliderThickness = createSlider(1, 25, lineThickness, 1);
-  sliderThickness.style('width', '180px');
-  sliderThickness.input(() => {
-    lineThickness = sliderThickness.value();
-    redraw(); positionUI(); redrawUI();});
-
-  sliderHeight = createSlider(50, 200, Math.round(heightScale * 100), 1);
-  sliderHeight.style('width', '180px');
-  sliderHeight.input(() => {
-    heightScale = sliderHeight.value() / 100;
-    resizeCanvas(width, desiredCanvasHeight(), true);
-    redraw(); positionUI(); redrawUI();
-  });
-
-  rebuildGroupSlider();
-  
-  sliderWidth = createSlider(50, 300, Math.round(widthSetting * 100), 1);
-  sliderWidth.style('width', '180px');
-  sliderWidth.input(() => {
-    widthSetting = sliderWidth.value() / 100;
-    redraw(); positionUI(); redrawUI();
-  });
-
-  sliderGap = createSlider(0, 150, gapSetting, 1);
-  sliderGap.style('width', '180px');
-  sliderGap.input(() => {
-    gapSetting = sliderGap.value();
-    layout = buildLayout(LOGO_TEXT, rowsSetting);
-    redraw(); positionUI(); redrawUI();
-  });
-
-  positionControls();
-
-  checkboxRounded = createCheckbox('Rounded edges', roundedEdges);
-  checkboxRounded.changed(() => {
-    roundedEdges = checkboxRounded.checked();
-    redraw(); positionUI(); redrawUI();
-  });
-
-  checkboxdebugMode = createCheckbox('Debug mode', debugMode);
-  checkboxdebugMode.changed(() => {
-    debugMode = checkboxdebugMode.checked();
-    redraw(); positionUI(); redrawUI();
-  });
-
-  checkboxAutoRandom = createCheckbox('Auto randomize', false);
-  checkboxAutoRandom.changed(() => {
-    lastAutoRandomMs = millis();
-    autoRandomActive = checkboxAutoRandom.checked();
-    if (checkboxAutoRandom.checked()){
-      loop();
-    } else {
-      noLoop();
-      lastAutoRandomMs = millis();
-      redraw();
-    }
-    positionUI(); redrawUI();
-  });
-}
 
 // ====== debug OVERLAY ======
 function drawdebugModeOverlay(){
