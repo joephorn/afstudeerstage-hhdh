@@ -8,10 +8,11 @@ let DISPLACE_UNIT       = 20;
 let ASPECT_W = 16;
 let ASPECT_H = 9;
 let LOGO_TARGET_W = 0;
-const FIT_FRACTION = 0.75; // render at 90% of available width by default
+let FIT_MODE = false;
+const FIT_FRACTION = 0.75;
 
 // Scan behavior
-const BRIDGE_PIXELS     = 0;         // allow bridging small white gaps (0 = off)
+const BRIDGE_PIXELS     = 0;         // hoger = betere performance, minder acuraat
 const INK_THRESHOLD     = 140; // KAN WEG // GWN IN CODE ZETTEN?
 const BAND_MIN_COVER_FRAC = 0.035; // ≥3.5% of word width must be continuous ink for a row to count
 
@@ -38,7 +39,6 @@ let elRowsOut, elThicknessOut, elWidthOut, elGapOut, elDispUnitOut, elGroupsOut,
 let elRounded, elDebug, elAuto;
 let elTipRatio, elEndRatio, elTipOut, elEndOut;
 let gapPx = 5;
-let displaceGroupSize = 6;
 let displaceGroups = 2;
 let roundedEdges = true;
 let debugMode = false;
@@ -57,10 +57,6 @@ const RANDOM_INTERVAL_MS = 1000;
 let autoRandomActive = false;
 
 let rowYsCanvas = []; // y-position of each row in canvas coordinates
-
-function desiredCanvasHeight(){
-  return Math.ceil(baseRowPitch * rows);
-}
 
 function divisorsAsc(n){
   const d = [];
@@ -136,7 +132,6 @@ function applyRandomTweaks(){
       if (opts.length > 1 && newIdx === curIdx) newIdx = (newIdx + 1) % opts.length;
       displaceGroups = opts[newIdx];
       const groupsAbs = Math.max(1, Math.abs(displaceGroups));
-      displaceGroupSize = Math.max(1, Math.floor(rows / groupsAbs));
       if (elGroups){
         elGroups.min = 0; elGroups.max = Math.max(0, opts.length - 1); elGroups.step = 1; elGroups.value = newIdx;
       }
@@ -272,9 +267,19 @@ function setup(){
   if (elPreset){
     elPreset.addEventListener('change', ()=>{
       const val = elPreset.value;
-      if (val === 'custom'){
+
+      if (val === 'fit') {
+        FIT_MODE = true;
+        if (elCustomAR) elCustomAR.style.display = 'none';
+        fitViewportToWindow();
+        redraw();
+        return;
+      } else {
+        FIT_MODE = false;
+      }
+
+      if (val === 'custom') {
         if (elCustomAR) elCustomAR.style.display = '';
-        // Apply whatever is currently filled in the boxes
         updateCustomResolutionAndAspect();
       } else {
         if (elCustomAR) elCustomAR.style.display = 'none';
@@ -282,7 +287,7 @@ function setup(){
         const opt = elPreset.options[elPreset.selectedIndex];
         const aw = parseInt(opt.dataset.aw, 10);
         const ah = parseInt(opt.dataset.ah, 10);
-        if (Number.isFinite(aw) && Number.isFinite(ah)){
+        if (Number.isFinite(aw) && Number.isFinite(ah)) {
           ASPECT_W = Math.max(1, aw);
           ASPECT_H = Math.max(1, ah);
           fitViewportToWindow();
@@ -361,7 +366,6 @@ function setup(){
     elGroups.value = (idx >= 0) ? idx : 0;
 
     const groupsAbs = Math.max(1, Math.abs(displaceGroups));
-    displaceGroupSize = Math.max(1, Math.floor(rows / groupsAbs));
     if (elGroupsOut) elGroupsOut.textContent = String(displaceGroups);
   }
   rebuildGroupsSelect();
@@ -398,7 +402,6 @@ function setup(){
     const idx = parseInt(elGroups.value,10) || 0;
     displaceGroups = _signedGroupOptions[idx] || 1; // gesigneerd
     const groupsAbs = Math.max(1, Math.abs(displaceGroups));
-    displaceGroupSize  = Math.max(1, Math.floor(rows / groupsAbs));
     if (elGroupsOut) elGroupsOut.textContent = String(displaceGroups);
     redraw();
   });
@@ -435,41 +438,12 @@ function setup(){
   });
 
   if (elCustomAR) elCustomAR.style.display = (elPreset && elPreset.value === 'custom') ? '' : 'none';
+  FIT_MODE = (elPreset && elPreset.value === 'fit');
+  fitViewportToWindow();
+  redraw();
   if (elPreset && elPreset.value === 'custom') updateCustomResolutionAndAspect();
   noLoop();
   redraw();
-}
-
-
-// Measure per-letter bounds (visual left/right) using the same math as the renderer
-
-function computePerLetterBounds(){
-  const tEff = 1 + (widthScale - 1);
-  const letterLeft = new Array(layout.lettersOrder.length).fill(Infinity);
-  const letterRight = new Array(layout.lettersOrder.length).fill(-Infinity);
-
-  for (let li = 0; li < layout.lettersOrder.length; li++){
-    const baseX = layout.letterX[li] * tEff; // tracking-applied start of letter box
-    const letterKey = layout.lettersOrder[li];
-    const rowsArr = layout.letters[letterKey];
-
-    for (let r = 0; r < rowsArr.length; r++){
-      const maxRunLen = maxRunLength(rowsArr[r]);
-      const xShift = computeXShift(r, rows, displaceGroups);
-      for (const seg of rowsArr[r]){
-        const rightEdgeX = baseX + seg.rightRel * layout.scale * widthScale; // global X-stretch
-        const baseLen    = Math.max(0, seg.runLen * layout.scale * widthScale); // stretch dash lengths too
-        const rightX     = rightEdgeX + xShift;
-        const leftX      = rightX - baseLen;
-        if (leftX  < letterLeft[li])  letterLeft[li]  = leftX;
-        if (rightX > letterRight[li]) letterRight[li] = rightX;
-      }
-    }
-    // Fallback if a letter had no spans
-    if (!isFinite(letterLeft[li]))  letterLeft[li]  = baseX;
-    if (!isFinite(letterRight[li])) letterRight[li] = baseX;
-  }
-  return { tEff, letterLeft, letterRight };
 }
 
 function computeLayoutFit(){
@@ -539,14 +513,12 @@ function renderLogo(g){
   // Use original SVG letter positions (no offsets)
   for (let li = 0; li < layout.lettersOrder.length; li++){
     const letterKey   = layout.lettersOrder[li];
-    const rowsForLetter = layout.letters[letterKey];
     const baseX = layout.letterX[li] * tEff;
     const rowsArr = layout.letters[letterKey];
 
-    for (let r = 0; r < rowsForLetter.length; r++){
+    for (let r = 0; r < rowsArr.length; r++){
       const y = rowYsCanvas[r];
-      const maxRunLen = maxRunLength(rowsArr[r]);
-      for (const span of rowsForLetter[r]){
+      for (const span of rowsArr[r]){
         const rightEdgeX = baseX + span.rightRel * layout.scale * widthScale; // global X-stretch
         const baseLen    = Math.max(0, span.runLen * layout.scale * widthScale); // stretch dash lengths too
         // Clamp dash length to the letter’s left edge (no wider than SVG envelope)
@@ -566,7 +538,7 @@ function renderLogo(g){
 
 function draw(){
   autoRandomizeTick();
-  background(250);
+  background(255);
   noStroke();
   renderLogo(this);
   if (debugMode) drawdebugModeOverlay();
@@ -856,13 +828,6 @@ function drawdebugModeOverlay(){
   pop();
 }
 
-// EXTRA BEREKENINGEN
-function maxRunLength(row){
-  let maxRunLen = 0;
-  for (const s of row) if (s.runLen > maxRunLen) maxRunLen = s.runLen;
-  return maxRunLen;
-}
-
 function computeXShift(r, rows, displaceGroups){
   const groupsAbs = Math.max(1, Math.abs(displaceGroups));
   const gsize = Math.max(1, Math.floor(rows / groupsAbs));
@@ -882,15 +847,20 @@ function fitViewportToWindow(){
   const availW = Math.max(100, stage.clientWidth);
   const availH = Math.max(100, stage.clientHeight);
 
-  // wrapper size met aspect ASPECT_W:ASPECT_H, passend in stage
-  const targetW = availH * (ASPECT_W / ASPECT_H);
   let boxW, boxH;
-  if (targetW <= availW){
-    boxH = availH;
-    boxW = Math.round(targetW);
-  } else {
+  if (FIT_MODE) {
+    // Vul de hele stage, negeer aspect ratio
     boxW = availW;
-    boxH = Math.round(availW * (ASPECT_H / ASPECT_W));
+    boxH = availH;
+  } else {
+    const targetW = availH * (ASPECT_W / ASPECT_H);
+    if (targetW <= availW) {
+      boxH = availH;
+      boxW = Math.round(targetW);
+    } else {
+      boxW = availW;
+      boxH = Math.round(availW * (ASPECT_H / ASPECT_W));
+    }
   }
 
   // CSS wrapper size

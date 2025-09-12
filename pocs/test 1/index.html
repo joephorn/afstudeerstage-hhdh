@@ -8,7 +8,6 @@
     <link rel="stylesheet" type="text/css" href="style.css">
 
     <style>
-      /* Layout */
       html, body { height: 100%; margin: 0; }
       main {
         height: 100%;
@@ -18,20 +17,19 @@
         box-sizing: border-box;
       }
 
-      /* Stage (links) groeit mee, centreert canvas */
       #stage {
         flex: 1 1 auto;
-        min-width: 0;            /* laat krimpen toe */
+        min-width: 10px;
         display: flex;
-        align-items: center;     /* verticaal centreren */
-        justify-content: center; /* horizontaal centreren */
+        align-items: center;
+        justify-content: center;
         border-radius: 8px;
       }
 
-      /* Wrapper met border die het canvas clip’t */
       #canvasWrap{
-        border: 2px solid #000;
-        border-radius: 12px;
+        border:1px solid #e5e5e5;
+        border-radius:12px;
+        box-shadow:0 4px 18px rgba(0,0,0,.06);
         box-sizing: content-box;
         display: flex;
         align-items: center;
@@ -62,7 +60,6 @@
   </head>
   <body>
     <main>
-
       <!-- Linkerkolom: stage met border-viewport -->
       <div id="stage">
         <div id="canvasWrap"></div>
@@ -75,7 +72,8 @@
           <span>Aspect &amp; Resolution</span>
         </label>
         <select id="preset" style="width:100%; margin-bottom:10px;">
-          <option value="ar1" data-aw="16" data-ah="9" data-w="1920" data-h="1080" selected>16:9 — 1920 × 1080 (Full HD)</option>
+          <option value="fit" selected>Fit — fill screen</option>
+          <option value="ar1" data-aw="16" data-ah="9" data-w="1920" data-h="1080">16:9 — 1920 × 1080 (Full HD)</option>
           <option value="ar2" data-aw="16" data-ah="9" data-w="1280" data-h="720">16:9 — 1280 × 720 (HD)</option>
           <option value="ar3" data-aw="16" data-ah="9" data-w="3840" data-h="2160">16:9 — 3840 × 2160 (4K)</option>
           <option value="ar4" data-aw="9" data-ah="16" data-w="1080" data-h="1920">9:16 — 1080 × 1920 (Vertical Full HD)</option>
