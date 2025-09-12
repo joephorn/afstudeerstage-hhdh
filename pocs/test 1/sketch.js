@@ -2,17 +2,17 @@
 const LOGO_TEXT         = "ALBION";
 const ROWS_DEFAULT      = 12;
 const LINE_HEIGHT       = 8;
-const TIP_RATIO         = 0.3;
-const PADDING           = 40;        // canvas padding
-const DISPLACE_UNIT     = 20;        // px per row step for displacement
-const LEN_SCALE_STRENGTH = 1;     // 0..1 — hoeveel van (widthSetting-1) wordt toegepast op lange runs (lager = minder snel meeschalen)
-const TRACK_STRENGTH    = 1;    // meeschalen van lange lijnen (horizontaal)
-const SMALL_LEN_BIAS    = 1;    // meeschalen van korte lijnen (verticaal)
-const VIEW_SCALE        = 0.8;   // visual CSS scale of the canvas (no change to drawing scale)
+let TIP_RATIO           = 0.3; // small (tip) cap radius factor relative to big cap (0..1)
+let END_RATIO           = 1.0; // big (end) cap radius factor relative to h/2 (0..1)
+let DISPLACE_UNIT       = 20;
+let ASPECT_W = 16;
+let ASPECT_H = 9;
+let LOGO_TARGET_W = 0;
+const FIT_FRACTION = 0.75; // render at 90% of available width by default
 
 // Scan behavior
 const BRIDGE_PIXELS     = 0;         // allow bridging small white gaps (0 = off)
-const INK_THRESHOLD     = 140;
+const INK_THRESHOLD     = 140; // KAN WEG // GWN IN CODE ZETTEN?
 const BAND_MIN_COVER_FRAC = 0.035; // ≥3.5% of word width must be continuous ink for a row to count
 
 // Row sampling kernel (vertical) in the glyph buffer
@@ -30,21 +30,26 @@ let glyphDims = {};   // map: char -> {w,h}
 // ====== STATE ======
 let glyphBuffer;      // offscreen p5.Graphics used for scanning
 let layout;           // computed positions + spans
-let rows = ROWS_DEFAULT;          // number of horizontal scan rows
-let linePx = LINE_HEIGHT;         // stroke thickness in px
+let rows = ROWS_DEFAULT;
+let linePx = LINE_HEIGHT;
 // HTML UI elements (wired via index.html)
-let elRows, elThickness, elWidth, elGap, elGroups, elGroupsOut;
-let elRowsOut, elThicknessOut, elWidthOut, elGapOut;
+let elRows, elThickness, elWidth, elGap, elGroups, elDispUnit, elPreset, elLogoScale, elAspectW, elAspectH, elCustomAR;
+let elRowsOut, elThicknessOut, elWidthOut, elGapOut, elDispUnitOut, elGroupsOut, elLogoScaleOut;
 let elRounded, elDebug, elAuto;
-let gapPx = 5;                    // letter gap in px (can be negative)
-let displaceGroupSize = 3;        // derived: rows / |displaceGroups|
-let displaceGroups = 2;           // signed: negative flips direction
+let elTipRatio, elEndRatio, elTipOut, elEndOut;
+let gapPx = 5;
+let displaceGroupSize = 6;
+let displaceGroups = 2;
 let roundedEdges = true;
 let debugMode = false;
-let widthScale = 0.96;            // overall width scaling factor
-let minDashLenPx = 65;            // threshold for “long run” behaviour
+let widthScale = 0.96;            // global X-stretch factor applied to rightRel and runLen
+let logoScaleMul = 1.0;
 
 let baseRowPitch;
+let targetContentH = null; // stays constant; rows change will shrink/grow pitch to keep this height
+let targetContentW = null; // fixed reference width for scaling (decouples scale from width/gap)
+let EXPORT_W = null; // when preset = custom, desired pixel width
+let EXPORT_H = null; // when preset = custom, desired pixel height
 
 // random animate
 let lastAutoRandomMs = 0;
@@ -54,7 +59,7 @@ let autoRandomActive = false;
 let rowYsCanvas = []; // y-position of each row in canvas coordinates
 
 function desiredCanvasHeight(){
-  return Math.ceil(PADDING * 2 + baseRowPitch * rows);
+  return Math.ceil(baseRowPitch * rows);
 }
 
 function divisorsAsc(n){
@@ -97,54 +102,84 @@ function randFromInputFloat(el, fallbackMin, fallbackMax, fallbackStep){
   return val;
 }
 
-function applyOneRandomTweak(){
-  // Randomize ALL relevant controls based on their actual input ranges
+function applyRandomTweaks(){
+  const mutators = [];
 
-  // 1) Width (percent slider → 0.xx scale)
-  if (elWidth){
-    const wPerc = randFromInputFloat(elWidth, 50, 300, 1); // fallback matches index.html defaults
+  // Width (% → scale)
+  if (elWidth) mutators.push(()=>{
+    const wPerc = randFromInputFloat(elWidth, 50, 300, 1);
     widthScale = Math.max(0.05, wPerc / 100);
     elWidth.value = Math.round(widthScale * 100);
     if (elWidthOut) elWidthOut.textContent = `${Math.round(widthScale * 100)} %`;
-  }
+  });
 
-  // 2) Gap (px) — allow negatives if the input allows it
-  let layoutNeedsRebuild = false;
-  if (elGap){
+  // Gap (px) — mag negatief
+  if (elGap) mutators.push(()=>{
     gapPx = randFromInputInt(elGap, -100, 150, 1);
     elGap.value = gapPx;
     if (elGapOut) elGapOut.textContent = `${gapPx} px`;
-    layoutNeedsRebuild = true; // gap affects buildLayout letter positions
-  }
+  });
 
-  // 3) Line height (px)
-  if (elThickness){
+  // Line thickness (px)
+  if (elThickness) mutators.push(()=>{
     linePx = randFromInputInt(elThickness, 1, 25, 1);
     elThickness.value = linePx;
     if (elThicknessOut) elThicknessOut.textContent = `${linePx} px`;
-  }
+  });
 
-  // 4) Displacement groups (signed options derived from rows)
-  // Use divisorsDescSigned so order matches the UI options
-  let opts = divisorsDescSigned(rows);
-  if (opts.length){
-    let newIdx = randInt(0, opts.length - 1);
-    const curIdx = Math.max(0, opts.indexOf(displaceGroups));
-    if (opts.length > 1 && newIdx === curIdx) newIdx = (newIdx + 1) % opts.length;
-    displaceGroups = opts[newIdx];
-    const groupsAbs = Math.max(1, Math.abs(displaceGroups));
-    displaceGroupSize = Math.max(1, Math.floor(rows / groupsAbs));
-    if (elGroups){
-      // keep slider in sync with the chosen option index
-      elGroups.min = 0; elGroups.max = Math.max(0, opts.length - 1); elGroups.step = 1; elGroups.value = newIdx;
+  // Displacement groups (signed divisors)
+  mutators.push(()=>{
+    const opts = divisorsDescSigned(rows);
+    if (opts && opts.length){
+      const curIdx = Math.max(0, opts.indexOf(displaceGroups));
+      let newIdx = randInt(0, opts.length - 1);
+      if (opts.length > 1 && newIdx === curIdx) newIdx = (newIdx + 1) % opts.length;
+      displaceGroups = opts[newIdx];
+      const groupsAbs = Math.max(1, Math.abs(displaceGroups));
+      displaceGroupSize = Math.max(1, Math.floor(rows / groupsAbs));
+      if (elGroups){
+        elGroups.min = 0; elGroups.max = Math.max(0, opts.length - 1); elGroups.step = 1; elGroups.value = newIdx;
+      }
+      if (elGroupsOut) elGroupsOut.textContent = String(displaceGroups);
     }
-    if (elGroupsOut) elGroupsOut.textContent = String(displaceGroups);
-  }
+  });
 
-  if (layoutNeedsRebuild){
-    layout = buildLayout(LOGO_TEXT, rows);
+  // Displacement unit (px per step)
+  if (elDispUnit) mutators.push(()=>{
+    DISPLACE_UNIT = randFromInputInt(elDispUnit, 0, 80, 1);
+    elDispUnit.value = DISPLACE_UNIT;
+    if (elDispUnitOut) elDispUnitOut.textContent = `${DISPLACE_UNIT} px`;
+  });
+
+  // Tip ratio (0..1)
+  if (elTipRatio) mutators.push(()=>{
+    TIP_RATIO = randFromInputFloat(elTipRatio, 0, 1, 0.01);
+    elTipRatio.value = TIP_RATIO.toFixed(2);
+    if (elTipOut) elTipOut.textContent = TIP_RATIO.toFixed(2);
+  });
+
+  // End ratio (0..1)
+  if (elEndRatio) mutators.push(()=>{
+    END_RATIO = randFromInputFloat(elEndRatio, 0, 1, 0.01);
+    elEndRatio.value = END_RATIO.toFixed(2);
+    if (elEndOut) elEndOut.textContent = END_RATIO.toFixed(2);
+  });
+
+  if (!mutators.length) return false;
+
+  // Kies k mutators (1..all) zonder herhaling
+  const k = randInt(1, mutators.length);
+  const pool = mutators.slice();
+  for (let i = pool.length - 1; i > 0; i--){
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
   }
+  for (let i = 0; i < k; i++) pool[i]();
+
+  // Rebuild layout (gap beïnvloedt posities; rebuild is goedkoop genoeg hier)
+  layout = buildLayout(LOGO_TEXT, rows);
   redraw();
+  return true;
 }
 
 function autoRandomizeTick(){
@@ -152,26 +187,8 @@ function autoRandomizeTick(){
   const now = millis();
   if (now - lastAutoRandomMs >= RANDOM_INTERVAL_MS){
     lastAutoRandomMs = now;
-    applyOneRandomTweak();
+    applyRandomTweaks();
   }
-}
-
-// Helper to visually scale and center the canvas in the window via CSS (does not alter p5 width/height)
-function fitCanvasToWindow(){
-  const base = Math.min(windowWidth / width, windowHeight / height);
-  const s    = base * VIEW_SCALE;
-  const cssW = Math.max(1, Math.floor(width  * s));
-  const cssH = Math.max(1, Math.floor(height * s));
-  const left = Math.floor((windowWidth  - cssW) * 0.5);
-  const top  = Math.floor((windowHeight - cssH) * 0.5);
-
-  const el = mainCanvas.elt;
-  el.style.position = 'fixed';
-  el.style.zIndex   = '0';
-  el.style.width    = cssW + 'px';
-  el.style.height   = cssH + 'px';
-  el.style.left     = left + 'px';
-  el.style.top      = top  + 'px';
 }
 
 function preload(){
@@ -184,11 +201,28 @@ function preload(){
 
 function setup(){
   mainCanvas = createCanvas(800, 250, SVG);
+  // Initialize intrinsic size to match the created canvas (will be updated by fitViewportToWindow)
+  if (mainCanvas && mainCanvas.elt && mainCanvas.elt.tagName.toLowerCase() === 'svg'){
+    mainCanvas.elt.setAttribute('width', String(width));
+    mainCanvas.elt.setAttribute('height', String(height));
+    mainCanvas.elt.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    mainCanvas.elt.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  }
+// Stop border op canvas; zet canvas in onze wrapper met border
+  const wrap = document.getElementById('canvasWrap');
+  if (wrap && mainCanvas) mainCanvas.parent('canvasWrap');
   pixelDensity(1);
-  baseRowPitch = (height - 2 * PADDING) / rows;
+  if (LOGO_TARGET_W <= 0) LOGO_TARGET_W = Math.max(1, width);
+  baseRowPitch = height / rows;
+  // Freeze the visual logo height in pre-scale units; adding rows should not stretch the logo
+  targetContentH = (rows <= 1) ? 0 : (rows - 1) * baseRowPitch;
   noLoop();
   layout = buildLayout(LOGO_TEXT);
-  resizeCanvas(width, desiredCanvasHeight(), true);
+  // Lock initial content width so later width/gap tweaks don't change overall scale
+  const initFit = computeLayoutFit();
+  if (targetContentW == null) targetContentW = initFit.contentW0;
+  fitViewportToWindow();
+  window.addEventListener('resize', fitViewportToWindow);
 
   // Hook up HTML controls from index.html
   function byId(id){ return document.getElementById(id); }
@@ -205,6 +239,18 @@ function setup(){
   elThicknessOut = byId('thicknessOut');
   elWidthOut     = byId('widthOut');
   elGapOut       = byId('gapOut');
+  elDispUnit    = byId('dispUnit');
+  elDispUnitOut = byId('dispUnitOut');
+  elPreset       = byId('preset');
+  elLogoScale    = byId('logoScale');
+  elLogoScaleOut = byId('logoScaleOut');
+  elTipRatio = byId('tipRatio');
+  elEndRatio = byId('endRatio');
+  elTipOut   = byId('tipOut');
+  elEndOut   = byId('endOut');
+  elAspectW  = byId('aspectW');
+  elAspectH  = byId('aspectH');
+  elCustomAR = byId('customAR');
 
   // initialize values to current state
   elRows.value = rows;
@@ -214,10 +260,80 @@ function setup(){
   elRounded.checked = roundedEdges;
   elDebug.checked = debugMode;
   elAuto.checked = false;
+  if (elLogoScaleOut) elLogoScaleOut.textContent = '100 %';
   if (elRowsOut)      elRowsOut.textContent      = String(rows);
   if (elThicknessOut) elThicknessOut.textContent = `${linePx} px`;
   if (elWidthOut)     elWidthOut.textContent     = `${Math.round(widthScale * 100)} %`;
   if (elGapOut)       elGapOut.textContent       = `${gapPx} px`;
+  if (elLogoScale){
+    elLogoScale.min = 10; elLogoScale.max = 200; elLogoScale.step = 1;
+    elLogoScale.value = 100;
+  }
+  if (elPreset){
+    elPreset.addEventListener('change', ()=>{
+      const val = elPreset.value;
+      if (val === 'custom'){
+        if (elCustomAR) elCustomAR.style.display = '';
+        // Apply whatever is currently filled in the boxes
+        updateCustomResolutionAndAspect();
+      } else {
+        if (elCustomAR) elCustomAR.style.display = 'none';
+        EXPORT_W = null; EXPORT_H = null;
+        const opt = elPreset.options[elPreset.selectedIndex];
+        const aw = parseInt(opt.dataset.aw, 10);
+        const ah = parseInt(opt.dataset.ah, 10);
+        if (Number.isFinite(aw) && Number.isFinite(ah)){
+          ASPECT_W = Math.max(1, aw);
+          ASPECT_H = Math.max(1, ah);
+          fitViewportToWindow();
+          redraw();
+        }
+      }
+    });
+  }
+
+  function updateCustomResolutionAndAspect(){
+    const w = parseInt(elAspectW && elAspectW.value, 10);
+    const h = parseInt(elAspectH && elAspectH.value, 10);
+    if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0){
+      EXPORT_W = w; EXPORT_H = h;
+      // drive viewport ratio from these pixels
+      ASPECT_W = w; ASPECT_H = h;
+      fitViewportToWindow();
+      redraw();
+    }
+  }
+
+  if (elAspectW) elAspectW.addEventListener('input', ()=>{ if (elPreset && elPreset.value === 'custom') updateCustomResolutionAndAspect(); });
+  if (elAspectH) elAspectH.addEventListener('input', ()=>{ if (elPreset && elPreset.value === 'custom') updateCustomResolutionAndAspect(); });
+  if (elLogoScale){
+    elLogoScale.addEventListener('input', ()=>{
+      const perc = Math.max(10, Math.min(200, parseInt(elLogoScale.value, 10) || 100));
+      logoScaleMul = perc / 100;
+      if (elLogoScaleOut) elLogoScaleOut.textContent = `${perc} %`;
+      layout = buildLayout(LOGO_TEXT, rows);
+      redraw();
+    });
+  }
+  if (elDispUnit){
+    elDispUnit.value = DISPLACE_UNIT;
+    if (elDispUnitOut) elDispUnitOut.textContent = `${DISPLACE_UNIT} px`;
+  }
+  if (elTipRatio){
+    elTipRatio.value = TIP_RATIO;
+    if (elTipOut) elTipOut.textContent = Number(TIP_RATIO).toFixed(2);
+  }
+  if (elEndRatio){
+    elEndRatio.value = END_RATIO;
+    if (elEndOut) elEndOut.textContent = Number(END_RATIO).toFixed(2);
+  }
+  if (elDispUnit){
+    elDispUnit.addEventListener('input', ()=>{
+      DISPLACE_UNIT = parseInt(elDispUnit.value, 10) || 0;
+      if (elDispUnitOut) elDispUnitOut.textContent = `${DISPLACE_UNIT} px`;
+      redraw();
+    });
+  }
 
   let _signedGroupOptions = [];
   function rebuildGroupsSelect(){
@@ -287,6 +403,21 @@ function setup(){
     redraw();
   });
 
+  if (elTipRatio){
+    elTipRatio.addEventListener('input', ()=>{
+      TIP_RATIO = Math.max(0, Math.min(1, parseFloat(elTipRatio.value)));
+      if (elTipOut) elTipOut.textContent = Number(TIP_RATIO).toFixed(2);
+      redraw();
+    });
+  }
+  if (elEndRatio){
+    elEndRatio.addEventListener('input', ()=>{
+      END_RATIO = Math.max(0, Math.min(1, parseFloat(elEndRatio.value)));
+      if (elEndOut) elEndOut.textContent = Number(END_RATIO).toFixed(2);
+      redraw();
+    });
+  }
+
   elRounded.addEventListener('change', ()=>{
     roundedEdges = elRounded.checked;
     redraw();
@@ -303,27 +434,17 @@ function setup(){
     if (autoRandomActive) { loop(); } else { noLoop(); redraw(); }
   });
 
-  // keep canvas fitted on resize
-  window.addEventListener('resize', fitCanvasToWindow);
-  fitCanvasToWindow();
-
+  if (elCustomAR) elCustomAR.style.display = (elPreset && elPreset.value === 'custom') ? '' : 'none';
+  if (elPreset && elPreset.value === 'custom') updateCustomResolutionAndAspect();
   noLoop();
   redraw();
 }
 
-// Compute the effective dash length for a span (same math as in renderLogo)
-function dashLenForSpan(baseLen, maxRunLen){
-  const eligible     = baseLen >= minDashLenPx;
-  const lenBiasBase  = (maxRunLen > 0) ? (baseLen / maxRunLen) : 0;
-  const lenBiasShort = SMALL_LEN_BIAS;
-  const lenBias      = eligible ? lenBiasBase : lenBiasShort;
-  return baseLen * (1 + (widthScale - 1) * lenBias * LEN_SCALE_STRENGTH);
-}
 
 // Measure per-letter bounds (visual left/right) using the same math as the renderer
 
 function computePerLetterBounds(){
-  const tEff = 1 + (widthScale - 1) * TRACK_STRENGTH;
+  const tEff = 1 + (widthScale - 1);
   const letterLeft = new Array(layout.lettersOrder.length).fill(Infinity);
   const letterRight = new Array(layout.lettersOrder.length).fill(-Infinity);
 
@@ -336,11 +457,10 @@ function computePerLetterBounds(){
       const maxRunLen = maxRunLength(rowsArr[r]);
       const xShift = computeXShift(r, rows, displaceGroups);
       for (const seg of rowsArr[r]){
-        const rightEdgeX = baseX + seg.rightRel * layout.scale * widthScale;
-        const baseLen    = Math.max(0, seg.runLen * layout.scale);
-        const dlen       = dashLenForSpan(baseLen, maxRunLen);
+        const rightEdgeX = baseX + seg.rightRel * layout.scale * widthScale; // global X-stretch
+        const baseLen    = Math.max(0, seg.runLen * layout.scale * widthScale); // stretch dash lengths too
         const rightX     = rightEdgeX + xShift;
-        const leftX      = rightX - dlen;
+        const leftX      = rightX - baseLen;
         if (leftX  < letterLeft[li])  letterLeft[li]  = leftX;
         if (rightX > letterRight[li]) letterRight[li] = rightX;
       }
@@ -353,49 +473,34 @@ function computePerLetterBounds(){
 }
 
 function computeLayoutFit(){
-  const tEff = 1 + (widthScale - 1) * TRACK_STRENGTH;
-  const rowPitchNow = (rows <= 1)
-    ? (height - 2 * PADDING)
-    : (height - 2 * PADDING) / (rows - 1);
+  // Centering based on fixed layout metrics; no auto scale-to-fit
+  const tEff = 1 + (widthScale - 1);
+  // Derive pitch from a fixed target content height so more rows → tighter spacing
+  const rowPitchNow = (rows <= 1) ? 0 : (targetContentH / (rows - 1));
 
-  let leftmost = Infinity;
-  let rightmost = -Infinity;
-  for (let li = 0; li < layout.lettersOrder.length; li++){
-    const baseX = layout.letterX[li] * tEff;
-    const letterKey = layout.lettersOrder[li];
-    const rowsArr = layout.letters[letterKey];
-
-    for (let r = 0; r < rowsArr.length; r++){
-      const maxRunLen = maxRunLength(rowsArr[r]);
-      const xShift = computeXShift(r, rows, displaceGroups);
-
-      for (const seg of rowsArr[r]){
-        const rightEdgeX = baseX + seg.rightRel * layout.scale * widthScale;
-        const baseLen    = Math.max(0, seg.runLen * layout.scale);
-        const dlen       = dashLenForSpan(baseLen, maxRunLen);
-        const rightX     = rightEdgeX + xShift;
-        const leftX      = rightX - dlen; // dash grows to the left
-        if (leftX  < leftmost)  leftmost  = leftX;
-        if (rightX > rightmost) rightmost = rightX;
-      }
-    }
+  // Horizontale bounds van letterdozen
+  const boxesLeft = layout.letterX.map(x => x * tEff);
+  const boxesW    = layout.letterW.map(w => w * layout.scale * widthScale);
+  let leftmost = Infinity, rightmost = -Infinity;
+  for (let i = 0; i < boxesLeft.length; i++){
+    const L = boxesLeft[i];
+    const R = boxesLeft[i] + boxesW[i];
+    if (L < leftmost)  leftmost = L;
+    if (R > rightmost) rightmost = R;
   }
-
-  if (!isFinite(leftmost)) leftmost = 0;
-  if (!isFinite(rightmost)) rightmost = width - 2 * PADDING;
+  if (!isFinite(leftmost))  leftmost = 0;
+  if (!isFinite(rightmost)) rightmost = LOGO_TARGET_W;
 
   const contentW0 = Math.max(1, rightmost - leftmost);
-  const contentH0 = rows * rowPitchNow;
+  const contentH0 = (rows <= 1) ? 0 : targetContentH;
 
-  const sFit = Math.min(
-    (width  - 2) / contentW0,
-    (height - 2) / contentH0,
-    1
-  );
+  // Geen sFit: niet meer mee schalen
+  const sFit = 1;
+  const contentW = contentW0;
+  const contentH = contentH0;
 
-  const contentW = contentW0 * sFit;
-  const contentH = contentH0 * sFit;
-  const left = (width  - contentW) * 0.5 - leftmost * sFit; // offset with measured left bound
+  // Centreer binnen huidige viewport
+  const left = (width  - contentW) * 0.5 - leftmost;
   const top  = (height - contentH) * 0.5;
 
   return { tEff, rowPitchNow, leftmost, rightmost, contentW0, contentH0, sFit, left, top };
@@ -407,13 +512,29 @@ function renderLogo(g){
   g.fill(0); g.noStroke();
 
   const fit = computeLayoutFit();
-  const { tEff, rowPitchNow, left, top, sFit } = fit;
-  g.translate(left, top);
-  g.scale(sFit, sFit);
-  // (Debug rendering of packed letter boxes removed for clarity)
-  rowYsCanvas = (rows <= 1)
-    ? [0]
-    : Array.from({ length: rows }, (_, r) => r * rowPitchNow);
+  const { tEff, rowPitchNow, leftmost, contentW0, contentH0 } = fit;
+
+  // Scale based on a fixed reference width: contain-by-width at startup × slider
+  const innerW = Math.max(1, width);
+  const refW   = Math.max(1, targetContentW || contentW0);
+  const sBase  = innerW / refW;
+  const s      = Math.max(0.01, sBase * FIT_FRACTION * logoScaleMul);
+
+  // Center using the *current* content bounds so it stays centered as width/gap change
+  const innerH = Math.max(1, height);
+  const tx = (innerW - s * contentW0) * 0.5 - s * leftmost;
+  const ty = (innerH - s * contentH0) * 0.5;
+
+  g.translate(tx, ty);
+  g.scale(s, s);
+
+  // Ensure row Y positions are defined for all rows to avoid NaN in SVG paths
+  if (rows <= 1){
+    rowYsCanvas = [0];
+  } else {
+    // Use row centers spaced by rowPitchNow (top at 0), offset by linePx*0.5 for centering within stroked envelope
+    rowYsCanvas = Array.from({ length: rows }, (_, r) => r * rowPitchNow + linePx * 0.5);
+  }
 
   // Use original SVG letter positions (no offsets)
   for (let li = 0; li < layout.lettersOrder.length; li++){
@@ -426,16 +547,14 @@ function renderLogo(g){
       const y = rowYsCanvas[r];
       const maxRunLen = maxRunLength(rowsArr[r]);
       for (const span of rowsForLetter[r]){
-        const rightEdgeX = baseX + span.rightRel * layout.scale * widthScale; // widen x-distance inside glyph
-        const baseLen = Math.max(0, span.runLen * layout.scale);
-        // Alleen runs die groter zijn dan de instelbare drempel schalen mee
-        const dashLen = dashLenForSpan(baseLen, maxRunLen);
+        const rightEdgeX = baseX + span.rightRel * layout.scale * widthScale; // global X-stretch
+        const baseLen    = Math.max(0, span.runLen * layout.scale * widthScale); // stretch dash lengths too
         // Clamp dash length to the letter’s left edge (no wider than SVG envelope)
         const maxDash = Math.max(0, rightEdgeX - baseX);
-        const dashLenClamped = Math.min(dashLen, maxDash);
+        const dashLenClamped = Math.min(baseLen, maxDash);
         const xShift = computeXShift(r, rows, displaceGroups);
         if (roundedEdges) {
-          drawRoundedTaper(g, rightEdgeX + xShift, y, dashLenClamped, linePx, TIP_RATIO);
+          drawRoundedTaper(g, rightEdgeX + xShift, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
         } else {
           drawStraightTaper(g, rightEdgeX + xShift, y, dashLenClamped, linePx);
         }
@@ -455,38 +574,34 @@ function draw(){
 
 // ====== DRAWING ======
 
-function drawRoundedTaper(g, rightX, cy, len, h, tipRatio = 0.25){
-  // Base radii vanuit lijndikte
-  let R = h * 0.5;                      // grote cap rechts
-  let r = Math.max(0.01, R * tipRatio); // kleine cap links
+function drawRoundedTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_RATIO){
+  // Base radii from stroke height
+  const Rfull = Math.max(0.0001, (h * 0.5) * Math.max(0, Math.min(1, endRatio)));
+  const rfull = Math.max(0.0001, Rfull * Math.max(0, Math.min(1, tipRatio)));
 
-  // 1) Grote cap mag nooit > 50% van de lengte zijn
+  // Clamp radii based on available length
   const maxRByLen = Math.max(0.0001, len * 0.5);
-  R = Math.min(R, maxRByLen);
+  const R = Math.min(Rfull, maxRByLen);
+  const r = Math.min(rfull, R);
 
-  // 2) Kleine cap afleiden van effectieve R, maar begrenzen zodat R + r ≤ len en r ≤ R
-  const rTarget = Math.max(0.01, R * tipRatio);
-  r = Math.min(rTarget, Math.max(0, len - R));
-  r = Math.min(r, R);
-
-  // 3) Afstand tussen cap-centra
   const centerSep = Math.max(0, len - (R + r));
+  const bigX = rightX - R;           // center of big cap
+  const tipX = bigX - centerSep;     // center of small cap
 
-  // 4) Cap-centra
-  const bigX = rightX - R;       // center grote cap (rechts)
-  const tipX = bigX - centerSep; // center kleine cap (links)
+  const steps = 12; // more steps = smoother arc
 
-  // 5) Body (stadionvorm) verbinden
   g.beginShape();
-  g.vertex(bigX, cy - R);
-  g.vertex(tipX, cy - r);
-  g.vertex(tipX, cy + r);
-  g.vertex(bigX, cy + R);
+  // Big cap: -90° → +90°
+  for (let i = 0; i <= steps; i++){
+    const a = -HALF_PI + (i/steps) * PI;
+    g.vertex(bigX + R * Math.cos(a), cy + R * Math.sin(a));
+  }
+  // Small cap: +90° → +270° (same winding, opposite side)
+  for (let i = 0; i <= steps; i++){
+    const a = HALF_PI + (i/steps) * PI;
+    g.vertex(tipX + r * Math.cos(a), cy + r * Math.sin(a));
+  }
   g.endShape(CLOSE);
-
-  // 6) Caps tekenen
-  g.circle(bigX, cy, 2 * R);
-  g.circle(tipX, cy, 2 * r);
 }
 
 function drawStraightTaper(g, rightX, cy, len, h){
@@ -500,6 +615,14 @@ function drawStraightTaper(g, rightX, cy, len, h){
   g.vertex(tipX, cy);
   g.vertex(bigX, cy + R);
   g.endShape(CLOSE);
+}
+
+function drawCircleTaper(){
+
+}
+
+function drawBlockTaper(){
+  
 }
 
 // ====== SCANNING HELPERS ======
@@ -581,9 +704,13 @@ function measureInkVerticalBoundsRobust(g, x1 = 0, x2 = null){
 // ====== LAYOUT PIPELINE ======
 function buildLayout(word, rowsCount = rows){
   // 1) Create offscreen buffer with no smoothing (hard edges for scanning)
-  glyphBuffer = createGraphics(BUFFER_W, BUFFER_H);
-  glyphBuffer.pixelDensity(1);
-  glyphBuffer.noSmooth();
+  if (!glyphBuffer){
+    glyphBuffer = createGraphics(BUFFER_W, BUFFER_H);
+    glyphBuffer.pixelDensity(1);
+    glyphBuffer.noSmooth();
+  }
+  glyphBuffer.push();
+  glyphBuffer.noSmooth(); //?
   glyphBuffer.background(255);
   glyphBuffer.fill(0);
   glyphBuffer.noStroke();
@@ -623,6 +750,7 @@ function buildLayout(word, rowsCount = rows){
       const w = 40 * scaleUniform; pen += w;
     }
   });
+  glyphBuffer.pop();
   glyphBuffer.loadPixels();
 
   // 4) Prepare vertical scan band (robust): measure actual ink bounds instead of trusting font metrics
@@ -667,8 +795,8 @@ function buildLayout(word, rowsCount = rows){
   }
 
   // 6) Map to output canvas coordinates (non-uniform: width locked, height stretches)
-  const scale    = (width  - 2 * PADDING) / Math.max(1, totalW);           // X-scale fixed by width
-  const rowPitch = (height - 2 * PADDING) / rowsCount;        // Y-scale from canvas height
+  const scale    = LOGO_TARGET_W / Math.max(1, totalW);
+  const rowPitch = baseRowPitch; // vast; onafhankelijk van viewport
 
   return {
     letters: perLetter,
@@ -684,25 +812,34 @@ function buildLayout(word, rowsCount = rows){
   };
 }
 
-// ====== INTERFACE ======
-
 // ====== DEBUG OVERLAY ======
 function drawdebugModeOverlay(){
   push();
   noFill(); stroke(0, 60); strokeWeight(1);
 
+  // Reuse the exact same fit math as the renderer
   const fit = computeLayoutFit();
-  const { tEff, rowPitchNow, left, top, sFit } = fit;
-  translate(left, top);
-  scale(sFit, sFit);
+  const { rowPitchNow, leftmost, contentW0, contentH0 } = fit;
+
+  // Fixed reference width for scale; center from current bounds
+  const innerW = Math.max(1, width);
+  const innerH = Math.max(1, height);
+  const refW   = Math.max(1, targetContentW || contentW0);
+  const sBase  = innerW / refW;
+  const s      = Math.max(0.01, sBase * FIT_FRACTION * logoScaleMul);
+
+  const tx = (innerW - s * contentW0) * 0.5 - s * leftmost;
+  const ty = (innerH - s * contentH0) * 0.5;
+  translate(tx, ty);
+  scale(s, s);
 
   // letter boxes based on original SVG layout
-  const tEff2 = 1 + (widthScale - 1) * TRACK_STRENGTH;
+  const tEff2 = 1 + (widthScale - 1);
   const boxesLeft = layout.letterX.map(x => x * tEff2);
-  const boxesW    = layout.letterW.map(w => w * layout.scale);
+  const boxesW    = layout.letterW.map(w => w * layout.scale * widthScale);
   const start = Math.min(...boxesLeft);
   const end   = Math.max(...boxesLeft.map((x,i)=> x + boxesW[i]));
-  const totalH = layout.rowsY.length * rowPitchNow;
+  const totalH = (rows <= 1) ? 0 : (rows - 1) * rowPitchNow;
   stroke(0,160);
   for (let i = 0; i < boxesLeft.length; i++){
     rect(boxesLeft[i], 0, boxesW[i], totalH);
@@ -710,31 +847,11 @@ function drawdebugModeOverlay(){
 
   // row guides spanning the original bounds
   stroke(0, 60);
-  for (let r = 0; r < layout.rowsY.length; r++){
+  for (let r = 0; r < rows; r++){
     const y = (rowYsCanvas[r] !== undefined)
       ? rowYsCanvas[r]
-      : (rows <= 1 ? 0 : r * rowPitchNow);
+      : (rows <= 1 ? 0 : r * rowPitchNow + linePx * 0.5);
     line(start, y, end, y);
-  }
-
-  // scanned spans + right edges (using original baseX, clamp dash to box)
-  for (let li = 0; li < layout.lettersOrder.length; li++){
-    const letterKey = layout.lettersOrder[li];
-    const rowsArr = layout.letters[letterKey];
-    const baseX = layout.letterX[li] * tEff;
-    for (let r = 0; r < rowsArr.length; r++){
-      const y = rowYsCanvas[r] ?? (rowPitchNow * r + rowPitchNow * 0.5);
-      for (const seg of rowsArr[r]){
-        const x2Raw = baseX + seg.rightRel * layout.scale * widthScale;
-        const maxDash = Math.max(0, x2Raw - baseX);
-        const baseLen = Math.max(0, seg.runLen * layout.scale);
-        const dlen    = Math.min(baseLen, maxDash);
-        const x1 = x2Raw - dlen;
-        const x2 = x2Raw;
-        stroke(0,180,0); line(x1, y, x2, y);
-        noStroke(); fill(255,0,0); circle(x2, y, 3);
-      }
-    }
   }
   pop();
 }
@@ -753,4 +870,47 @@ function computeXShift(r, rows, displaceGroups){
   const centered = sectionIndex - (groupsAbs - 1) * 0.5;
   const sign = Math.sign(displaceGroups) || 1;
   return sign * centered * DISPLACE_UNIT;
+}
+
+function fitViewportToWindow(){
+  if (!mainCanvas || !mainCanvas.elt) return;
+  const stage = document.getElementById('stage');
+  const wrap  = document.getElementById('canvasWrap');
+  if (!stage || !wrap) return;
+
+  // beschikbare ruimte
+  const availW = Math.max(100, stage.clientWidth);
+  const availH = Math.max(100, stage.clientHeight);
+
+  // wrapper size met aspect ASPECT_W:ASPECT_H, passend in stage
+  const targetW = availH * (ASPECT_W / ASPECT_H);
+  let boxW, boxH;
+  if (targetW <= availW){
+    boxH = availH;
+    boxW = Math.round(targetW);
+  } else {
+    boxW = availW;
+    boxH = Math.round(availW * (ASPECT_H / ASPECT_W));
+  }
+
+  // CSS wrapper size
+  wrap.style.width  = boxW + 'px';
+  wrap.style.height = boxH + 'px';
+
+  // p5-canvas buffer precies even groot maken als de wrapper
+  if (width !== boxW || height !== boxH){
+    resizeCanvas(boxW, boxH, true);
+    layout = buildLayout(LOGO_TEXT, rows);
+  }
+
+  // Ensure the underlying SVG element uses the same intrinsic size (no CSS scaling)
+  const svg = mainCanvas.elt;
+  if (svg && svg.tagName && svg.tagName.toLowerCase() === 'svg'){
+    svg.setAttribute('width', String(boxW));
+    svg.setAttribute('height', String(boxH));
+    svg.setAttribute('viewBox', `0 0 ${boxW} ${boxH}`);
+    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  }
+
+  redraw();
 }
