@@ -1,10 +1,10 @@
 // ====== CONFIG ======
 const LOGO_TEXT         = "ALBION";
 const ROWS_DEFAULT      = 12;
-const LINE_HEIGHT       = 8;
+const LINE_HEIGHT       = 10;
 let TIP_RATIO           = 0.3; // small (tip) cap radius factor relative to big cap (0..1)
 let END_RATIO           = 1.0; // big (end) cap radius factor relative to h/2 (0..1)
-let DISPLACE_UNIT       = 25;
+let DISPLACE_UNIT       = 28;
 let ASPECT_W = 16;
 let ASPECT_H = 9;
 let LOGO_TARGET_W = 0;
@@ -14,17 +14,18 @@ const BLOCK_STEPS = 4; // fixed number of blocks for block taper
 const BLOCK_MIN_LEN_FRAC = 0.55; // leftmost block length as fraction of its segment
 const BLOCK_LEAD_FRAC     = 0.65; // how much of the shortened width shifts left (0..1)
 const BLOCK_CAP_FRAC      = 0.12; // extra front cap length as fraction of full len
+const BASE_LINE_FRAC      = 2;
 
 // Scan behavior
-const BRIDGE_PIXELS     = 0;         // hoger = betere performance, minder acuraat
+const BRIDGE_PIXELS     = 0;         // WEGHALEN
 const INK_THRESHOLD     = 140; // KAN WEG // GWN IN CODE ZETTEN?
 const BAND_MIN_COVER_FRAC = 0.035; // ≥3.5% of word width must be continuous ink for a row to count
 
 // Row sampling kernel (vertical) in the glyph buffer
 const ROW_KERNEL_Y_FRAC = 0.015; // % van bandhoogte → 1–3px meestal
-const MIN_RUN_PX_BUFFER = 0;     // filter micro-runs die ruis veroorzaken
+const MIN_RUN_PX_BUFFER = 0;     // WEGHALEN
 
-// Offscreen buffer + auto-fit targets
+// Offscreen buffer
 const BUFFER_W          = 1400;
 const BUFFER_H          = 420; 
 
@@ -37,17 +38,17 @@ let glyphBuffer;      // offscreen p5.Graphics used for scanning
 let layout;           // computed positions + spans
 let rows = ROWS_DEFAULT;
 let linePx = LINE_HEIGHT;
-// HTML UI elements (wired via index.html)
+
 let elRows, elThickness, elWidth, elGap, elGroups, elDispUnit, elPreset, elLogoScale, elAspectW, elAspectH, elCustomAR;
 let elRowsOut, elThicknessOut, elWidthOut, elGapOut, elDispUnitOut, elGroupsOut, elLogoScaleOut;
-let elTaper, elDebug, elAuto;
+let elTaper, elBase, elDebug, elAuto;
 let elTipRatio, elEndRatio, elTipOut, elEndOut;
-let gapPx = 10;
+let gapPx = 9;
 let displaceGroups = 2;
-// 'rounded' | 'straight' | 'circles' | 'blocks'
 let taperMode = 'rounded';
 let debugMode = false;
-let widthScale = 1.1;            // global X-stretch factor applied to rightRel and runLen
+let showBaseLines = false;
+let widthScale = 1.1;
 let logoScaleMul = 1.0;
 
 let baseRowPitch;
@@ -231,9 +232,13 @@ function setup(){
   targetContentH = (rows <= 1) ? 0 : (rows - 1) * baseRowPitch;
   noLoop();
   layout = buildLayout(LOGO_TEXT);
-  // Lock initial content width so later width/gap tweaks don't change overall scale
-  const initFit = computeLayoutFit();
-  if (targetContentW == null) targetContentW = initFit.contentW0;
+  if (targetContentW == null){
+    const _ws = widthScale;
+    widthScale = 1.0;
+    const initFit = computeLayoutFit();
+    targetContentW = initFit.contentW0;
+    widthScale = _ws;
+  }
   fitViewportToWindow();
   window.addEventListener('resize', fitViewportToWindow);
 
@@ -246,6 +251,7 @@ function setup(){
   elGroups    = byId('groups');
   elGroupsOut = byId('groupsOut');
   elTaper     = byId('taper');
+  elBase      = byId('baseLines');
   elDebug     = byId('debug');
   elAuto      = byId('autorand');
   elRowsOut      = byId('rowsOut');
@@ -272,11 +278,18 @@ function setup(){
   elGap.value = gapPx;
   elDebug.checked = debugMode;
   elAuto.checked = false;
+  if (elBase) {
+    elBase.checked = showBaseLines;
+    elBase.addEventListener('change', ()=>{
+      showBaseLines = elBase.checked;
+      requestRedraw();
+    });
+  }
   if (elTaper) {
     elTaper.value = taperMode;
     elTaper.addEventListener('change', () => {
       const v = String(elTaper.value || '').toLowerCase();
-      if (v === 'rounded' || v === 'straight' || v === 'circles' || v === 'blocks') {
+      if (v === 'rounded' || v === 'straight' || v === 'circles' || v === 'blocks' || v === 'pluses') {
         taperMode = v;
       } else {
         taperMode = 'rounded';
@@ -284,7 +297,7 @@ function setup(){
       requestRedraw();
     });
   }
-  if (elLogoScaleOut) elLogoScaleOut.textContent = '100 %';
+    if (elLogoScaleOut) elLogoScaleOut.textContent = '100 %';
   if (elRowsOut)      elRowsOut.textContent      = String(rows);
   if (elThicknessOut) elThicknessOut.textContent = `${linePx} px`;
   if (elWidthOut)     elWidthOut.textContent     = `${Math.round(widthScale * 100)} %`;
@@ -533,6 +546,34 @@ function renderLogo(g){
     rowYsCanvas = Array.from({ length: rows }, (_, r) => r * rowPitchNow + linePx * 0.5);
   }
 
+  // Optional base lines: straight guide rows across the full screen width
+  if (showBaseLines){
+    g.push();
+    g.noStroke();
+    g.fill(0, 0, 0, 30); // light gray base
+
+    // Compute full-screen span in *local* coords (after translate/scale)
+    const innerW = Math.max(1, width);
+    const innerH = Math.max(1, height);
+    const refW   = Math.max(1, targetContentW || contentW0);
+    const sBase  = innerW / refW;
+    const s      = Math.max(0.01, sBase * FIT_FRACTION * logoScaleMul);
+
+    // tx is same as computed above; we recompute the same math here for clarity
+    const tx = (innerW - s * contentW0) * 0.5 - s * leftmost;
+
+    const fullLeft  = -tx / s;
+    const fullRight = (innerW - tx) / s;
+    const baseW = Math.max(0, fullRight - fullLeft);
+
+    const baseH = BASE_LINE_FRAC;
+    for (let r = 0; r < rows; r++){
+      const y = rowYsCanvas[r];
+      g.rect(fullLeft, y - baseH * 0.5, baseW, baseH);
+    }
+    g.pop();
+  }
+
   // Use original SVG letter positions (no offsets)
   for (let li = 0; li < layout.lettersOrder.length; li++){
     const letterKey   = layout.lettersOrder[li];
@@ -558,6 +599,9 @@ function renderLogo(g){
             break;
           case 'blocks':
             drawBlockTaper(g, rx, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
+            break;
+          case 'pluses':
+            drawPlusTaper(g, rx, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
             break;
           case 'rounded':
           default:
@@ -691,6 +735,37 @@ function drawBlockTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = 
   }
 
   g.pop();
+}
+
+function drawPlusTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_RATIO){
+  // Grootte-envelope vanuit ratios, begrensd door lengte
+  const Hfull = Math.max(0.0001, h * Math.max(0, Math.min(1, endRatio)));
+  const hTip  = Math.max(0.0001, h * Math.max(0, Math.min(1, tipRatio)));
+  const maxHByLen = Math.max(0.0001, len * 0.5);
+  const Hbig = Math.min(Hfull, maxHByLen);
+  const Hsmall = Math.min(hTip, Hbig);
+
+  // Aantal samples uit lengte; klemmen voor performance
+  const baseStep = Math.max(4, Math.floor(Hbig * 0.9));
+  const n = Math.max(3, Math.min(24, Math.floor(len / baseStep)));
+
+  const xRight = rightX;
+  const xLeft  = rightX - len;
+
+  const BAR_FRAC = 0.28; // dikte van de armen
+
+  g.fill(0); // volle zwart, geen opacity verloop
+  for (let i = 0; i < n; i++){
+    const t = (n === 1) ? 0 : i / (n - 1); // 0 = rechts, 1 = links
+    const cx = lerp(xRight, xLeft, t);
+    const size = lerp(Hbig, Hsmall, t);
+    const half = size * 0.5;
+    const bar = Math.max(0.5, size * BAR_FRAC);
+
+    // horizontaal + verticaal gecentreerd rond (cx, cy)
+    g.rect(cx - half, cy - bar * 0.5, size, bar);   // horizontale arm
+    g.rect(cx - bar * 0.5, cy - half, bar, size);   // verticale arm
+  }
 }
 
 // ====== SCANNING HELPERS ======
