@@ -168,12 +168,22 @@
         </label>
         <input id="dispUnit" type="range" min="0" max="80" step="1" value="20">
 
+        <label style="margin-top:10px;">
+          <span>Lijn</span>
+        </label>
+        <select id="taper" style="width:100%; margin-bottom:6px;">
+          <option value="rounded" selected>Tapered</option>
+          <option value="straight">Recht</option>
+          <option value="circles">Cirkels</option>
+          <option value="blocks">Blokken</option>
+        </select>
+
         <!-- Toggles -->
-        <div style="display:flex; gap:8px; align-items:center; margin-top:10px;">
+        <!-- <div style="display:flex; gap:8px; align-items:center; margin-top:10px;">
           <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
             <input id="rounded" type="checkbox" checked> Rounded edges
           </label>
-        </div>
+        </div> -->
         <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
           <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
             <input id="debug" type="checkbox"> Debug mode

@@ -10,6 +10,10 @@ let ASPECT_H = 9;
 let LOGO_TARGET_W = 0;
 let FIT_MODE = false;
 const FIT_FRACTION = 0.75;
+const BLOCK_STEPS = 4; // fixed number of blocks for block taper
+const BLOCK_MIN_LEN_FRAC = 0.55; // leftmost block length as fraction of its segment
+const BLOCK_LEAD_FRAC     = 0.65; // how much of the shortened width shifts left (0..1)
+const BLOCK_CAP_FRAC      = 0.12; // extra front cap length as fraction of full len
 
 // Scan behavior
 const BRIDGE_PIXELS     = 0;         // hoger = betere performance, minder acuraat
@@ -36,11 +40,12 @@ let linePx = LINE_HEIGHT;
 // HTML UI elements (wired via index.html)
 let elRows, elThickness, elWidth, elGap, elGroups, elDispUnit, elPreset, elLogoScale, elAspectW, elAspectH, elCustomAR;
 let elRowsOut, elThicknessOut, elWidthOut, elGapOut, elDispUnitOut, elGroupsOut, elLogoScaleOut;
-let elRounded, elDebug, elAuto;
+let elTaper, elDebug, elAuto;
 let elTipRatio, elEndRatio, elTipOut, elEndOut;
 let gapPx = 5;
 let displaceGroups = 2;
-let roundedEdges = true;
+// 'rounded' | 'straight' | 'circles' | 'blocks'
+let taperMode = 'rounded';
 let debugMode = false;
 let widthScale = 0.96;            // global X-stretch factor applied to rightRel and runLen
 let logoScaleMul = 1.0;
@@ -226,7 +231,7 @@ function setup(){
   elGap       = byId('gap');
   elGroups    = byId('groups');
   elGroupsOut = byId('groupsOut');
-  elRounded   = byId('rounded');
+  elTaper     = byId('taper');
   elDebug     = byId('debug');
   elAuto      = byId('autorand');
   elRowsOut      = byId('rowsOut');
@@ -251,9 +256,20 @@ function setup(){
   elThickness.value = linePx;
   elWidth.value = Math.round(widthScale * 100);
   elGap.value = gapPx;
-  elRounded.checked = roundedEdges;
   elDebug.checked = debugMode;
   elAuto.checked = false;
+  if (elTaper) {
+    elTaper.value = taperMode;
+    elTaper.addEventListener('change', () => {
+      const v = String(elTaper.value || '').toLowerCase();
+      if (v === 'rounded' || v === 'straight' || v === 'circles' || v === 'blocks') {
+        taperMode = v;
+      } else {
+        taperMode = 'rounded';
+      }
+      redraw();
+    });
+  }
   if (elLogoScaleOut) elLogoScaleOut.textContent = '100 %';
   if (elRowsOut)      elRowsOut.textContent      = String(rows);
   if (elThicknessOut) elThicknessOut.textContent = `${linePx} px`;
@@ -420,10 +436,6 @@ function setup(){
     });
   }
 
-  elRounded.addEventListener('change', ()=>{
-    roundedEdges = elRounded.checked;
-    redraw();
-  });
 
   elDebug.addEventListener('change', ()=>{
     debugMode = elDebug.checked;
@@ -524,10 +536,21 @@ function renderLogo(g){
         const maxDash = Math.max(0, rightEdgeX - baseX);
         const dashLenClamped = Math.min(baseLen, maxDash);
         const xShift = computeXShift(r, rows, displaceGroups);
-        if (roundedEdges) {
-          drawRoundedTaper(g, rightEdgeX + xShift, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
-        } else {
-          drawStraightTaper(g, rightEdgeX + xShift, y, dashLenClamped, linePx);
+        const rx = rightEdgeX + xShift;
+        switch (taperMode) {
+          case 'straight':
+            drawStraightTaper(g, rx, y, dashLenClamped, linePx);
+            break;
+          case 'circles':
+            drawCircleTaper(g, rx, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
+            break;
+          case 'blocks':
+            drawBlockTaper(g, rx, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
+            break;
+          case 'rounded':
+          default:
+            drawRoundedTaper(g, rx, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
+            break;
         }
       }
     }
@@ -588,12 +611,77 @@ function drawStraightTaper(g, rightX, cy, len, h){
   g.endShape(CLOSE);
 }
 
-function drawCircleTaper(){
+function drawCircleTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_RATIO){
+  // Base radii from stroke height
+  const Rfull = Math.max(0.0001, (h * 0.5) * Math.max(0, Math.min(1, endRatio)));
+  const rfull = Math.max(0.0001, Rfull * Math.max(0, Math.min(1, tipRatio)));
 
+  // Clamp by available length
+  const maxRByLen = Math.max(0.0001, len * 0.5);
+  const R = Math.min(Rfull, maxRByLen);
+  const r = Math.min(rfull, R);
+
+  // Number of beads: scale with length/height, clamp to [3..12]
+  const ideal = Math.floor(len / Math.max(1, h * 0.9));
+  const n = Math.max(3, Math.min(12, ideal));
+
+  // Centers from big cap center to small tip center
+  const bigX = rightX - R;
+  const tipX = rightX - Math.max(0, len - r); // keep right edge aligned
+  for (let i = 0; i < n; i++){
+    const t = (n === 1) ? 0 : (i / (n - 1));
+    const cx = lerp(bigX, tipX, t);
+    const rad = lerp(R, r, t);
+    g.circle(cx, cy, Math.max(0.0001, rad * 2));
+  }
 }
 
-function drawBlockTaper(){
-  
+function drawBlockTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_RATIO){
+  // const steps = Math.max(2, BLOCK_STEPS | 0);
+  const steps = 4;
+
+  // Height is driven by ratios: diameter = h * ratio
+  function heightAt(frac){ // frac: 0 (right) → 1 (left)
+    const ratio = lerp(endRatio, tipRatio, frac); // end → tip
+    return Math.max(0.5, h * Math.max(0, Math.min(1, ratio)));
+  }
+
+  // Compute cap first (on the RIGHT), then blocks in the remaining width
+  const capLen = Math.max(0, len/2 * BLOCK_CAP_FRAC);
+  const fracSecond = (steps > 1) ? (1 / (steps - 1)) : 0;
+  const capH = heightAt(fracSecond);             // thickness equals second block
+  const yCap = cy - capH * 0.5;
+  const xCapL = rightX - capLen;                 // cap sits at the far right
+  const remainingLen = Math.max(0, len - capLen);
+  const segLen = (steps > 0) ? (remainingLen / steps) : 0;
+
+  // Width per block: decrease toward the left, but keep blocks touching
+  function widthAt(frac){
+    const lenFrac = 1.0 - (1.0 - BLOCK_MIN_LEN_FRAC) * frac; // 1 → min
+    return Math.max(0, segLen * lenFrac);
+  }
+
+  g.push();
+
+  // Draw the cap on the right first
+  g.fill(0, 0, 0, 255);
+  g.rect(xCapL, yCap, capLen, capH);
+
+  // Now march leftwards from the left edge of the cap
+  let rightEdge = xCapL;
+  for (let i = 0; i < steps; i++){
+    const frac = (steps === 1) ? 0 : (i / (steps - 1)); // 0 at rightmost block, 1 at leftmost
+    const w = widthAt(frac);
+    const hi = heightAt(frac);
+    const yTop = cy - hi * 0.5;
+    const xL = rightEdge - w;   // touch the previous element
+    const alpha = Math.floor(255 - (255 - 80) * frac); // darker → lighter
+    g.fill(0, 0, 0, alpha);
+    g.rect(xL, yTop, w, hi);
+    rightEdge = xL; // continue left
+  }
+
+  g.pop();
 }
 
 // ====== SCANNING HELPERS ======
