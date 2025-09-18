@@ -206,7 +206,6 @@ function setup(){
 // Stop border op canvas; zet canvas in onze wrapper met border
   const wrap = document.getElementById('canvasWrap');
   if (wrap && mainCanvas) mainCanvas.parent('canvasWrap');
-  pixelDensity(1);
   if (LOGO_TARGET_W <= 0) LOGO_TARGET_W = Math.max(1, width);
   baseRowPitch = height / rows;
   // Freeze the visual logo height in pre-scale units; adding rows should not stretch the logo
