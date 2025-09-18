@@ -4,7 +4,7 @@ const ROWS_DEFAULT      = 12;
 const LINE_HEIGHT       = 8;
 let TIP_RATIO           = 0.3; // small (tip) cap radius factor relative to big cap (0..1)
 let END_RATIO           = 1.0; // big (end) cap radius factor relative to h/2 (0..1)
-let DISPLACE_UNIT       = 20;
+let DISPLACE_UNIT       = 25;
 let ASPECT_W = 16;
 let ASPECT_H = 9;
 let LOGO_TARGET_W = 0;
@@ -25,8 +25,8 @@ const ROW_KERNEL_Y_FRAC = 0.015; // % van bandhoogte → 1–3px meestal
 const MIN_RUN_PX_BUFFER = 0;     // filter micro-runs die ruis veroorzaken
 
 // Offscreen buffer + auto-fit targets
-const BUFFER_W          = 2600;
-const BUFFER_H          = 700;
+const BUFFER_W          = 1400;
+const BUFFER_H          = 420; 
 
 const LETTERS_PATH      = './src/letters/';
 let glyphImgs = {};   // map: char -> p5.Image (SVG rasterized)
@@ -42,12 +42,12 @@ let elRows, elThickness, elWidth, elGap, elGroups, elDispUnit, elPreset, elLogoS
 let elRowsOut, elThicknessOut, elWidthOut, elGapOut, elDispUnitOut, elGroupsOut, elLogoScaleOut;
 let elTaper, elDebug, elAuto;
 let elTipRatio, elEndRatio, elTipOut, elEndOut;
-let gapPx = 5;
+let gapPx = 10;
 let displaceGroups = 2;
 // 'rounded' | 'straight' | 'circles' | 'blocks'
 let taperMode = 'rounded';
 let debugMode = false;
-let widthScale = 0.96;            // global X-stretch factor applied to rightRel and runLen
+let widthScale = 1.1;            // global X-stretch factor applied to rightRel and runLen
 let logoScaleMul = 1.0;
 
 let baseRowPitch;
@@ -60,8 +60,31 @@ let EXPORT_H = null; // when preset = custom, desired pixel height
 let lastAutoRandomMs = 0;
 const RANDOM_INTERVAL_MS = 1000;
 let autoRandomActive = false;
+let autoTimer = null;
+function setAuto(on){
+  if (autoTimer){ clearInterval(autoTimer); autoTimer = null; }
+  if (on){
+    autoTimer = setInterval(()=>{ applyRandomTweaks(); }, RANDOM_INTERVAL_MS);
+  }
+}
 
 let rowYsCanvas = []; // y-position of each row in canvas coordinates
+
+// === Preview vs Export ===
+let isExport = false;
+let _needsRedraw = false;
+function requestRedraw(){
+  if (_needsRedraw) return;
+  _needsRedraw = true;
+  requestAnimationFrame(()=>{
+    _needsRedraw = false;
+    redraw();
+  });
+}
+
+function exportSVG(cb){
+  // nog toevoegen ; svg canvas maken en exporteren
+}
 
 function divisorsAsc(n){
   const d = [];
@@ -178,17 +201,8 @@ function applyRandomTweaks(){
 
   // Rebuild layout (gap beïnvloedt posities; rebuild is goedkoop genoeg hier)
   layout = buildLayout(LOGO_TEXT, rows);
-  redraw();
+  requestRedraw();
   return true;
-}
-
-function autoRandomizeTick(){
-  if (!autoRandomActive) return;
-  const now = millis();
-  if (now - lastAutoRandomMs >= RANDOM_INTERVAL_MS){
-    lastAutoRandomMs = now;
-    applyRandomTweaks();
-  }
 }
 
 function preload(){
@@ -200,7 +214,7 @@ function preload(){
 }
 
 function setup(){
-  mainCanvas = createCanvas(800, 250, SVG);
+  mainCanvas = createCanvas(800, 250);
   // Initialize intrinsic size to match the created canvas (will be updated by fitViewportToWindow)
   if (mainCanvas && mainCanvas.elt && mainCanvas.elt.tagName.toLowerCase() === 'svg'){
     mainCanvas.elt.setAttribute('width', String(width));
@@ -267,7 +281,7 @@ function setup(){
       } else {
         taperMode = 'rounded';
       }
-      redraw();
+      requestRedraw();
     });
   }
   if (elLogoScaleOut) elLogoScaleOut.textContent = '100 %';
@@ -287,7 +301,7 @@ function setup(){
         FIT_MODE = true;
         if (elCustomAR) elCustomAR.style.display = 'none';
         fitViewportToWindow();
-        redraw();
+        requestRedraw();
         return;
       } else {
         FIT_MODE = false;
@@ -306,7 +320,7 @@ function setup(){
           ASPECT_W = Math.max(1, aw);
           ASPECT_H = Math.max(1, ah);
           fitViewportToWindow();
-          redraw();
+          requestRedraw();
         }
       }
     });
@@ -320,7 +334,7 @@ function setup(){
       // drive viewport ratio from these pixels
       ASPECT_W = w; ASPECT_H = h;
       fitViewportToWindow();
-      redraw();
+      requestRedraw();
     }
   }
 
@@ -331,8 +345,7 @@ function setup(){
       const perc = Math.max(10, Math.min(200, parseInt(elLogoScale.value, 10) || 100));
       logoScaleMul = perc / 100;
       if (elLogoScaleOut) elLogoScaleOut.textContent = `${perc} %`;
-      layout = buildLayout(LOGO_TEXT, rows);
-      redraw();
+      requestRedraw();
     });
   }
   if (elDispUnit){
@@ -351,7 +364,7 @@ function setup(){
     elDispUnit.addEventListener('input', ()=>{
       DISPLACE_UNIT = parseInt(elDispUnit.value, 10) || 0;
       if (elDispUnitOut) elDispUnitOut.textContent = `${DISPLACE_UNIT} px`;
-      redraw();
+      requestRedraw();
     });
   }
 
@@ -391,26 +404,26 @@ function setup(){
     if (elRowsOut) elRowsOut.textContent = String(rows);
     rebuildGroupsSelect();             // behoudt sign en clamp ≤
     layout = buildLayout(LOGO_TEXT, rows);
-    redraw();
+    requestRedraw();
   });
 
   elThickness.addEventListener('input', ()=>{
     linePx = parseInt(elThickness.value,10);
     if (elThicknessOut) elThicknessOut.textContent = `${linePx} px`;
-    redraw();
+    requestRedraw();
   });
 
   elWidth.addEventListener('input', ()=>{
     widthScale = parseInt(elWidth.value,10) / 100;
     if (elWidthOut) elWidthOut.textContent = `${Math.round(widthScale * 100)} %`;
-    redraw();
+    requestRedraw();
   });
 
   elGap.addEventListener('input', ()=>{
     gapPx = parseInt(elGap.value,10);
     if (elGapOut) elGapOut.textContent = `${gapPx} px`;
     layout = buildLayout(LOGO_TEXT, rows);
-    redraw();
+    requestRedraw();
   });
 
   elGroups.addEventListener('input', ()=>{
@@ -418,43 +431,42 @@ function setup(){
     displaceGroups = _signedGroupOptions[idx] || 1; // gesigneerd
     const groupsAbs = Math.max(1, Math.abs(displaceGroups));
     if (elGroupsOut) elGroupsOut.textContent = String(displaceGroups);
-    redraw();
+    requestRedraw();
   });
 
   if (elTipRatio){
     elTipRatio.addEventListener('input', ()=>{
       TIP_RATIO = Math.max(0, Math.min(1, parseFloat(elTipRatio.value)));
       if (elTipOut) elTipOut.textContent = Number(TIP_RATIO).toFixed(2);
-      redraw();
+      requestRedraw();
     });
   }
   if (elEndRatio){
     elEndRatio.addEventListener('input', ()=>{
       END_RATIO = Math.max(0, Math.min(1, parseFloat(elEndRatio.value)));
       if (elEndOut) elEndOut.textContent = Number(END_RATIO).toFixed(2);
-      redraw();
+      requestRedraw();
     });
   }
 
 
   elDebug.addEventListener('change', ()=>{
     debugMode = elDebug.checked;
-    redraw();
+    requestRedraw();
   });
 
   elAuto.addEventListener('change', ()=>{
     autoRandomActive = elAuto.checked;
-    lastAutoRandomMs = millis();
-    if (autoRandomActive) { loop(); } else { noLoop(); redraw(); }
+    setAuto(autoRandomActive);
   });
 
   if (elCustomAR) elCustomAR.style.display = (elPreset && elPreset.value === 'custom') ? '' : 'none';
   FIT_MODE = (elPreset && elPreset.value === 'fit');
   fitViewportToWindow();
-  redraw();
+  requestRedraw();
   if (elPreset && elPreset.value === 'custom') updateCustomResolutionAndAspect();
   noLoop();
-  redraw();
+  requestRedraw();
 }
 
 function computeLayoutFit(){
@@ -559,7 +571,6 @@ function renderLogo(g){
 }
 
 function draw(){
-  autoRandomizeTick();
   background(255);
   noStroke();
   renderLogo(this);
@@ -582,15 +593,13 @@ function drawRoundedTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio 
   const bigX = rightX - R;           // center of big cap
   const tipX = bigX - centerSep;     // center of small cap
 
-  const steps = 12; // more steps = smoother arc
+  const steps = 14; // more steps = smoother arc
 
   g.beginShape();
-  // Big cap: -90° → +90°
   for (let i = 0; i <= steps; i++){
     const a = -HALF_PI + (i/steps) * PI;
     g.vertex(bigX + R * Math.cos(a), cy + R * Math.sin(a));
   }
-  // Small cap: +90° → +270° (same winding, opposite side)
   for (let i = 0; i <= steps; i++){
     const a = HALF_PI + (i/steps) * PI;
     g.vertex(tipX + r * Math.cos(a), cy + r * Math.sin(a));
@@ -969,5 +978,5 @@ function fitViewportToWindow(){
     svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
   }
 
-  redraw();
+  requestRedraw();
 }
