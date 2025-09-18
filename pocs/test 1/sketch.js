@@ -14,7 +14,6 @@ const BLOCK_STEPS = 4; // fixed number of blocks for block taper
 const BLOCK_MIN_LEN_FRAC = 0.55; // leftmost block length as fraction of its segment
 const BLOCK_LEAD_FRAC     = 0.65; // how much of the shortened width shifts left (0..1)
 const BLOCK_CAP_FRAC      = 0.12; // extra front cap length as fraction of full len
-const BASE_LINE_FRAC      = 2;
 
 // Scan behavior
 const BRIDGE_PIXELS     = 0;         // WEGHALEN
@@ -41,13 +40,12 @@ let linePx = LINE_HEIGHT;
 
 let elRows, elThickness, elWidth, elGap, elGroups, elDispUnit, elPreset, elLogoScale, elAspectW, elAspectH, elCustomAR;
 let elRowsOut, elThicknessOut, elWidthOut, elGapOut, elDispUnitOut, elGroupsOut, elLogoScaleOut;
-let elTaper, elBase, elDebug, elAuto;
+let elTaper, elDebug, elAuto;
 let elTipRatio, elEndRatio, elTipOut, elEndOut;
 let gapPx = 9;
 let displaceGroups = 2;
 let taperMode = 'rounded';
 let debugMode = false;
-let showBaseLines = false;
 let widthScale = 1.1;
 let logoScaleMul = 1.0;
 
@@ -251,7 +249,6 @@ function setup(){
   elGroups    = byId('groups');
   elGroupsOut = byId('groupsOut');
   elTaper     = byId('taper');
-  elBase      = byId('baseLines');
   elDebug     = byId('debug');
   elAuto      = byId('autorand');
   elRowsOut      = byId('rowsOut');
@@ -278,13 +275,6 @@ function setup(){
   elGap.value = gapPx;
   elDebug.checked = debugMode;
   elAuto.checked = false;
-  if (elBase) {
-    elBase.checked = showBaseLines;
-    elBase.addEventListener('change', ()=>{
-      showBaseLines = elBase.checked;
-      requestRedraw();
-    });
-  }
   if (elTaper) {
     elTaper.value = taperMode;
     elTaper.addEventListener('change', () => {
@@ -538,40 +528,11 @@ function renderLogo(g){
   g.translate(tx, ty);
   g.scale(s, s);
 
-  // Ensure row Y positions are defined for all rows to avoid NaN in SVG paths
+  // Ensure row Y positions are defined for all rows (top at 0), independent of line thickness
   if (rows <= 1){
     rowYsCanvas = [0];
   } else {
-    // Use row centers spaced by rowPitchNow (top at 0), offset by linePx*0.5 for centering within stroked envelope
-    rowYsCanvas = Array.from({ length: rows }, (_, r) => r * rowPitchNow + linePx * 0.5);
-  }
-
-  // Optional base lines: straight guide rows across the full screen width
-  if (showBaseLines){
-    g.push();
-    g.noStroke();
-    g.fill(0, 0, 0, 30); // light gray base
-
-    // Compute full-screen span in *local* coords (after translate/scale)
-    const innerW = Math.max(1, width);
-    const innerH = Math.max(1, height);
-    const refW   = Math.max(1, targetContentW || contentW0);
-    const sBase  = innerW / refW;
-    const s      = Math.max(0.01, sBase * FIT_FRACTION * logoScaleMul);
-
-    // tx is same as computed above; we recompute the same math here for clarity
-    const tx = (innerW - s * contentW0) * 0.5 - s * leftmost;
-
-    const fullLeft  = -tx / s;
-    const fullRight = (innerW - tx) / s;
-    const baseW = Math.max(0, fullRight - fullLeft);
-
-    const baseH = BASE_LINE_FRAC;
-    for (let r = 0; r < rows; r++){
-      const y = rowYsCanvas[r];
-      g.rect(fullLeft, y - baseH * 0.5, baseW, baseH);
-    }
-    g.pop();
+    rowYsCanvas = Array.from({ length: rows }, (_, r) => r * rowPitchNow);
   }
 
   // Use original SVG letter positions (no offsets)
@@ -993,7 +954,7 @@ function drawdebugModeOverlay(){
   for (let r = 0; r < rows; r++){
     const y = (rowYsCanvas[r] !== undefined)
       ? rowYsCanvas[r]
-      : (rows <= 1 ? 0 : r * rowPitchNow + linePx * 0.5);
+      : (rows <= 1 ? 0 : r * rowPitchNow);
     line(start, y, end, y);
   }
   pop();
