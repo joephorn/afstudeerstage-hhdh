@@ -185,6 +185,46 @@
           </label>
         </div> -->
 
+        <section id="interactionControls" style="display:grid; gap:.5rem; margin:.75rem 0;">
+        <div style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;">
+          <strong>Curve:</strong>
+          <button id="curveGauss"  type="button">Gauss</button>
+          <button id="curveCos"    type="button">Cosine</button>
+          <button id="curveSmooth" type="button">Smoothstep</button>
+          <button id="curveExp"    type="button">Exp</button>
+        </div>
+
+        <div style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;">
+          <strong>Animatie:</strong>
+          <button id="animNone"  type="button">Uit</button>
+          <button id="animPulse" type="button">Pulse ⇆</button>
+          <button id="animScan" type="button">Scan →</button>
+        </div>
+
+        <!-- Optioneel: power-knopjes voor scherpte -->
+        <div style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;">
+          <label for="powerCtl"><strong>Gewicht power</strong></label>
+          <input id="powerCtl" type="range" min="0.25" max="3" step="0.05" value="1">
+          <span id="powerOut">1.00×</span>
+        </div>
+      </section>
+
+      <script>
+        // Koppel power slider (optioneel)
+        (function(){
+          const powerCtl = document.getElementById('powerCtl');
+          const powerOut = document.getElementById('powerOut');
+          if (!powerCtl) return;
+          powerCtl.addEventListener('input', ()=>{
+            // verwacht globale var MOUSE_POWER
+            window.MOUSE_POWER = parseFloat(powerCtl.value) || 1.0;
+            if (powerOut) powerOut.textContent = (Math.round(window.MOUSE_POWER*100)/100).toFixed(2)+'×';
+            // verwacht globale requestRedraw()
+            if (window.requestRedraw) window.requestRedraw();
+          });
+        })();
+      </script>
+
         <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
           <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
             <input id="debug" type="checkbox"> Debug mode

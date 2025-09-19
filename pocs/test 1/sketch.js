@@ -47,13 +47,23 @@ let displaceGroups = 2;
 let taperMode = 'rounded';
 let debugMode = false;
 let widthScale = 1.1;
+
 let logoScaleMul = 1.0;
+
+// --- Per-letter stretch (mouseX-weighted) ---
+let PER_LETTER_STRETCH = true;   // toggle on/off
+let MOUSE_STRETCH_MIN  = 0.5;   // min per-letter factor
+let MOUSE_STRETCH_MAX  = 1.5;   // max per-letter factor
+let MOUSE_STRETCH_SIGMA_FRAC = 0.15; // Gaussian sigma as fraction of content width
 
 let baseRowPitch;
 let targetContentH = null; // stays constant; rows change will shrink/grow pitch to keep this height
 let targetContentW = null; // fixed reference width for scaling (decouples scale from width/gap)
 let EXPORT_W = null; // when preset = custom, desired pixel width
 let EXPORT_H = null; // when preset = custom, desired pixel height
+
+// Keep the total logo width constant (sum of letter widths stays fixed)
+let KEEP_TOTAL_WIDTH = true;
 
 // random animate
 let lastAutoRandomMs = 0;
@@ -68,6 +78,33 @@ function setAuto(on){
 }
 
 let rowYsCanvas = []; // y-position of each row in canvas coordinates
+
+// --- Curve + Animation controls ---
+let MOUSE_CURVE = 'gauss';   // 'gauss' | 'cosine' | 'smoothstep' | 'exp'
+let MOUSE_POWER = 1.0;       // t^power sharpening
+
+let ANIM_MODE = 'none';      // 'none' | 'pulse'| 'scan'
+let animTime = 0;            // seconds
+let _animRAF = null;
+let _animStart = 0;
+
+function startAnimLoop(){
+  if (_animRAF) return;
+  _animStart = performance.now();
+  const step = (t)=>{
+    animTime = (t - _animStart) / 1000.0;
+    if (ANIM_MODE !== 'none'){
+      requestRedraw();
+      _animRAF = requestAnimationFrame(step);
+    } else {
+      _animRAF = null;
+    }
+  };
+  _animRAF = requestAnimationFrame(step);
+}
+function stopAnimLoop(){
+  if (_animRAF){ cancelAnimationFrame(_animRAF); _animRAF = null; }
+}
 
 // === Preview vs Export ===
 let isExport = false;
@@ -96,6 +133,97 @@ function divisorsDescSigned(n){
   const negDesc = asc.slice().reverse().map(v => -v); // [-12,-6,-4,-3,-2,-1]
   const posAsc  = asc.slice();                // [1,2,3,4,6,12]
   return negDesc.concat(posAsc);
+}
+
+// --- Per-letter stretch helpers ---
+function gaussian01(x){ return Math.exp(-0.5 * x * x); } // centered at 0
+
+function mouseWeight(localMouseX, letterLeft, letterW, contentW, curve = MOUSE_CURVE, power = MOUSE_POWER){
+  const cx    = letterLeft + 0.5 * letterW;
+  const sigma = Math.max(1, MOUSE_STRETCH_SIGMA_FRAC * contentW);
+  const dAbs  = Math.abs(localMouseX - cx);
+  let t = 0;
+  if (curve === 'gauss'){
+    const z = dAbs / sigma;
+    t = Math.exp(-0.5 * z * z);
+  } else if (curve === 'cosine'){
+    const x = Math.max(0, 1 - dAbs / sigma);
+    t = 0.5 - 0.5 * Math.cos(Math.PI * x);
+  } else if (curve === 'smoothstep'){
+    const x = Math.max(0, Math.min(1, 1 - dAbs / sigma));
+    t = x * x * (3 - 2 * x);
+  } else if (curve === 'exp'){
+    const z = dAbs / sigma;
+    t = Math.exp(-z);
+  } else {
+    const z = dAbs / sigma;
+    t = Math.exp(-0.5 * z * z);
+  }
+  if (power !== 1.0) t = Math.pow(t, power);
+  return Math.max(0, Math.min(1, t));
+}
+
+function perLetterStretchFactor(localMouseX, baseX, letterScaledW, contentW0){
+  const t = mouseWeight(localMouseX, baseX, letterScaledW, contentW0, MOUSE_CURVE, MOUSE_POWER);
+  return MOUSE_STRETCH_MIN + (MOUSE_STRETCH_MAX - MOUSE_STRETCH_MIN) * t;
+}
+
+function activeLocalMouseX(txLike, sLike, leftBound, rightBound){
+  if (ANIM_MODE === 'none') return (mouseX - txLike) / Math.max(0.0001, sLike);
+  const L = leftBound;
+  const R = rightBound;
+  const span = Math.max(1, R - L);
+  const t = animTime || 0;
+
+  if (ANIM_MODE === 'pulse'){
+    const pos = 0.5 + 0.5 * Math.sin(t * 2.0);
+    return L + pos * span;
+  } else if (ANIM_MODE === 'scan'){
+    const speed = 0.35; // cycles per second (one-way)
+    const f = (t * speed) % 1; // sawtooth 0→1, then jump back
+    return L + f * span;
+  }
+  return (mouseX - txLike) / Math.max(0.0001, sLike);
+}
+
+// Compute per-letter adjusted left positions and visual widths so that the gap between letters stays constant
+function computeAdjustedLetterPositions(localMouseX, contentW0){
+  const n = layout.letterX.length;
+  const gapL = gapPx * layout.scale; // gap in layout units
+  const adjX = new Array(n);
+  const wUse = new Array(n);
+  if (n === 0) return { adjX: [], wUse: [] };
+
+  // Pass 1: compute preliminary per-letter visual widths with mouse weighting
+  const baseW = new Array(n);
+  const preW  = new Array(n);
+  let sumBase = 0, sumPre = 0;
+  for (let i = 0; i < n; i++){
+    baseW[i] = layout.letterW[i] * layout.scale * widthScale; // base visual width without mouse weighting
+    sumBase += baseW[i];
+    let perW = 1.0;
+    const baseXForWeight = (i === 0) ? (layout.letterX[0]) : (adjX[i] !== undefined ? adjX[i] : layout.letterX[i]);
+    if (PER_LETTER_STRETCH){
+      perW = perLetterStretchFactor(localMouseX, baseXForWeight, baseW[i], contentW0);
+    }
+    preW[i] = baseW[i] * perW;
+    sumPre += preW[i];
+  }
+
+  // Compute normalization so total width stays constant
+  let norm = 1.0;
+  if (KEEP_TOTAL_WIDTH && sumPre > 0){
+    norm = sumBase / sumPre; // scale all widths so the sum equals the original
+  }
+
+  // Pass 2: finalize widths and positions with constant gaps
+  adjX[0] = layout.letterX[0];
+  wUse[0] = preW[0] * norm;
+  for (let i = 1; i < n; i++){
+    wUse[i] = preW[i] * norm;
+    adjX[i] = adjX[i-1] + wUse[i-1] + gapL;
+  }
+  return { adjX, wUse };
 }
 
 
@@ -268,6 +396,30 @@ function setup(){
   elAspectH  = byId('aspectH');
   elCustomAR = byId('customAR');
 
+  // Curve buttons
+const btnCurveGauss  = document.getElementById('curveGauss');
+const btnCurveCos    = document.getElementById('curveCos');
+const btnCurveSmooth = document.getElementById('curveSmooth');
+const btnCurveExp    = document.getElementById('curveExp');
+if (btnCurveGauss)  btnCurveGauss.addEventListener('click', ()=>{ MOUSE_CURVE='gauss'; requestRedraw(); });
+if (btnCurveCos)    btnCurveCos.addEventListener('click',   ()=>{ MOUSE_CURVE='cosine'; requestRedraw(); });
+if (btnCurveSmooth) btnCurveSmooth.addEventListener('click',()=>{ MOUSE_CURVE='smoothstep'; requestRedraw(); });
+if (btnCurveExp)    btnCurveExp.addEventListener('click',   ()=>{ MOUSE_CURVE='exp'; requestRedraw(); });
+
+// Animation buttons
+const btnAnimNone  = document.getElementById('animNone');
+const btnAnimPulse = document.getElementById('animPulse');
+const btnAnimScan = document.getElementById('animScan');
+
+function setAnim(mode){
+  ANIM_MODE = mode;
+  if (ANIM_MODE === 'none') stopAnimLoop(); else startAnimLoop();
+  requestRedraw();
+}
+if (btnAnimNone)  btnAnimNone.addEventListener('click', ()=> setAnim('none'));
+if (btnAnimPulse) btnAnimPulse.addEventListener('click',()=> setAnim('pulse'));
+if (btnAnimScan) btnAnimScan.addEventListener('click', ()=> setAnim('scan'));
+
   // initialize values to current state
   elRows.value = rows;
   elThickness.value = linePx;
@@ -334,7 +486,6 @@ function setup(){
     const h = parseInt(elAspectH && elAspectH.value, 10);
     if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0){
       EXPORT_W = w; EXPORT_H = h;
-      // drive viewport ratio from these pixels
       ASPECT_W = w; ASPECT_H = h;
       fitViewportToWindow();
       requestRedraw();
@@ -514,7 +665,7 @@ function renderLogo(g){
   const fit = computeLayoutFit();
   const { tEff, rowPitchNow, leftmost, contentW0, contentH0 } = fit;
 
-  // Scale based on a fixed reference width: contain-by-width at startup × slider
+  // Center using the *current* content bounds so it stays centered as width/gap change
   const innerW = Math.max(1, width);
   const refW   = Math.max(1, targetContentW || contentW0);
   const sBase  = innerW / refW;
@@ -522,9 +673,37 @@ function renderLogo(g){
 
   // Center using the *current* content bounds so it stays centered as width/gap change
   const innerH = Math.max(1, height);
-  const tx = (innerW - s * contentW0) * 0.5 - s * leftmost;
-  const ty = (innerH - s * contentH0) * 0.5;
+  let tx = 0, ty = 0;
 
+  // Provisional translate (unadjusted) just for mouse mapping
+  const txProvisional = (innerW - s * contentW0) * 0.5 - s * leftmost;
+  const tyProvisional = (innerH - s * contentH0) * 0.5;
+
+  // Mouse in layout coordinates using provisional centering
+  const localMouseX0 = activeLocalMouseX(txProvisional, s, leftmost, leftmost + contentW0);
+
+  // Build per-letter adjusted positions so the visual gap stays constant (pass0)
+  let adj = computeAdjustedLetterPositions(localMouseX0, contentW0);
+  let adjX = adj.adjX;
+  let wUseArr = adj.wUse;
+
+  // Compute adjusted bounds for perfect centering
+  const leftAdj0  = Math.min(...adjX);
+  const rightAdj0 = Math.max(...adjX.map((x,i)=> x + wUseArr[i]));
+  const contentWAdj0 = Math.max(1, rightAdj0 - leftAdj0);
+
+  // Final centering based on adjusted bounds
+  const txAdj = (innerW - s * contentWAdj0) * 0.5 - s * leftAdj0;
+  const tyAdj = tyProvisional; // vertical centering unchanged
+
+  // Recompute mouse in layout coords with final centering and rebuild adjusted positions (pass1)
+  const localMouseX  = activeLocalMouseX(txAdj, s, leftAdj0,  leftAdj0  + contentWAdj0);
+  adj = computeAdjustedLetterPositions(localMouseX, contentW0);
+  adjX = adj.adjX;
+  wUseArr = adj.wUse;
+
+  // Apply final transform
+  tx = txAdj; ty = tyAdj;
   g.translate(tx, ty);
   g.scale(s, s);
 
@@ -535,17 +714,19 @@ function renderLogo(g){
     rowYsCanvas = Array.from({ length: rows }, (_, r) => r * rowPitchNow);
   }
 
-  // Use original SVG letter positions (no offsets)
   for (let li = 0; li < layout.lettersOrder.length; li++){
     const letterKey   = layout.lettersOrder[li];
-    const baseX = layout.letterX[li] * tEff;
     const rowsArr = layout.letters[letterKey];
+    const baseX = adjX[li];
+    const letterBaseScaledW = layout.letterW[li] * layout.scale;
+    const wUse = wUseArr[li];
+    const wScaleUse = letterBaseScaledW > 0 ? (wUse / letterBaseScaledW) : widthScale;
 
     for (let r = 0; r < rowsArr.length; r++){
       const y = rowYsCanvas[r];
       for (const span of rowsArr[r]){
-        const rightEdgeX = baseX + span.rightRel * layout.scale * widthScale; // global X-stretch
-        const baseLen    = Math.max(0, span.runLen * layout.scale * widthScale); // stretch dash lengths too
+        const rightEdgeX = baseX + span.rightRel * layout.scale * wScaleUse; // per-letter stretch
+        const baseLen    = Math.max(0, span.runLen * layout.scale * wScaleUse);
         // Clamp dash length to the letter’s left edge (no wider than SVG envelope)
         const maxDash = Math.max(0, rightEdgeX - baseX);
         const dashLenClamped = Math.min(baseLen, maxDash);
@@ -925,24 +1106,39 @@ function drawdebugModeOverlay(){
   const fit = computeLayoutFit();
   const { rowPitchNow, leftmost, contentW0, contentH0 } = fit;
 
-  // Fixed reference width for scale; center from current bounds
+  // Compute scale s as before
   const innerW = Math.max(1, width);
   const innerH = Math.max(1, height);
   const refW   = Math.max(1, targetContentW || contentW0);
   const sBase  = innerW / refW;
   const s      = Math.max(0.01, sBase * FIT_FRACTION * logoScaleMul);
 
-  const tx = (innerW - s * contentW0) * 0.5 - s * leftmost;
-  const ty = (innerH - s * contentH0) * 0.5;
-  translate(tx, ty);
-  scale(s, s);
+  // Provisional centering only for mouse mapping in layout coords
+  const txProvisional = (innerW - s * contentW0) * 0.5 - s * leftmost;
+  const tyProvisional = (innerH - s * contentH0) * 0.5;
+  const localMouseX0    = activeLocalMouseX(txProvisional, s, leftmost, leftmost + contentW0);
 
-  // letter boxes based on original SVG layout
-  const tEff2 = 1 + (widthScale - 1);
-  const boxesLeft = layout.letterX.map(x => x * tEff2);
-  const boxesW    = layout.letterW.map(w => w * layout.scale * widthScale);
+  // Adjusted positions for boxes using pass0
+  let adjDbg = computeAdjustedLetterPositions(localMouseX0, contentW0);
+  let boxesLeft = adjDbg.adjX;
+  let boxesW    = adjDbg.wUse;
+
+  // Compute adjusted bounds and final centering
   const start = Math.min(...boxesLeft);
   const end   = Math.max(...boxesLeft.map((x,i)=> x + boxesW[i]));
+  const txAdj = (innerW - s * Math.max(1, end - start)) * 0.5 - s * start;
+  const tyAdj = tyProvisional;
+
+  // Final mouse mapping with adjusted centering and recompute boxes (pass1)
+  const localMouseX_dbg = activeLocalMouseX(txAdj, s, start, end);
+  adjDbg = computeAdjustedLetterPositions(localMouseX_dbg, contentW0);
+  boxesLeft = adjDbg.adjX;
+  boxesW    = adjDbg.wUse;
+
+  // Now apply transform
+  translate(txAdj, tyAdj);
+  scale(s, s);
+
   const totalH = (rows <= 1) ? 0 : (rows - 1) * rowPitchNow;
   stroke(0,160);
   for (let i = 0; i < boxesLeft.length; i++){
@@ -1015,4 +1211,16 @@ function fitViewportToWindow(){
   }
 
   requestRedraw();
+}
+// ====== INPUT → REDRAW ======
+function mouseMoved(){
+  // Re-render when the mouse moves so per-letter stretch updates
+  requestRedraw();
+}
+function mouseDragged(){
+  requestRedraw();
+}
+function touchMoved(){
+  requestRedraw();
+  return false; // prevent default scrolling on touch devices
 }
