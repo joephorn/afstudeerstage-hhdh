@@ -67,6 +67,13 @@ let KEEP_TOTAL_WIDTH = true;
 let BG_LINES = false;        // toggle via HTML checkbox
 let BG_LINES_ALPHA = 40;
 
+// ---- Canvas warp (final screen-space filter) ----
+let WARP_ON = false;          // toggle via HTML checkbox
+let WARP_AMP_PX = 12;         // peak vertical shift in pixels
+let WARP_WAVELEN_PX = 240;    // wavelength along X in pixels
+let WARP_PERIOD_S = 4.0;      // seconds per full wave cycle
+let WARP_COL_W = 2;           // column slice width in pixels (performance)
+
 // random animate
 let lastAutoRandomMs = 0;
 const RANDOM_INTERVAL_MS = 1000;
@@ -356,6 +363,47 @@ function preload(){
 }
 
 function setup(){
+  // Warp controls
+  const elWarpOn   = document.getElementById('warpOn');
+  const elWarpAmp  = document.getElementById('warpAmp');
+  const elWarpLen  = document.getElementById('warpLen');
+  const elWarpPer  = document.getElementById('warpPeriod');
+  const elWarpAmpOut = document.getElementById('warpAmpOut');
+  const elWarpLenOut = document.getElementById('warpLenOut');
+  const elWarpPerOut = document.getElementById('warpPeriodOut');
+
+  if (elWarpOn){
+    elWarpOn.checked = WARP_ON;
+    elWarpOn.addEventListener('change', ()=>{ WARP_ON = !!elWarpOn.checked; requestRedraw(); });
+  }
+  if (elWarpAmp){
+    elWarpAmp.value = String(WARP_AMP_PX);
+    if (elWarpAmpOut) elWarpAmpOut.textContent = `${WARP_AMP_PX|0} px`;
+    elWarpAmp.addEventListener('input', ()=>{
+      WARP_AMP_PX = Math.max(0, parseFloat(elWarpAmp.value) || 0);
+      if (elWarpAmpOut) elWarpAmpOut.textContent = `${WARP_AMP_PX|0} px`;
+      requestRedraw();
+    });
+  }
+  if (elWarpLen){
+    elWarpLen.value = String(WARP_WAVELEN_PX);
+    if (elWarpLenOut) elWarpLenOut.textContent = `${WARP_WAVELEN_PX|0} px`;
+    elWarpLen.addEventListener('input', ()=>{
+      WARP_WAVELEN_PX = Math.max(8, parseFloat(elWarpLen.value) || 8);
+      if (elWarpLenOut) elWarpLenOut.textContent = `${WARP_WAVELEN_PX|0} px`;
+      requestRedraw();
+    });
+  }
+  if (elWarpPer){
+    elWarpPer.value = String(ANIM_PERIOD);
+    if (elWarpPerOut) elWarpPerOut.textContent = `${ANIM_PERIOD.toFixed(2)} s`;
+    elWarpPer.addEventListener('input', ()=>{
+      ANIM_PERIOD = Math.max(0.1, parseFloat(elWarpPer.value) || ANIM_PERIOD);
+      if (elWarpPerOut) elWarpPerOut.textContent = `${ANIM_PERIOD.toFixed(2)} s`;
+      startAnimLoop();
+      requestRedraw();
+    });
+  }
   mainCanvas = createCanvas(800, 250);
   // Initialize intrinsic size to match the created canvas (will be updated by fitViewportToWindow)
   if (mainCanvas && mainCanvas.elt && mainCanvas.elt.tagName.toLowerCase() === 'svg'){
@@ -825,6 +873,8 @@ function draw(){
   noStroke();
   renderLogo(this);
   if (debugMode) drawdebugModeOverlay();
+  // Final screen-space warp
+  applyWarpToCanvas(this);
 }
 
 // ====== DRAWING ======
@@ -1287,4 +1337,30 @@ function mouseDragged(){
 function touchMoved(){
   requestRedraw();
   return false; // prevent default scrolling on touch devices
+}
+function applyWarpToCanvas(g){
+  if (!WARP_ON) return;
+  const w = g.width | 0, h = g.height | 0;
+  if (w <= 0 || h <= 0) return;
+
+  // Snapshot current canvas
+  const src = get(); // p5.Image of the whole canvas
+
+  // Clear canvas and redraw warped columns
+  g.push();
+  g.background(255);
+  const A   = WARP_AMP_PX;
+  const L   = Math.max(1, WARP_WAVELEN_PX);
+  const T   = Math.max(0.05, WARP_PERIOD_S);
+  const t   = (ANIM_MODE !== 'off') ? (animTime % T) : 0;
+  const col = Math.max(1, WARP_COL_W | 0);
+
+  for (let x = 0; x < w; x += col){
+    const phase = ( (x / L) * TWO_PI ) + ( (t / T) * TWO_PI );
+    const dy = Math.sin(phase) * A;
+    const sw = Math.min(col, w - x);
+    // draw this vertical slice shifted in Y; p5 handles clipping
+    g.image(src, x, dy, sw, h,  x, 0, sw, h);
+  }
+  g.pop();
 }
