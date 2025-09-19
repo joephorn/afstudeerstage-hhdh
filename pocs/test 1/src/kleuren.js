@@ -1,4 +1,6 @@
-export const COLORS = [
+window.COLORS = [
+  "#FFFFFF",
+  "#000000",
   "#FFAAC8",
   "#EC6448",
   "#C37337",

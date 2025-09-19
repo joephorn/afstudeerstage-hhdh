@@ -1,5 +1,3 @@
-import { COLORS } from './src/kleuren.js';
-
 // ====== CONFIG ======
 const LOGO_TEXT         = "ALBION";
 const ROWS_DEFAULT      = 12;
@@ -70,10 +68,9 @@ let BG_LINES = false;        // toggle via HTML checkbox
 let BG_LINES_ALPHA = 40;
 
 let REPEAT_V = false;          // vertically tile the logo to fill the canvas
+let COLORS_LIST = [];
 
 // ---- Colors ----
-const KLEUREN_JSON = './src/kleuren.json';
-//let COLORS = [];
 let color1 = '#ffffff';
 let color2 = '#000000';
 
@@ -336,12 +333,10 @@ function applyRandomTweaks(){
 }
 
 function preload(){
-  // Load color list
-  const data = loadJSON(KLEUREN_JSON);
-  // kleuren.json is a root array of hex strings
-  //COLORS = Array.isArray(data) ? data : [];
-  color1 = COLORS[0] || color1;
-  color2 = COLORS[1] || COLORS[0] || color2;
+  // Pull colors from the global set by kleuren.js
+  COLORS_LIST = Array.isArray(window.COLORS) ? window.COLORS : [];
+  color1 = COLORS_LIST[0] || color1;
+  color2 = COLORS_LIST[1] || COLORS_LIST[0] || color2;
   const uniq = Array.from(new Set(LOGO_TEXT.split('').map(c => c.toUpperCase())));
   uniq.forEach(ch => {
     const p = LETTERS_PATH + ch + '.svg';
@@ -473,7 +468,7 @@ const selColor2 = document.getElementById('color2');
 function fillColorSelect(sel){
   if (!sel) return;
   sel.innerHTML = '';
-  const list = Array.isArray(COLORS) && COLORS.length ? COLORS : ['#ffffff','#000000'];
+  const list = Array.isArray(COLORS_LIST) && COLORS_LIST.length ? COLORS_LIST : ['#ffffff','#000000'];
   list.forEach((hex)=>{
     const opt = document.createElement('option');
     opt.value = hex;
@@ -501,6 +496,8 @@ if (selColor2){
   }
   selColor2.addEventListener('change', ()=>{ color2 = selColor2.value; requestRedraw(); });
 }
+// If there are lines setting selColor1.value or fallback with COLORS, replace them:
+// (No such lines found in this file, so nothing to replace here.)
 
 // Animation buttons
 const btnAnimMouse = document.getElementById('animMouse');
@@ -764,11 +761,11 @@ function computeLayoutFit(){
   return { tEff, rowPitchNow, leftmost, rightmost, contentW0, contentH0, sFit, left, top };
 }
 
-function renderLogo(){
-  push();
-  background(color1);
-  fill(color2);
-  noStroke();
+function renderLogo(g){
+  g.push();
+  g.background(color1);
+  g.fill(color2);
+  g.noStroke();
 
   const fit = computeLayoutFit();
   const { tEff, rowPitchNow, leftmost, contentW0, contentH0 } = fit;
@@ -815,26 +812,26 @@ function renderLogo(){
     const pitchPx = rowPitchNow * s;           // spacing between rows in pixels
     const thickPx = 3;
     if (pitchPx > 0){
-      push();
-      noStroke();
+      g.push();
+      g.noStroke();
       const a = Math.max(0, Math.min(255, BG_LINES_ALPHA));
       const cc = color(color2);
       cc.setAlpha(a);
-      fill(cc);
+      g.fill(cc);
       // Align first line to where row 0 would be after translate/scale
       const y0 = tyAdj; // row 0 at layout y=0 maps to canvas y=tyAdj
       const startY = ((y0 % pitchPx) + pitchPx) % pitchPx; // wrap to [0,pitch)
       for (let y = startY; y <= height; y += pitchPx){
-        rect(0, y - thickPx * 0.5, width, thickPx);
+        g.rect(0, y - thickPx * 0.5, width, thickPx);
       }
-      pop();
+      g.pop();
     }
   }
 
   // Apply final transform
   tx = txAdj; ty = tyAdj;
-  translate(tx, ty);
-  scale(s, s);
+  g.translate(tx, ty);
+  g.scale(s, s);
 
   // Ensure row Y positions are defined for all rows (top at 0), independent of line thickness
   if (rows <= 1){
@@ -864,20 +861,20 @@ function renderLogo(){
           const rx = rightEdgeX + xShift;
           switch (taperMode) {
             case 'straight':
-              drawStraightTaper(rx, y, dashLenClamped, linePx);
+              drawStraightTaper(g, rx, y, dashLenClamped, linePx);
               break;
             case 'circles':
-              drawCircleTaper(rx, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
+              drawCircleTaper(g, rx, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
               break;
             case 'blocks':
-              drawBlockTaper(rx, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
+              drawBlockTaper(g, rx, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
               break;
             case 'pluses':
-              drawPlusTaper(rx, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
+              drawPlusTaper(g, rx, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
               break;
             case 'rounded':
             default:
-              drawRoundedTaper(rx, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
+              drawRoundedTaper(g, rx, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
               break;
           }
         }
@@ -908,19 +905,20 @@ function renderLogo(){
       }
     }
   }
-  pop();
+  g.pop();
 }
 
 function draw(){
-  // renderLogo() sets the background based on color1
-  renderLogo();
+  background(255);
+  noStroke();
+  renderLogo(this);
   if (debugMode) drawdebugModeOverlay();
-  applyWarpToCanvas();
+  applyWarpToCanvas(this);
 }
 
 // ====== DRAWING ======
 
-function drawRoundedTaper(rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_RATIO){
+function drawRoundedTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_RATIO){
   // Base radii from stroke height
   const Rfull = Math.max(0.0001, (h * 0.5) * Math.max(0, Math.min(1, endRatio)));
   const rfull = Math.max(0.0001, Rfull * Math.max(0, Math.min(1, tipRatio)));
@@ -936,32 +934,32 @@ function drawRoundedTaper(rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = E
 
   const steps = 14; // more steps = smoother arc
 
-  beginShape();
+  g.beginShape();
   for (let i = 0; i <= steps; i++){
     const a = -HALF_PI + (i/steps) * PI;
-    vertex(bigX + R * Math.cos(a), cy + R * Math.sin(a));
+    g.vertex(bigX + R * Math.cos(a), cy + R * Math.sin(a));
   }
   for (let i = 0; i <= steps; i++){
     const a = HALF_PI + (i/steps) * PI;
-    vertex(tipX + r * Math.cos(a), cy + r * Math.sin(a));
+    g.vertex(tipX + r * Math.cos(a), cy + r * Math.sin(a));
   }
-  endShape(CLOSE);
+  g.endShape(CLOSE);
 }
 
-function drawStraightTaper(rightX, cy, len, h){
+function drawStraightTaper(g, rightX, cy, len, h){
   const R = h * 0.5;
   const bigX = rightX - R;
   const centerSep = Math.max(0, len - R); // r=0 for straight tip
   const tipX = bigX - centerSep;
 
-  beginShape();
-  vertex(bigX, cy - R);
-  vertex(tipX, cy);
-  vertex(bigX, cy + R);
-  endShape(CLOSE);
+  g.beginShape();
+  g.vertex(bigX, cy - R);
+  g.vertex(tipX, cy);
+  g.vertex(bigX, cy + R);
+  g.endShape(CLOSE);
 }
 
-function drawCircleTaper(rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_RATIO){
+function drawCircleTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_RATIO){
   // Base radii from stroke height
   const Rfull = Math.max(0.0001, (h * 0.5) * Math.max(0, Math.min(1, endRatio)));
   const rfull = Math.max(0.0001, Rfull * Math.max(0, Math.min(1, tipRatio)));
@@ -982,11 +980,11 @@ function drawCircleTaper(rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = EN
     const t = (n === 1) ? 0 : (i / (n - 1));
     const cx = lerp(bigX, tipX, t);
     const rad = lerp(R, r, t);
-    circle(cx, cy, Math.max(0.0001, rad * 2));
+    g.circle(cx, cy, Math.max(0.0001, rad * 2));
   }
 }
 
-function drawBlockTaper(rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_RATIO){
+function drawBlockTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_RATIO){
   // const steps = Math.max(2, BLOCK_STEPS | 0);
   const steps = 4;
 
@@ -1011,11 +1009,11 @@ function drawBlockTaper(rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END
     return Math.max(0, segLen * lenFrac);
   }
 
-  push();
+  g.push();
 
-  // Draw the cap on the right first
-  fill(0, 0, 0, 255);
-  rect(xCapL, yCap, capLen, capH);
+  // Draw the cap on the right first using selected color2
+  g.fill(color2);
+  g.rect(xCapL, yCap, capLen, capH);
 
   // Now march leftwards from the left edge of the cap
   let rightEdge = xCapL;
@@ -1026,15 +1024,17 @@ function drawBlockTaper(rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END
     const yTop = cy - hi * 0.5;
     const xL = rightEdge - w;   // touch the previous element
     const alpha = Math.floor(255 - (255 - 80) * frac); // darker → lighter
-    fill(0, 0, 0, alpha);
-    rect(xL, yTop, w, hi);
+    const cc = color(color2);
+    cc.setAlpha(alpha);
+    g.fill(cc);
+    g.rect(xL, yTop, w, hi);
     rightEdge = xL; // continue left
   }
 
-  pop();
+  g.pop();
 }
 
-function drawPlusTaper(rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_RATIO){
+function drawPlusTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_RATIO){
   // Grootte-envelope vanuit ratios, begrensd door lengte
   const Hfull = Math.max(0.0001, h * Math.max(0, Math.min(1, endRatio)));
   const hTip  = Math.max(0.0001, h * Math.max(0, Math.min(1, tipRatio)));
@@ -1051,7 +1051,7 @@ function drawPlusTaper(rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_
 
   const BAR_FRAC = 0.28; // dikte van de armen
 
-  fill(color2); // volle zwart, geen opacity verloop
+  g.fill(color2); // use selected color2
   for (let i = 0; i < n; i++){
     const t = (n === 1) ? 0 : i / (n - 1); // 0 = rechts, 1 = links
     const cx = lerp(xRight, xLeft, t);
@@ -1060,8 +1060,8 @@ function drawPlusTaper(rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_
     const bar = Math.max(0.5, size * BAR_FRAC);
 
     // horizontaal + verticaal gecentreerd rond (cx, cy)
-    rect(cx - half, cy - bar * 0.5, size, bar);   // horizontale arm
-    rect(cx - bar * 0.5, cy - half, bar, size);   // verticale arm
+    g.rect(cx - half, cy - bar * 0.5, size, bar);   // horizontale arm
+    g.rect(cx - bar * 0.5, cy - half, bar, size);   // verticale arm
   }
 }
 
@@ -1379,17 +1379,17 @@ function touchMoved(){
   requestRedraw();
   return false; // prevent default scrolling on touch devices
 }
-function applyWarpToCanvas(){
+function applyWarpToCanvas(g){
   if (!WARP_ON) return;
-  const w = width | 0, h = height | 0;
+  const w = g.width | 0, h = g.height | 0;
   if (w <= 0 || h <= 0) return;
 
   // Snapshot current canvas
   const src = get(); // p5.Image of the whole canvas
 
   // Clear canvas and redraw warped columns
-  push();
-  background(color1);
+  g.push();
+  g.background(color1);
   const A   = WARP_AMP_PX;
   const L   = Math.max(1, WARP_WAVELEN_PX);
   const T   = Math.max(0.05, WARP_PERIOD_S);
@@ -1401,7 +1401,7 @@ function applyWarpToCanvas(){
     const dy = Math.sin(phase) * A;
     const sw = Math.min(col, w - x);
     // draw this vertical slice shifted in Y; p5 handles clipping
-    image(src, x, dy, sw, h,  x, 0, sw, h);
+    g.image(src, x, dy, sw, h,  x, 0, sw, h);
   }
-  pop();
+  g.pop();
 }
