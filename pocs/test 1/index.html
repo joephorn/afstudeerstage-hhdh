@@ -168,6 +168,17 @@
           <option value="pluses">Plus</option>
         </select>
 
+        <div style="display:flex; gap:.75rem; align-items:center;">
+          <label style="display:flex; flex-direction:column; gap:.25rem;">
+            <span>Kleur 1 (achtergrond)</span>
+            <select id="color1"></select>
+          </label>
+          <label style="display:flex; flex-direction:column; gap:.25rem;">
+            <span>Kleur 2 (logo)</span>
+            <select id="color2"></select>
+          </label>
+        </div>
+
         <label for="powerCtl"><strong>Animatie</strong></label>
 
         <div style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;">
@@ -191,13 +202,13 @@
         </label>
         <input id="animPeriod" type="range" min="2" max="10" step="0.1" value="3.0">
 
-        <!-- Optioneel: power-knopjes voor scherpte -->
+        <!-- Gewicht -->
         <label>
           <span>Gewicht</span>
           <span id="powerOut" class="sub">1.00×</span>
         </label>
         <input id="powerCtl" type="range" min="0.25" max="3" step="0.05" value="1">
-        
+
       <label for="powerCtl"><strong>Golf</strong></label>
 
       <script>
@@ -216,10 +227,17 @@
         })();
       </script>
 
-        <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
-          <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
-            <input id="warpOn" type="checkbox"> Warp
-          </label>
+        <div style="display:flex; gap:.5rem; align-items:center;">
+          <div style>
+            <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
+              <input id="warpOn" type="checkbox"> Warp
+            </label>
+          </div>
+          <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
+            <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
+              <input id="bgLines" type="checkbox"> Achtergrondlijnen
+            </label>
+          </div>
         </div>
 
         <label>
@@ -242,7 +260,7 @@
 
         <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
           <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
-            <input id="bgLines" type="checkbox"> Achtergrondlijnen
+            <input id="repeatV" type="checkbox"> Repeat verticaal
           </label>
         </div>
         <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">

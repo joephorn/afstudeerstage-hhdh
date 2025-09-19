@@ -1,3 +1,5 @@
+import { COLORS } from './src/kleuren.js';
+
 // ====== CONFIG ======
 const LOGO_TEXT         = "ALBION";
 const ROWS_DEFAULT      = 12;
@@ -41,7 +43,7 @@ let linePx = LINE_HEIGHT;
 let elRows, elThickness, elWidth, elGap, elGroups, elDispUnit, elPreset, elLogoScale, elAspectW, elAspectH, elCustomAR;
 let elRowsOut, elThicknessOut, elWidthOut, elGapOut, elDispUnitOut, elGroupsOut, elLogoScaleOut;
 let elTaper, elDebug, elAuto;
-let elTipRatio, elEndRatio, elTipOut, elEndOut;
+let elTipRatio, elTipOut;
 let gapPx = 9;
 let displaceGroups = 2;
 let taperMode = 'rounded';
@@ -66,6 +68,14 @@ let EXPORT_H = null; // when preset = custom, desired pixel height
 let KEEP_TOTAL_WIDTH = true;
 let BG_LINES = false;        // toggle via HTML checkbox
 let BG_LINES_ALPHA = 40;
+
+let REPEAT_V = false;          // vertically tile the logo to fill the canvas
+
+// ---- Colors ----
+const KLEUREN_JSON = './src/kleuren.json';
+//let COLORS = [];
+let color1 = '#ffffff';
+let color2 = '#000000';
 
 // ---- Canvas warp (final screen-space filter) ----
 let WARP_ON = false;          // toggle via HTML checkbox
@@ -126,7 +136,7 @@ function requestRedraw(){
   _needsRedraw = true;
   requestAnimationFrame(()=>{
     _needsRedraw = false;
-    redraw();
+    draw();
   });
 }
 
@@ -179,9 +189,7 @@ function perLetterStretchFactor(localMouseX, baseX, letterScaledW, contentW0){
 }
 
 function activeLocalMouseX(txLike, sLike, leftBound, rightBound){
-  // Mouse-driven position
   if (ANIM_MODE === 'mouse') return (mouseX - txLike) / Math.max(0.0001, sLike);
-  // Off: return center so any accidental use is stable
   if (ANIM_MODE === 'off'){
     const L = leftBound, R = rightBound; return (L + R) * 0.5;
   }
@@ -195,13 +203,11 @@ function activeLocalMouseX(txLike, sLike, leftBound, rightBound){
     const pos = 0.5 + 0.5 * Math.sin(2 * Math.PI * p);
     return L + pos * span;
   } else if (ANIM_MODE === 'scan'){
-    // One-way continuous loop with extra travel beyond edges (no clamp)
     const m = Math.max(0, Math.min(1, SCAN_MARGIN_FRAC));
     const f = -m + (1 + 2 * m) * p; // -m → 1+m, then wraps to -m
     return L + f * span;
   }
 
-  // Fallback to mouse when mode is unrecognized
   return (mouseX - txLike) / Math.max(0.0001, sLike);
 }
 
@@ -275,29 +281,14 @@ function randFromInputFloat(el, fallbackMin, fallbackMax, fallbackStep){
 function applyRandomTweaks(){
   const mutators = [];
 
-  // Width (% → scale)
-  if (elWidth) mutators.push(()=>{
-    const wPerc = randFromInputFloat(elWidth, 50, 300, 1);
-    widthScale = Math.max(0.05, wPerc / 100);
-    elWidth.value = Math.round(widthScale * 100);
-    if (elWidthOut) elWidthOut.textContent = `${Math.round(widthScale * 100)} %`;
-  });
-
-  // Gap (px) — mag negatief
-  if (elGap) mutators.push(()=>{
-    gapPx = randFromInputInt(elGap, -100, 150, 1);
-    elGap.value = gapPx;
-    if (elGapOut) elGapOut.textContent = `${gapPx} px`;
-  });
-
-  // Line thickness (px)
+  // Line thickness
   if (elThickness) mutators.push(()=>{
     linePx = randFromInputInt(elThickness, 1, 25, 1);
     elThickness.value = linePx;
     if (elThicknessOut) elThicknessOut.textContent = `${linePx} px`;
   });
 
-  // Displacement groups (signed divisors)
+  // Displacement groups
   mutators.push(()=>{
     const opts = divisorsDescSigned(rows);
     if (opts && opts.length){
@@ -313,25 +304,18 @@ function applyRandomTweaks(){
     }
   });
 
-  // Displacement unit (px per step)
+  // Displacement unit
   if (elDispUnit) mutators.push(()=>{
     DISPLACE_UNIT = randFromInputInt(elDispUnit, 0, 80, 1);
     elDispUnit.value = DISPLACE_UNIT;
     if (elDispUnitOut) elDispUnitOut.textContent = `${DISPLACE_UNIT} px`;
   });
 
-  // Tip ratio (0..1)
+  // Tip ratio
   if (elTipRatio) mutators.push(()=>{
     TIP_RATIO = randFromInputFloat(elTipRatio, 0, 1, 0.01);
     elTipRatio.value = TIP_RATIO.toFixed(2);
     if (elTipOut) elTipOut.textContent = TIP_RATIO.toFixed(2);
-  });
-
-  // End ratio (0..1)
-  if (elEndRatio) mutators.push(()=>{
-    END_RATIO = randFromInputFloat(elEndRatio, 0, 1, 0.01);
-    elEndRatio.value = END_RATIO.toFixed(2);
-    if (elEndOut) elEndOut.textContent = END_RATIO.toFixed(2);
   });
 
   if (!mutators.length) return false;
@@ -352,6 +336,12 @@ function applyRandomTweaks(){
 }
 
 function preload(){
+  // Load color list
+  const data = loadJSON(KLEUREN_JSON);
+  // kleuren.json is a root array of hex strings
+  //COLORS = Array.isArray(data) ? data : [];
+  color1 = COLORS[0] || color1;
+  color2 = COLORS[1] || COLORS[0] || color2;
   const uniq = Array.from(new Set(LOGO_TEXT.split('').map(c => c.toUpperCase())));
   uniq.forEach(ch => {
     const p = LETTERS_PATH + ch + '.svg';
@@ -449,9 +439,7 @@ function setup(){
   elLogoScale    = byId('logoScale');
   elLogoScaleOut = byId('logoScaleOut');
   elTipRatio = byId('tipRatio');
-  elEndRatio = byId('endRatio');
   elTipOut   = byId('tipOut');
-  elEndOut   = byId('endOut');
   elAspectW  = byId('aspectW');
   elAspectH  = byId('aspectH');
   elCustomAR = byId('customAR');
@@ -471,6 +459,47 @@ if (elBgLines){
     BG_LINES = !!elBgLines.checked; 
     requestRedraw(); 
   });
+}
+// Vertical repeat toggle
+const elRepeatV = document.getElementById('repeatV');
+if (elRepeatV){
+  elRepeatV.checked = REPEAT_V;
+  elRepeatV.addEventListener('change', ()=>{ REPEAT_V = !!elRepeatV.checked; requestRedraw(); });
+}
+
+// Color selectors (kleur 1 / kleur 2)
+const selColor1 = document.getElementById('color1');
+const selColor2 = document.getElementById('color2');
+function fillColorSelect(sel){
+  if (!sel) return;
+  sel.innerHTML = '';
+  const list = Array.isArray(COLORS) && COLORS.length ? COLORS : ['#ffffff','#000000'];
+  list.forEach((hex)=>{
+    const opt = document.createElement('option');
+    opt.value = hex;
+    opt.textContent = hex.toUpperCase();
+    opt.style.background = hex;
+    opt.style.color = '#000000';
+    sel.appendChild(opt);
+  });
+}
+fillColorSelect(selColor1);
+fillColorSelect(selColor2);
+if (selColor1){
+  selColor1.value = color1;
+  if (selColor1.selectedIndex === -1 && selColor1.options.length){
+    selColor1.selectedIndex = 0;
+    color1 = selColor1.value;
+  }
+  selColor1.addEventListener('change', ()=>{ color1 = selColor1.value; requestRedraw(); });
+}
+if (selColor2){
+  selColor2.value = color2;
+  if (selColor2.selectedIndex === -1 && selColor2.options.length){
+    selColor2.selectedIndex = Math.min(1, selColor2.options.length - 1);
+    color2 = selColor2.value;
+  }
+  selColor2.addEventListener('change', ()=>{ color2 = selColor2.value; requestRedraw(); });
 }
 
 // Animation buttons
@@ -600,10 +629,6 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
     elTipRatio.value = TIP_RATIO;
     if (elTipOut) elTipOut.textContent = Number(TIP_RATIO).toFixed(2);
   }
-  if (elEndRatio){
-    elEndRatio.value = END_RATIO;
-    if (elEndOut) elEndOut.textContent = Number(END_RATIO).toFixed(2);
-  }
   if (elDispUnit){
     elDispUnit.addEventListener('input', ()=>{
       DISPLACE_UNIT = parseInt(elDispUnit.value, 10) || 0;
@@ -685,14 +710,6 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
       requestRedraw();
     });
   }
-  if (elEndRatio){
-    elEndRatio.addEventListener('input', ()=>{
-      END_RATIO = Math.max(0, Math.min(1, parseFloat(elEndRatio.value)));
-      if (elEndOut) elEndOut.textContent = Number(END_RATIO).toFixed(2);
-      requestRedraw();
-    });
-  }
-
 
   elDebug.addEventListener('change', ()=>{
     debugMode = elDebug.checked;
@@ -747,10 +764,11 @@ function computeLayoutFit(){
   return { tEff, rowPitchNow, leftmost, rightmost, contentW0, contentH0, sFit, left, top };
 }
 
-function renderLogo(g){
-  g.push();
-  g.background(255);
-  g.fill(0); g.noStroke();
+function renderLogo(){
+  push();
+  background(color1);
+  fill(color2);
+  noStroke();
 
   const fit = computeLayoutFit();
   const { tEff, rowPitchNow, leftmost, contentW0, contentH0 } = fit;
@@ -797,23 +815,26 @@ function renderLogo(g){
     const pitchPx = rowPitchNow * s;           // spacing between rows in pixels
     const thickPx = 3;
     if (pitchPx > 0){
-      g.push();
-      g.noStroke();
-      g.fill(0, 0, 0, Math.max(0, Math.min(255, BG_LINES_ALPHA)));
+      push();
+      noStroke();
+      const a = Math.max(0, Math.min(255, BG_LINES_ALPHA));
+      const cc = color(color2);
+      cc.setAlpha(a);
+      fill(cc);
       // Align first line to where row 0 would be after translate/scale
       const y0 = tyAdj; // row 0 at layout y=0 maps to canvas y=tyAdj
       const startY = ((y0 % pitchPx) + pitchPx) % pitchPx; // wrap to [0,pitch)
       for (let y = startY; y <= height; y += pitchPx){
-        g.rect(0, y - thickPx * 0.5, width, thickPx);
+        rect(0, y - thickPx * 0.5, width, thickPx);
       }
-      g.pop();
+      pop();
     }
   }
 
   // Apply final transform
   tx = txAdj; ty = tyAdj;
-  g.translate(tx, ty);
-  g.scale(s, s);
+  translate(tx, ty);
+  scale(s, s);
 
   // Ensure row Y positions are defined for all rows (top at 0), independent of line thickness
   if (rows <= 1){
@@ -822,61 +843,84 @@ function renderLogo(g){
     rowYsCanvas = Array.from({ length: rows }, (_, r) => r * rowPitchNow);
   }
 
+  // Draw all letters with an additional vertical offset in *layout* units
+  function drawLettersAtOffset(yOff){
+    for (let li = 0; li < layout.lettersOrder.length; li++){
+      const letterKey   = layout.lettersOrder[li];
+      const rowsArr = layout.letters[letterKey];
+      const baseX = adjX[li];
+      const letterBaseScaledW = layout.letterW[li] * layout.scale;
+      const wUse = wUseArr[li];
+      const wScaleUse = letterBaseScaledW > 0 ? (wUse / letterBaseScaledW) : widthScale;
 
-  for (let li = 0; li < layout.lettersOrder.length; li++){
-    const letterKey   = layout.lettersOrder[li];
-    const rowsArr = layout.letters[letterKey];
-    const baseX = adjX[li];
-    const letterBaseScaledW = layout.letterW[li] * layout.scale;
-    const wUse = wUseArr[li];
-    const wScaleUse = letterBaseScaledW > 0 ? (wUse / letterBaseScaledW) : widthScale;
-
-    for (let r = 0; r < rowsArr.length; r++){
-      const y = rowYsCanvas[r];
-      for (const span of rowsArr[r]){
-        const rightEdgeX = baseX + span.rightRel * layout.scale * wScaleUse; // per-letter stretch
-        const baseLen    = Math.max(0, span.runLen * layout.scale * wScaleUse);
-        // Clamp dash length to the letter’s left edge (no wider than SVG envelope)
-        const maxDash = Math.max(0, rightEdgeX - baseX);
-        const dashLenClamped = Math.min(baseLen, maxDash);
-        const xShift = computeXShift(r, rows, displaceGroups);
-        const rx = rightEdgeX + xShift;
-        switch (taperMode) {
-          case 'straight':
-            drawStraightTaper(g, rx, y, dashLenClamped, linePx);
-            break;
-          case 'circles':
-            drawCircleTaper(g, rx, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
-            break;
-          case 'blocks':
-            drawBlockTaper(g, rx, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
-            break;
-          case 'pluses':
-            drawPlusTaper(g, rx, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
-            break;
-          case 'rounded':
-          default:
-            drawRoundedTaper(g, rx, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
-            break;
+      for (let r = 0; r < rowsArr.length; r++){
+        const y = rowYsCanvas[r] + yOff;
+        for (const span of rowsArr[r]){
+          const rightEdgeX = baseX + span.rightRel * layout.scale * wScaleUse; // per-letter stretch
+          const baseLen    = Math.max(0, span.runLen * layout.scale * wScaleUse);
+          const maxDash = Math.max(0, rightEdgeX - baseX);
+          const dashLenClamped = Math.min(baseLen, maxDash);
+          const xShift = computeXShift(r, rows, displaceGroups);
+          const rx = rightEdgeX + xShift;
+          switch (taperMode) {
+            case 'straight':
+              drawStraightTaper(rx, y, dashLenClamped, linePx);
+              break;
+            case 'circles':
+              drawCircleTaper(rx, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
+              break;
+            case 'blocks':
+              drawBlockTaper(rx, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
+              break;
+            case 'pluses':
+              drawPlusTaper(rx, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
+              break;
+            case 'rounded':
+            default:
+              drawRoundedTaper(rx, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
+              break;
+          }
         }
       }
     }
   }
-  g.pop();
+
+  // Draw base instance
+  drawLettersAtOffset(0);
+
+  // Vertically repeat to fill canvas (whole-logo step = rows * rowPitchNow)
+  if (REPEAT_V && rows > 0){
+    const tileH = rows * rowPitchNow; // next logo starts one line below the last of previous
+    if (tileH > 0){
+      const viewTopL  = -ty / s;           // canvas top in layout units
+      const viewBotL  = (height - ty) / s; // canvas bottom in layout units
+
+      // Base logo spans [0 .. (rows-1)*rowPitchNow]
+      const baseTopL = 0;
+      const baseBotL = (rows - 1) * rowPitchNow;
+
+      // Choose k so copies cover viewport above and below
+      const kStart = Math.floor((viewTopL - baseBotL) / tileH) - 1;
+      const kEnd   = Math.ceil((viewBotL - baseTopL) / tileH) + 1;
+      for (let k = kStart; k <= kEnd; k++){
+        if (k === 0) continue; // base already drawn at yOff=0
+        drawLettersAtOffset(k * tileH, 0, rows);
+      }
+    }
+  }
+  pop();
 }
 
 function draw(){
-  background(255);
-  noStroke();
-  renderLogo(this);
+  // renderLogo() sets the background based on color1
+  renderLogo();
   if (debugMode) drawdebugModeOverlay();
-  // Final screen-space warp
-  applyWarpToCanvas(this);
+  applyWarpToCanvas();
 }
 
 // ====== DRAWING ======
 
-function drawRoundedTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_RATIO){
+function drawRoundedTaper(rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_RATIO){
   // Base radii from stroke height
   const Rfull = Math.max(0.0001, (h * 0.5) * Math.max(0, Math.min(1, endRatio)));
   const rfull = Math.max(0.0001, Rfull * Math.max(0, Math.min(1, tipRatio)));
@@ -892,32 +936,32 @@ function drawRoundedTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio 
 
   const steps = 14; // more steps = smoother arc
 
-  g.beginShape();
+  beginShape();
   for (let i = 0; i <= steps; i++){
     const a = -HALF_PI + (i/steps) * PI;
-    g.vertex(bigX + R * Math.cos(a), cy + R * Math.sin(a));
+    vertex(bigX + R * Math.cos(a), cy + R * Math.sin(a));
   }
   for (let i = 0; i <= steps; i++){
     const a = HALF_PI + (i/steps) * PI;
-    g.vertex(tipX + r * Math.cos(a), cy + r * Math.sin(a));
+    vertex(tipX + r * Math.cos(a), cy + r * Math.sin(a));
   }
-  g.endShape(CLOSE);
+  endShape(CLOSE);
 }
 
-function drawStraightTaper(g, rightX, cy, len, h){
+function drawStraightTaper(rightX, cy, len, h){
   const R = h * 0.5;
   const bigX = rightX - R;
   const centerSep = Math.max(0, len - R); // r=0 for straight tip
   const tipX = bigX - centerSep;
 
-  g.beginShape();
-  g.vertex(bigX, cy - R);
-  g.vertex(tipX, cy);
-  g.vertex(bigX, cy + R);
-  g.endShape(CLOSE);
+  beginShape();
+  vertex(bigX, cy - R);
+  vertex(tipX, cy);
+  vertex(bigX, cy + R);
+  endShape(CLOSE);
 }
 
-function drawCircleTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_RATIO){
+function drawCircleTaper(rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_RATIO){
   // Base radii from stroke height
   const Rfull = Math.max(0.0001, (h * 0.5) * Math.max(0, Math.min(1, endRatio)));
   const rfull = Math.max(0.0001, Rfull * Math.max(0, Math.min(1, tipRatio)));
@@ -938,11 +982,11 @@ function drawCircleTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio =
     const t = (n === 1) ? 0 : (i / (n - 1));
     const cx = lerp(bigX, tipX, t);
     const rad = lerp(R, r, t);
-    g.circle(cx, cy, Math.max(0.0001, rad * 2));
+    circle(cx, cy, Math.max(0.0001, rad * 2));
   }
 }
 
-function drawBlockTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_RATIO){
+function drawBlockTaper(rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_RATIO){
   // const steps = Math.max(2, BLOCK_STEPS | 0);
   const steps = 4;
 
@@ -967,11 +1011,11 @@ function drawBlockTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = 
     return Math.max(0, segLen * lenFrac);
   }
 
-  g.push();
+  push();
 
   // Draw the cap on the right first
-  g.fill(0, 0, 0, 255);
-  g.rect(xCapL, yCap, capLen, capH);
+  fill(0, 0, 0, 255);
+  rect(xCapL, yCap, capLen, capH);
 
   // Now march leftwards from the left edge of the cap
   let rightEdge = xCapL;
@@ -982,15 +1026,15 @@ function drawBlockTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = 
     const yTop = cy - hi * 0.5;
     const xL = rightEdge - w;   // touch the previous element
     const alpha = Math.floor(255 - (255 - 80) * frac); // darker → lighter
-    g.fill(0, 0, 0, alpha);
-    g.rect(xL, yTop, w, hi);
+    fill(0, 0, 0, alpha);
+    rect(xL, yTop, w, hi);
     rightEdge = xL; // continue left
   }
 
-  g.pop();
+  pop();
 }
 
-function drawPlusTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_RATIO){
+function drawPlusTaper(rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_RATIO){
   // Grootte-envelope vanuit ratios, begrensd door lengte
   const Hfull = Math.max(0.0001, h * Math.max(0, Math.min(1, endRatio)));
   const hTip  = Math.max(0.0001, h * Math.max(0, Math.min(1, tipRatio)));
@@ -1007,7 +1051,7 @@ function drawPlusTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = E
 
   const BAR_FRAC = 0.28; // dikte van de armen
 
-  g.fill(0); // volle zwart, geen opacity verloop
+  fill(color2); // volle zwart, geen opacity verloop
   for (let i = 0; i < n; i++){
     const t = (n === 1) ? 0 : i / (n - 1); // 0 = rechts, 1 = links
     const cx = lerp(xRight, xLeft, t);
@@ -1016,8 +1060,8 @@ function drawPlusTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = E
     const bar = Math.max(0.5, size * BAR_FRAC);
 
     // horizontaal + verticaal gecentreerd rond (cx, cy)
-    g.rect(cx - half, cy - bar * 0.5, size, bar);   // horizontale arm
-    g.rect(cx - bar * 0.5, cy - half, bar, size);   // verticale arm
+    rect(cx - half, cy - bar * 0.5, size, bar);   // horizontale arm
+    rect(cx - bar * 0.5, cy - half, bar, size);   // verticale arm
   }
 }
 
@@ -1335,17 +1379,17 @@ function touchMoved(){
   requestRedraw();
   return false; // prevent default scrolling on touch devices
 }
-function applyWarpToCanvas(g){
+function applyWarpToCanvas(){
   if (!WARP_ON) return;
-  const w = g.width | 0, h = g.height | 0;
+  const w = width | 0, h = height | 0;
   if (w <= 0 || h <= 0) return;
 
   // Snapshot current canvas
   const src = get(); // p5.Image of the whole canvas
 
   // Clear canvas and redraw warped columns
-  g.push();
-  g.background(255);
+  push();
+  background(color1);
   const A   = WARP_AMP_PX;
   const L   = Math.max(1, WARP_WAVELEN_PX);
   const T   = Math.max(0.05, WARP_PERIOD_S);
@@ -1357,7 +1401,7 @@ function applyWarpToCanvas(g){
     const dy = Math.sin(phase) * A;
     const sw = Math.min(col, w - x);
     // draw this vertical slice shifted in Y; p5 handles clipping
-    g.image(src, x, dy, sw, h,  x, 0, sw, h);
+    image(src, x, dy, sw, h,  x, 0, sw, h);
   }
-  g.pop();
+  pop();
 }
