@@ -815,20 +815,33 @@ function renderLogo(g){
   let adjX = adj.adjX;
   let wUseArr = adj.wUse;
 
-  // Compute adjusted bounds for perfect centering
-  const leftAdj0  = Math.min(...adjX);
-  const rightAdj0 = Math.max(...adjX.map((x,i)=> x + wUseArr[i]));
-  const contentWAdj0 = Math.max(1, rightAdj0 - leftAdj0);
+  // Bounds after pass0
+  let leftAdj  = Math.min(...adjX);
+  let rightAdj = Math.max(...adjX.map((x,i)=> x + wUseArr[i]));
+  let contentWAdj = Math.max(1, rightAdj - leftAdj);
 
-  // Final centering based on adjusted bounds
-  const txAdj = (innerW - s * contentWAdj0) * 0.5 - s * leftAdj0;
+  // Center using pass0 bounds
+  let txAdj = (innerW - s * contentWAdj) * 0.5 - s * leftAdj;
   const tyAdj = tyProvisional; // vertical centering unchanged
 
-  // Recompute mouse in layout coords with final centering and rebuild adjusted positions (pass1)
-  const localMouseX  = activeLocalMouseX(txAdj, s, leftAdj0,  leftAdj0  + contentWAdj0);
-  adj = computeAdjustedLetterPositions(localMouseX, contentW0);
+  // Recompute mouse in layout coords with centered, adjusted bounds and rebuild (pass1)
+  let localMouseX  = activeLocalMouseX(txAdj, s, leftAdj, rightAdj);
+  adj = computeAdjustedLetterPositions(localMouseX, contentWAdj);
   adjX = adj.adjX;
   wUseArr = adj.wUse;
+
+  // Recompute bounds after pass1 and recentre + one more rebuild so the mouse range
+  // spans exactly to the end of the last letter (pass2)
+  leftAdj  = Math.min(...adjX);
+  rightAdj = Math.max(...adjX.map((x,i)=> x + wUseArr[i]));
+  contentWAdj = Math.max(1, rightAdj - leftAdj);
+  txAdj = (innerW - s * contentWAdj) * 0.5 - s * leftAdj;
+  localMouseX  = activeLocalMouseX(txAdj, s, leftAdj, rightAdj);
+  adj = computeAdjustedLetterPositions(localMouseX, contentWAdj);
+  adjX = adj.adjX;
+  wUseArr = adj.wUse;
+
+  // (keep txAdj/tyAdj for the final transform below)
 
   // Backdrop lines across the full canvas (pixel space) aligned to row pitch
   if (BG_LINES){
