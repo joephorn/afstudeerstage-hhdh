@@ -68,12 +68,13 @@ let BG_LINES = false;        // toggle via HTML checkbox
 let BG_LINES_ALPHA = 255;
 
 let REPEAT_V = false;          // vertically tile the logo to fill the canvas
+let REPEAT_MIRROR = false;     // if true, every 2nd vertical repeat is mirrored
 let COLORS_LIST = [];
 
 // ---- Colors ----
 let color1 = '#ffffff';
 let color2 = '#000000';
-let colorLines = '#000000'; // background lines color (when BG_LINES is enabled)
+let color3 = '#000000';
 
 // --- Color helpers: auto-combo and black detection ---
 function normHex(hex){ return String(hex || '').trim().toLowerCase(); }
@@ -111,7 +112,7 @@ function setAuto(on){
 let rowYsCanvas = []; // y-position of each row in canvas coordinates
 
 // --- Curve + Animation controls ---
-let MOUSE_CURVE = 'gauss';   // 'gauss' | 'cosine' | 'smoothstep'
+let MOUSE_CURVE = 'sine';   // 'sine' | 'smoothstep'
 let MOUSE_POWER = 1.0;       // t^power sharpening
 
 let ANIM_MODE = 'off';     // 'mouse' | 'pulse' | 'scan' | 'off'
@@ -177,12 +178,9 @@ function mouseWeight(localMouseX, letterLeft, letterW, contentW, curve = MOUSE_C
   const sigma = Math.max(1, MOUSE_STRETCH_SIGMA_FRAC * contentW);
   const dAbs  = Math.abs(localMouseX - cx);
   let t = 0;
-  if (curve === 'gauss'){
+  if (curve === 'sine'){
     const z = dAbs / sigma;
     t = Math.exp(-0.5 * z * z);
-  } else if (curve === 'cosine'){
-    const x = Math.max(0, 1 - dAbs / sigma);
-    t = 0.5 - 0.5 * Math.cos(Math.PI * x);
   } else if (curve === 'smoothstep'){
     const x = Math.max(0, Math.min(1, 1 - dAbs / sigma));
     t = x * x * (3 - 2 * x);
@@ -455,11 +453,10 @@ function setup(){
   elCustomAR = byId('customAR');
 
   // Curve buttons
-const btnCurveGauss  = document.getElementById('curveGauss');
+const btnCurveSine  = document.getElementById('curveSine');
 const btnCurveCos    = document.getElementById('curveCos');
 const btnCurveSmooth = document.getElementById('curveSmooth');
-if (btnCurveGauss)  btnCurveGauss.addEventListener('click', ()=>{ MOUSE_CURVE='gauss'; requestRedraw(); });
-if (btnCurveCos)    btnCurveCos.addEventListener('click',   ()=>{ MOUSE_CURVE='cosine'; requestRedraw(); });
+if (btnCurveSine)  btnCurveSine.addEventListener('click', ()=>{ MOUSE_CURVE='sine'; requestRedraw(); });
 if (btnCurveSmooth) btnCurveSmooth.addEventListener('click',()=>{ MOUSE_CURVE='smoothstep'; requestRedraw(); });
 
 const elBgLines = document.getElementById('bgLines');
@@ -476,11 +473,17 @@ if (elRepeatV){
   elRepeatV.checked = REPEAT_V;
   elRepeatV.addEventListener('change', ()=>{ REPEAT_V = !!elRepeatV.checked; requestRedraw(); });
 }
+// Vertical repeat: mirror every 2nd tile
+const elRepeatMirror = document.getElementById('repeatMirror');
+if (elRepeatMirror){
+  elRepeatMirror.checked = REPEAT_MIRROR;
+  elRepeatMirror.addEventListener('change', ()=>{ REPEAT_MIRROR = !!elRepeatMirror.checked; requestRedraw(); });
+}
 
 // Color selectors (kleur 1 / kleur 2 / lijnen)
 const selColor1 = document.getElementById('color1');      // achtergrond
 const selColor2 = document.getElementById('color2');      // voorgrond (logo)
-const selColorLines = document.getElementById('colorLines'); // achtergrondlijnen
+const selColor3 = document.getElementById('color3'); // achtergrondlijnen
 
 function fillColorSelect(sel){
   if (!sel) return;
@@ -498,7 +501,7 @@ function fillColorSelect(sel){
 
 fillColorSelect(selColor1);
 fillColorSelect(selColor2);
-fillColorSelect(selColorLines);
+fillColorSelect(selColor3);
 
 // Initialize selects to current state
 if (selColor1){
@@ -511,10 +514,10 @@ if (selColor2){
   if (selColor2.selectedIndex === -1 && selColor2.options.length){ selColor2.selectedIndex = Math.min(1, selColor2.options.length - 1); color2 = selColor2.value; }
   selColor2.addEventListener('change', ()=>{ color2 = selColor2.value; requestRedraw(); });
 }
-if (selColorLines){
-  selColorLines.value = colorLines;
-  if (selColorLines.selectedIndex === -1 && selColorLines.options.length){ selColorLines.selectedIndex = 0; colorLines = selColorLines.value; }
-  selColorLines.addEventListener('change', ()=>{ colorLines = selColorLines.value; requestRedraw(); });
+if (selColor3){
+  selColor3.value = color3;
+  if (selColor3.selectedIndex === -1 && selColor3.options.length){ selColor3.selectedIndex = 0; color3 = selColor3.value; }
+  selColor3.addEventListener('change', ()=>{ color3 = selColor3.value; requestRedraw(); });
 }
 // If there are lines setting selColor1.value or fallback with COLORS, replace them:
 // (No such lines found in this file, so nothing to replace here.)
@@ -835,8 +838,8 @@ function renderLogo(g){
       g.push();
       g.noStroke();
       // If line color is black, use 25% opacity; otherwise full opacity
-      const a = isHexBlack(colorLines) ? Math.round(255 * 0.25) : 255;
-      const cc = color(colorLines);
+      const a = isHexBlack(color3) ? Math.round(255 * 0.25) : 255;
+      const cc = color(color3);
       cc.setAlpha(a);
       g.fill(cc);
       // Align first line to where row 0 would be after translate/scale
@@ -862,7 +865,7 @@ function renderLogo(g){
   }
 
   // Draw all letters with an additional vertical offset in *layout* units
-  function drawLettersAtOffset(yOff){
+  function drawLettersAtOffset(yOff, mirrored = false){
     for (let li = 0; li < layout.lettersOrder.length; li++){
       const letterKey   = layout.lettersOrder[li];
       const rowsArr = layout.letters[letterKey];
@@ -872,7 +875,8 @@ function renderLogo(g){
       const wScaleUse = letterBaseScaledW > 0 ? (wUse / letterBaseScaledW) : widthScale;
 
       for (let r = 0; r < rowsArr.length; r++){
-        const y = rowYsCanvas[r] + yOff;
+        const tileH = (rows <= 1) ? 0 : (rows - 1) * rowPitchNow;
+        const y = mirrored ? (tileH - rowYsCanvas[r]) + yOff : (rowYsCanvas[r] + yOff);
         for (const span of rowsArr[r]){
           const rightEdgeX = baseX + span.rightRel * layout.scale * wScaleUse; // per-letter stretch
           const baseLen    = Math.max(0, span.runLen * layout.scale * wScaleUse);
@@ -903,8 +907,8 @@ function renderLogo(g){
     }
   }
 
-  // Draw base instance
-  drawLettersAtOffset(0);
+  // Draw base instance (not mirrored)
+  drawLettersAtOffset(0, false);
 
   // Vertically repeat to fill canvas (whole-logo step = rows * rowPitchNow)
   if (REPEAT_V && rows > 0){
@@ -922,7 +926,8 @@ function renderLogo(g){
       const kEnd   = Math.ceil((viewBotL - baseTopL) / tileH) + 1;
       for (let k = kStart; k <= kEnd; k++){
         if (k === 0) continue; // base already drawn at yOff=0
-        drawLettersAtOffset(k * tileH, 0, rows);
+        const mirrored = REPEAT_MIRROR && ((Math.abs(k) % 2) === 1);
+        drawLettersAtOffset(k * tileH, mirrored);
       }
     }
   }
