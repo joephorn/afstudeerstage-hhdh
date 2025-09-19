@@ -164,9 +164,6 @@ function mouseWeight(localMouseX, letterLeft, letterW, contentW, curve = MOUSE_C
   } else if (curve === 'smoothstep'){
     const x = Math.max(0, Math.min(1, 1 - dAbs / sigma));
     t = x * x * (3 - 2 * x);
-  } else if (curve === 'exp'){
-    const z = dAbs / sigma;
-    t = Math.exp(-z);
   } else {
     const z = dAbs / sigma;
     t = Math.exp(-0.5 * z * z);

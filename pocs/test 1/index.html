@@ -123,22 +123,11 @@
         <input id="thickness" type="range" min="1" max="50" step="1" value="8">
 
         <!-- Tip/End ratio -->
-        <div style="display:flex; gap:12px; align-items:flex-end; margin-top:8px;">
-          <div style="flex:1 1 50%;">
-            <label style="margin-top:0;">
-              <span>Tip ratio</span>
-              <span id="tipOut" class="sub">0.30</span>
-            </label>
-            <input id="tipRatio" type="range" min="0" max="1" step="0.01" value="0.30">
-          </div>
-          <div style="flex:1 1 50%;">
-            <label style="margin-top:0;">
-              <span>End ratio</span>
-              <span id="endOut" class="sub">1.00</span>
-            </label>
-            <input id="endRatio" type="range" min="0" max="1" step="0.01" value="1.00">
-          </div>
-        </div>
+        <label>
+          <span>Tip ratio</span>
+          <span id="tipOut" class="sub">0.30</span>
+        </label>
+        <input id="tipRatio" type="range" min="0" max="1" step="0.01" value="0.30">
 
         <!-- Width -->
         <label>
@@ -179,7 +168,6 @@
           <option value="pluses">Plus</option>
         </select>
 
-
         <label for="powerCtl"><strong>Animatie</strong></label>
 
         <div style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;">
@@ -190,27 +178,27 @@
           <button id="animScan" type="button">Scan →</button>
         </div>
 
-        <section id="interactionControls" style="display:grid; gap:.5rem; margin:.75rem 0;">
         <div style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;">
           <label>Curve</label>
           <button id="curveGauss"  type="button">Gauss</button>
           <button id="curveCos"    type="button">Cosine</button>
-          <button id="curveSmooth" type="button">Smoothstep</button>
+          <button id="curveSmooth" type="button">Step</button>
         </div>
 
-        <div style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;">
-          <label for="animPeriod"><label>Animatie-duur</label></label>
-          <input id="animPeriod" type="range" min="2" max="10" step="0.1" value="3.0">
-          <span id="animPeriodOut">3.00s</span>
-        </div>
+        <label>
+          <span>Animatie duur</span>
+          <span id="animPeriodOut" class="sub">— px</span>
+        </label>
+        <input id="animPeriod" type="range" min="2" max="10" step="0.1" value="3.0">
 
         <!-- Optioneel: power-knopjes voor scherpte -->
-        <div style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;">
-          <label for="powerCtl"><label>Gewicht power</label></label>
-          <input id="powerCtl" type="range" min="0.25" max="3" step="0.05" value="1">
-          <span id="powerOut">1.00×</span>
-        </div>
-      </section>
+        <label>
+          <span>Gewicht</span>
+          <span id="powerOut" class="sub">1.00×</span>
+        </label>
+        <input id="powerCtl" type="range" min="0.25" max="3" step="0.05" value="1">
+        
+      <label for="powerCtl"><strong>Golf</strong></label>
 
       <script>
         // Koppel power slider (optioneel)
@@ -228,32 +216,29 @@
         })();
       </script>
 
-      <section id="warpControls" style="display:grid; gap:.5rem; margin:.75rem 0;">
-        <div style="display:flex; gap:.5rem; align-items:center;">
-          <label style="display:flex; align-items:center; gap:.5rem;">
-            <input id="warpOn" type="checkbox">
-            Warp (golf)
+        <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
+          <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
+            <input id="warpOn" type="checkbox"> Warp
           </label>
         </div>
 
-        <div style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;">
-          <label for="warpAmp"><strong>Amplitude</strong></label>
-          <input id="warpAmp" type="range" min="0" max="80" step="1" value="12">
-          <span id="warpAmpOut">12 px</span>
-        </div>
+        <label>
+          <span>Amplitude</span>
+          <span id="warpAmpOut" class="sub">12 px</span>
+        </label>
+        <input id="warpAmp" type="range" min="0" max="80" step="1" value="12">
 
-        <div style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;">
-          <label for="warpLen"><strong>Golflengte</strong></label>
-          <input id="warpLen" type="range" min="40" max="800" step="4" value="240">
-          <span id="warpLenOut">240 px</span>
-        </div>
+        <label>
+          <span>Golflengte</span>
+          <span id="warpLenOut" class="sub">240 px</span>
+        </label>
+        <input id="warpLen" type="range" min="40" max="800" step="4" value="240">
 
-        <div style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;">
-          <label for="warpPeriod"><strong>Duur per cyclus</strong></label>
-          <input id="warpPeriod" type="range" min="0.2" max="12" step="0.1" value="4.0">
-          <span id="warpPeriodOut">4.00 s</span>
-        </div>
-      </section>
+        <label>
+          <span>Cyclus duur</span>
+          <span id="warpPeriodOut" class="sub">4.00 s</span>
+        </label>
+        <input id="warpPeriod" type="range" min="0.2" max="12" step="0.1" value="4.0">
 
         <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
           <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
