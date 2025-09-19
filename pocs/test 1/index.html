@@ -179,31 +179,34 @@
           <option value="pluses">Plus</option>
         </select>
 
-        <!-- <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
-          <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
-            <input id="baseLines" type="checkbox"> Base lines
-          </label>
-        </div> -->
 
-        <section id="interactionControls" style="display:grid; gap:.5rem; margin:.75rem 0;">
-        <div style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;">
-          <strong>Curve:</strong>
-          <button id="curveGauss"  type="button">Gauss</button>
-          <button id="curveCos"    type="button">Cosine</button>
-          <button id="curveSmooth" type="button">Smoothstep</button>
-          <button id="curveExp"    type="button">Exp</button>
-        </div>
+        <label for="powerCtl"><strong>Animatie</strong></label>
 
         <div style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;">
-          <strong>Animatie:</strong>
-          <button id="animNone"  type="button">Uit</button>
+          <label>Modus</label>
+          <button id="animOff" type="button">Uit</button>
+          <button id="animMouse" type="button">Muis</button>
           <button id="animPulse" type="button">Pulse ⇆</button>
           <button id="animScan" type="button">Scan →</button>
         </div>
 
+        <section id="interactionControls" style="display:grid; gap:.5rem; margin:.75rem 0;">
+        <div style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;">
+          <label>Curve</label>
+          <button id="curveGauss"  type="button">Gauss</button>
+          <button id="curveCos"    type="button">Cosine</button>
+          <button id="curveSmooth" type="button">Smoothstep</button>
+        </div>
+
+        <div style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;">
+          <label for="animPeriod"><label>Animatie-duur</label></label>
+          <input id="animPeriod" type="range" min="2" max="10" step="0.1" value="3.0">
+          <span id="animPeriodOut">3.00s</span>
+        </div>
+
         <!-- Optioneel: power-knopjes voor scherpte -->
         <div style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;">
-          <label for="powerCtl"><strong>Gewicht power</strong></label>
+          <label for="powerCtl"><label>Gewicht power</label></label>
           <input id="powerCtl" type="range" min="0.25" max="3" step="0.05" value="1">
           <span id="powerOut">1.00×</span>
         </div>
@@ -225,6 +228,11 @@
         })();
       </script>
 
+        <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
+          <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
+            <input id="bgLines" type="checkbox"> Achtergrondlijnen
+          </label>
+        </div>
         <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
           <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
             <input id="debug" type="checkbox"> Debug mode

@@ -64,6 +64,8 @@ let EXPORT_H = null; // when preset = custom, desired pixel height
 
 // Keep the total logo width constant (sum of letter widths stays fixed)
 let KEEP_TOTAL_WIDTH = true;
+let BG_LINES = false;        // toggle via HTML checkbox
+let BG_LINES_ALPHA = 40;
 
 // random animate
 let lastAutoRandomMs = 0;
@@ -80,20 +82,23 @@ function setAuto(on){
 let rowYsCanvas = []; // y-position of each row in canvas coordinates
 
 // --- Curve + Animation controls ---
-let MOUSE_CURVE = 'gauss';   // 'gauss' | 'cosine' | 'smoothstep' | 'exp'
+let MOUSE_CURVE = 'gauss';   // 'gauss' | 'cosine' | 'smoothstep'
 let MOUSE_POWER = 1.0;       // t^power sharpening
 
-let ANIM_MODE = 'none';      // 'none' | 'pulse'| 'scan'
+let ANIM_MODE = 'off';     // 'mouse' | 'pulse' | 'scan' | 'off'
 let animTime = 0;            // seconds
 let _animRAF = null;
 let _animStart = 0;
+// Animation timing (seconds per full cycle)
+let ANIM_PERIOD = 3.0;            // default: 3s per cycle
+const SCAN_MARGIN_FRAC = 0.4; // allow the scan to travel 15% beyond both ends before wrapping
 
 function startAnimLoop(){
   if (_animRAF) return;
   _animStart = performance.now();
   const step = (t)=>{
     animTime = (t - _animStart) / 1000.0;
-    if (ANIM_MODE !== 'none'){
+    if (ANIM_MODE !== 'mouse' && ANIM_MODE !== 'off'){
       requestRedraw();
       _animRAF = requestAnimationFrame(step);
     } else {
@@ -164,25 +169,35 @@ function mouseWeight(localMouseX, letterLeft, letterW, contentW, curve = MOUSE_C
 }
 
 function perLetterStretchFactor(localMouseX, baseX, letterScaledW, contentW0){
+  if (ANIM_MODE === 'off' || !PER_LETTER_STRETCH) return 1.0;
   const t = mouseWeight(localMouseX, baseX, letterScaledW, contentW0, MOUSE_CURVE, MOUSE_POWER);
   return MOUSE_STRETCH_MIN + (MOUSE_STRETCH_MAX - MOUSE_STRETCH_MIN) * t;
 }
 
 function activeLocalMouseX(txLike, sLike, leftBound, rightBound){
-  if (ANIM_MODE === 'none') return (mouseX - txLike) / Math.max(0.0001, sLike);
+  // Mouse-driven position
+  if (ANIM_MODE === 'mouse') return (mouseX - txLike) / Math.max(0.0001, sLike);
+  // Off: return center so any accidental use is stable
+  if (ANIM_MODE === 'off'){
+    const L = leftBound, R = rightBound; return (L + R) * 0.5;
+  }
   const L = leftBound;
   const R = rightBound;
   const span = Math.max(1, R - L);
-  const t = animTime || 0;
+  const period = Math.max(0.05, ANIM_PERIOD); // seconds per full cycle
+  const p = (animTime / period) % 1;          // normalized phase [0,1)
 
   if (ANIM_MODE === 'pulse'){
-    const pos = 0.5 + 0.5 * Math.sin(t * 2.0);
+    const pos = 0.5 + 0.5 * Math.sin(2 * Math.PI * p);
     return L + pos * span;
   } else if (ANIM_MODE === 'scan'){
-    const speed = 0.35; // cycles per second (one-way)
-    const f = (t * speed) % 1; // sawtooth 0→1, then jump back
+    // One-way continuous loop with extra travel beyond edges (no clamp)
+    const m = Math.max(0, Math.min(1, SCAN_MARGIN_FRAC));
+    const f = -m + (1 + 2 * m) * p; // -m → 1+m, then wraps to -m
     return L + f * span;
   }
+
+  // Fallback to mouse when mode is unrecognized
   return (mouseX - txLike) / Math.max(0.0001, sLike);
 }
 
@@ -400,25 +415,55 @@ function setup(){
 const btnCurveGauss  = document.getElementById('curveGauss');
 const btnCurveCos    = document.getElementById('curveCos');
 const btnCurveSmooth = document.getElementById('curveSmooth');
-const btnCurveExp    = document.getElementById('curveExp');
 if (btnCurveGauss)  btnCurveGauss.addEventListener('click', ()=>{ MOUSE_CURVE='gauss'; requestRedraw(); });
 if (btnCurveCos)    btnCurveCos.addEventListener('click',   ()=>{ MOUSE_CURVE='cosine'; requestRedraw(); });
 if (btnCurveSmooth) btnCurveSmooth.addEventListener('click',()=>{ MOUSE_CURVE='smoothstep'; requestRedraw(); });
-if (btnCurveExp)    btnCurveExp.addEventListener('click',   ()=>{ MOUSE_CURVE='exp'; requestRedraw(); });
+
+const elBgLines = document.getElementById('bgLines');
+if (elBgLines){
+  elBgLines.checked = BG_LINES;
+  elBgLines.addEventListener('change', ()=>{ 
+    BG_LINES = !!elBgLines.checked; 
+    requestRedraw(); 
+  });
+}
 
 // Animation buttons
-const btnAnimNone  = document.getElementById('animNone');
+const btnAnimMouse = document.getElementById('animMouse');
+const btnAnimOff   = document.getElementById('animOff');
 const btnAnimPulse = document.getElementById('animPulse');
-const btnAnimScan = document.getElementById('animScan');
+const btnAnimScan  = document.getElementById('animScan');
 
 function setAnim(mode){
   ANIM_MODE = mode;
-  if (ANIM_MODE === 'none') stopAnimLoop(); else startAnimLoop();
+  // Enable/disable stretch based on mode
+  PER_LETTER_STRETCH = (mode !== 'off');
+  // Start RAF only for time-based modes
+  if (mode === 'pulse' || mode === 'scan') startAnimLoop(); else stopAnimLoop();
   requestRedraw();
 }
-if (btnAnimNone)  btnAnimNone.addEventListener('click', ()=> setAnim('none'));
-if (btnAnimPulse) btnAnimPulse.addEventListener('click',()=> setAnim('pulse'));
-if (btnAnimScan) btnAnimScan.addEventListener('click', ()=> setAnim('scan'));
+if (btnAnimMouse) btnAnimMouse.addEventListener('click', ()=> setAnim('mouse'));
+if (btnAnimOff)   btnAnimOff.addEventListener('click',   ()=> setAnim('off'));
+if (btnAnimPulse) btnAnimPulse.addEventListener('click', ()=> setAnim('pulse'));
+if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
+
+  // Animation duration (seconds per cycle)
+  const animPeriodCtl = document.getElementById('animPeriod');
+  const animPeriodOut = document.getElementById('animPeriodOut');
+  if (animPeriodCtl){
+    // initialize UI from current value
+    animPeriodCtl.value = String(ANIM_PERIOD);
+    if (animPeriodOut) animPeriodOut.textContent = ANIM_PERIOD.toFixed(2) + 's';
+    animPeriodCtl.addEventListener('input', ()=>{
+      const v = parseFloat(animPeriodCtl.value);
+      if (Number.isFinite(v)){
+        ANIM_PERIOD = Math.max(0.1, v);
+        if (animPeriodOut) animPeriodOut.textContent = ANIM_PERIOD.toFixed(2) + 's';
+        startAnimLoop(); // ensure loop is running when user tweaks
+        requestRedraw();
+      }
+    });
+  }
 
   // initialize values to current state
   elRows.value = rows;
@@ -702,6 +747,24 @@ function renderLogo(g){
   adjX = adj.adjX;
   wUseArr = adj.wUse;
 
+  // Backdrop lines across the full canvas (pixel space) aligned to row pitch
+  if (BG_LINES){
+    const pitchPx = rowPitchNow * s;           // spacing between rows in pixels
+    const thickPx = 3;
+    if (pitchPx > 0){
+      g.push();
+      g.noStroke();
+      g.fill(0, 0, 0, Math.max(0, Math.min(255, BG_LINES_ALPHA)));
+      // Align first line to where row 0 would be after translate/scale
+      const y0 = tyAdj; // row 0 at layout y=0 maps to canvas y=tyAdj
+      const startY = ((y0 % pitchPx) + pitchPx) % pitchPx; // wrap to [0,pitch)
+      for (let y = startY; y <= height; y += pitchPx){
+        g.rect(0, y - thickPx * 0.5, width, thickPx);
+      }
+      g.pop();
+    }
+  }
+
   // Apply final transform
   tx = txAdj; ty = tyAdj;
   g.translate(tx, ty);
@@ -713,6 +776,7 @@ function renderLogo(g){
   } else {
     rowYsCanvas = Array.from({ length: rows }, (_, r) => r * rowPitchNow);
   }
+
 
   for (let li = 0; li < layout.lettersOrder.length; li++){
     const letterKey   = layout.lettersOrder[li];
