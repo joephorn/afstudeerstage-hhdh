@@ -65,7 +65,7 @@ let EXPORT_H = null; // when preset = custom, desired pixel height
 // Keep the total logo width constant (sum of letter widths stays fixed)
 let KEEP_TOTAL_WIDTH = true;
 let BG_LINES = false;        // toggle via HTML checkbox
-let BG_LINES_ALPHA = 40;
+let BG_LINES_ALPHA = 255;
 
 let REPEAT_V = false;          // vertically tile the logo to fill the canvas
 let COLORS_LIST = [];
@@ -73,6 +73,21 @@ let COLORS_LIST = [];
 // ---- Colors ----
 let color1 = '#ffffff';
 let color2 = '#000000';
+let colorLines = '#000000'; // background lines color (when BG_LINES is enabled)
+
+// --- Color helpers: auto-combo and black detection ---
+function normHex(hex){ return String(hex || '').trim().toLowerCase(); }
+function isHexBlack(hex){
+  const h = normHex(hex);
+  return h === '#000000' || h === 'black' || h === '#000' || h === 'rgb(0,0,0)';
+}
+function nextColorAfter(list, hex){
+  if (!Array.isArray(list) || !list.length) return hex;
+  const h = normHex(hex);
+  const idx = list.findIndex(c => normHex(c) === h);
+  if (idx === -1) return list[0];
+  return list[(idx + 1) % list.length];
+}
 
 // ---- Canvas warp (final screen-space filter) ----
 let WARP_ON = false;          // toggle via HTML checkbox
@@ -462,9 +477,11 @@ if (elRepeatV){
   elRepeatV.addEventListener('change', ()=>{ REPEAT_V = !!elRepeatV.checked; requestRedraw(); });
 }
 
-// Color selectors (kleur 1 / kleur 2)
-const selColor1 = document.getElementById('color1');
-const selColor2 = document.getElementById('color2');
+// Color selectors (kleur 1 / kleur 2 / lijnen)
+const selColor1 = document.getElementById('color1');      // achtergrond
+const selColor2 = document.getElementById('color2');      // voorgrond (logo)
+const selColorLines = document.getElementById('colorLines'); // achtergrondlijnen
+
 function fillColorSelect(sel){
   if (!sel) return;
   sel.innerHTML = '';
@@ -478,23 +495,26 @@ function fillColorSelect(sel){
     sel.appendChild(opt);
   });
 }
+
 fillColorSelect(selColor1);
 fillColorSelect(selColor2);
+fillColorSelect(selColorLines);
+
+// Initialize selects to current state
 if (selColor1){
   selColor1.value = color1;
-  if (selColor1.selectedIndex === -1 && selColor1.options.length){
-    selColor1.selectedIndex = 0;
-    color1 = selColor1.value;
-  }
+  if (selColor1.selectedIndex === -1 && selColor1.options.length){ selColor1.selectedIndex = 0; color1 = selColor1.value; }
   selColor1.addEventListener('change', ()=>{ color1 = selColor1.value; requestRedraw(); });
 }
 if (selColor2){
   selColor2.value = color2;
-  if (selColor2.selectedIndex === -1 && selColor2.options.length){
-    selColor2.selectedIndex = Math.min(1, selColor2.options.length - 1);
-    color2 = selColor2.value;
-  }
+  if (selColor2.selectedIndex === -1 && selColor2.options.length){ selColor2.selectedIndex = Math.min(1, selColor2.options.length - 1); color2 = selColor2.value; }
   selColor2.addEventListener('change', ()=>{ color2 = selColor2.value; requestRedraw(); });
+}
+if (selColorLines){
+  selColorLines.value = colorLines;
+  if (selColorLines.selectedIndex === -1 && selColorLines.options.length){ selColorLines.selectedIndex = 0; colorLines = selColorLines.value; }
+  selColorLines.addEventListener('change', ()=>{ colorLines = selColorLines.value; requestRedraw(); });
 }
 // If there are lines setting selColor1.value or fallback with COLORS, replace them:
 // (No such lines found in this file, so nothing to replace here.)
@@ -810,12 +830,13 @@ function renderLogo(g){
   // Backdrop lines across the full canvas (pixel space) aligned to row pitch
   if (BG_LINES){
     const pitchPx = rowPitchNow * s;           // spacing between rows in pixels
-    const thickPx = 3;
+    const thickPx = 5;
     if (pitchPx > 0){
       g.push();
       g.noStroke();
-      const a = Math.max(0, Math.min(255, BG_LINES_ALPHA));
-      const cc = color(color2);
+      // If line color is black, use 25% opacity; otherwise full opacity
+      const a = isHexBlack(colorLines) ? Math.round(255 * 0.25) : 255;
+      const cc = color(colorLines);
       cc.setAlpha(a);
       g.fill(cc);
       // Align first line to where row 0 would be after translate/scale
