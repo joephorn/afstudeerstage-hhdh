@@ -69,7 +69,8 @@ let BG_LINES_ALPHA = 255;
 
 let REPEAT_V = false;          // vertically tile the logo to fill the canvas
 let REPEAT_MIRROR = false;     // if true, every 2nd vertical repeat is mirrored
-let COLORS_LIST = [];
+let COLOR_COMBOS = [];
+let activeColorComboIdx = 0;
 
 // ---- Colors ----
 let color1 = '#ffffff';
@@ -88,6 +89,20 @@ function nextColorAfter(list, hex){
   const idx = list.findIndex(c => normHex(c) === h);
   if (idx === -1) return list[0];
   return list[(idx + 1) % list.length];
+}
+function applyColorComboByIndex(idx){
+  if (!Array.isArray(COLOR_COMBOS) || !COLOR_COMBOS.length) return;
+  const safeIdx = Math.max(0, Math.min(COLOR_COMBOS.length - 1, idx | 0));
+  const combo = COLOR_COMBOS[safeIdx];
+  activeColorComboIdx = safeIdx;
+  color1 = combo.background || color1;
+  color2 = combo.logo || color2;
+  color3 = combo.lines || color3;
+}
+
+function sanitizeColor(hex, fallback){
+  if (typeof hex === 'string' && hex.trim()) return hex.trim();
+  return fallback;
 }
 
 // ---- Canvas warp (final screen-space filter) ----
@@ -346,10 +361,28 @@ function applyRandomTweaks(){
 }
 
 function preload(){
-  // Pull colors from the global set by kleuren.js
-  COLORS_LIST = Array.isArray(window.COLORS) ? window.COLORS : [];
-  color1 = COLORS_LIST[0] || color1;
-  color2 = COLORS_LIST[1] || COLORS_LIST[0] || color2;
+  const rawCombos = Array.isArray(window.COLOR_COMBINATIONS) ? window.COLOR_COMBINATIONS : [];
+  COLOR_COMBOS = rawCombos
+    .map((combo, idx) => {
+      if (!combo) return null;
+      const background = sanitizeColor(combo.background || combo.bg, color1).toUpperCase();
+      const logo = sanitizeColor(combo.logo || combo.foreground, color2).toUpperCase();
+      const lines = sanitizeColor(combo.lines || combo.accent, color3).toUpperCase();
+      const label = combo.label ? String(combo.label) : `Preset ${idx + 1}`;
+      const id = combo.id ? String(combo.id) : `combo-${idx}`;
+      return { id, label, background, logo, lines };
+    })
+    .filter(Boolean);
+  if (!COLOR_COMBOS.length){
+    COLOR_COMBOS = [{
+      id: 'combo-0',
+      label: 'Default',
+      background: sanitizeColor(color1, '#FFFFFF').toUpperCase(),
+      logo: sanitizeColor(color2, '#000000').toUpperCase(),
+      lines: sanitizeColor(color3, '#000000').toUpperCase()
+    }];
+  }
+  applyColorComboByIndex(0);
   const uniq = Array.from(new Set(LOGO_TEXT.split('').map(c => c.toUpperCase())));
   uniq.forEach(ch => {
     const p = LETTERS_PATH + ch + '.svg';
@@ -480,47 +513,44 @@ if (elRepeatMirror){
   elRepeatMirror.addEventListener('change', ()=>{ REPEAT_MIRROR = !!elRepeatMirror.checked; requestRedraw(); });
 }
 
-// Color selectors (kleur 1 / kleur 2 / lijnen)
-const selColor1 = document.getElementById('color1');      // achtergrond
-const selColor2 = document.getElementById('color2');      // voorgrond (logo)
-const selColor3 = document.getElementById('color3'); // achtergrondlijnen
+// Color presets
+const elColorPreset = document.getElementById('colorPreset');
+const elColorPresetLabel = document.getElementById('colorPresetLabel');
 
-function fillColorSelect(sel){
-  if (!sel) return;
-  sel.innerHTML = '';
-  const list = Array.isArray(COLORS_LIST) && COLORS_LIST.length ? COLORS_LIST : ['#ffffff','#000000'];
-  list.forEach((hex)=>{
+function updateColorPresetLabel(idx){
+  if (!elColorPresetLabel) return;
+  if (!Array.isArray(COLOR_COMBOS) || !COLOR_COMBOS.length){
+    elColorPresetLabel.textContent = 'Preset';
+    return;
+  }
+  const combo = COLOR_COMBOS[Math.max(0, Math.min(COLOR_COMBOS.length - 1, idx | 0))] || COLOR_COMBOS[0];
+  const label = combo.label || `Preset ${idx + 1}`;
+  elColorPresetLabel.textContent = `${label} — ${combo.background} / ${combo.logo} / ${combo.lines}`;
+}
+
+function populateColorPresetSelect(){
+  if (!elColorPreset) return;
+  elColorPreset.innerHTML = '';
+  COLOR_COMBOS.forEach((combo, idx) => {
     const opt = document.createElement('option');
-    opt.value = hex;
-    opt.textContent = hex.toUpperCase();
-    opt.style.background = hex;
-    opt.style.color = '#000000';
-    sel.appendChild(opt);
+    opt.value = String(idx);
+    opt.textContent = combo.label || `Preset ${idx + 1}`;
+    elColorPreset.appendChild(opt);
+  });
+  elColorPreset.value = String(activeColorComboIdx);
+  updateColorPresetLabel(activeColorComboIdx);
+}
+
+populateColorPresetSelect();
+
+if (elColorPreset){
+  elColorPreset.addEventListener('change', ()=>{
+    const idx = parseInt(elColorPreset.value, 10);
+    applyColorComboByIndex(Number.isFinite(idx) ? idx : 0);
+    updateColorPresetLabel(activeColorComboIdx);
+    requestRedraw();
   });
 }
-
-fillColorSelect(selColor1);
-fillColorSelect(selColor2);
-fillColorSelect(selColor3);
-
-// Initialize selects to current state
-if (selColor1){
-  selColor1.value = color1;
-  if (selColor1.selectedIndex === -1 && selColor1.options.length){ selColor1.selectedIndex = 0; color1 = selColor1.value; }
-  selColor1.addEventListener('change', ()=>{ color1 = selColor1.value; requestRedraw(); });
-}
-if (selColor2){
-  selColor2.value = color2;
-  if (selColor2.selectedIndex === -1 && selColor2.options.length){ selColor2.selectedIndex = Math.min(1, selColor2.options.length - 1); color2 = selColor2.value; }
-  selColor2.addEventListener('change', ()=>{ color2 = selColor2.value; requestRedraw(); });
-}
-if (selColor3){
-  selColor3.value = color3;
-  if (selColor3.selectedIndex === -1 && selColor3.options.length){ selColor3.selectedIndex = 0; color3 = selColor3.value; }
-  selColor3.addEventListener('change', ()=>{ color3 = selColor3.value; requestRedraw(); });
-}
-// If there are lines setting selColor1.value or fallback with COLORS, replace them:
-// (No such lines found in this file, so nothing to replace here.)
 
 // Animation buttons
 const btnAnimMouse = document.getElementById('animMouse');

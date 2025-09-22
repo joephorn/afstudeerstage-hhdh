@@ -168,22 +168,11 @@
           <option value="pluses">Plus</option>
         </select>
 
-        <div style="display:flex; gap:1rem; align-items:flex-end; flex-wrap:wrap;">
-          <label style="display:flex; flex-direction:column; gap:.25rem;">
-            <span>Kleur 1 (achtergrond)</span>
-            <select id="color1"></select>
-          </label>
-
-          <label style="display:flex; flex-direction:column; gap:.25rem;">
-            <span>Kleur 2 (logo)</span>
-            <select id="color2"></select>
-          </label>
-
-          <label style="display:flex; flex-direction:column; gap:.25rem;">
-            <span>Kleur 3 (achtergrondlijnen)</span>
-            <select id="color3"></select>
-          </label>
-        </div>
+        <label>
+          <span>Kleuren</span>
+          <span class="sub" id="colorPresetLabel">Preset</span>
+        </label>
+        <select id="colorPreset" style="width:100%; margin-bottom:6px;"></select>
 
         <label for="powerCtl"><strong>Animatie</strong></label>
 
