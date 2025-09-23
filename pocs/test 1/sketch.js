@@ -69,6 +69,7 @@ let BG_LINES_ALPHA = 255;
 
 let REPEAT_V = false;          // vertically tile the logo to fill the canvas
 let REPEAT_MIRROR = false;     // if true, every 2nd vertical repeat is mirrored
+let REPEAT_COUNT = 0;          // 0 = off; N = max tiles up/down (clamped to viewport)
 let COLOR_COMBOS = [];
 let activeColorComboIdx = 0;
 
@@ -512,6 +513,22 @@ if (elRepeatMirror){
   elRepeatMirror.checked = REPEAT_MIRROR;
   elRepeatMirror.addEventListener('change', ()=>{ REPEAT_MIRROR = !!elRepeatMirror.checked; requestRedraw(); });
 }
+// Vertical repeat: count slider (0 = off)
+const elRepeatCount = document.getElementById('repeatCount');
+const elRepeatCountOut = document.getElementById('repeatCountOut');
+if (elRepeatCount){
+  // Provide sensible defaults if not set in HTML
+  if (!elRepeatCount.min)  elRepeatCount.min = '0';
+  if (!elRepeatCount.max)  elRepeatCount.max = '10';
+  if (!elRepeatCount.step) elRepeatCount.step = '1';
+  elRepeatCount.value = String(REPEAT_COUNT);
+  if (elRepeatCountOut) elRepeatCountOut.textContent = String(REPEAT_COUNT);
+  elRepeatCount.addEventListener('input', ()=>{
+    REPEAT_COUNT = Math.max(0, parseInt(elRepeatCount.value, 10) || 0);
+    if (elRepeatCountOut) elRepeatCountOut.textContent = String(REPEAT_COUNT);
+    requestRedraw();
+  });
+}
 
 // Color presets
 const elColorPreset = document.getElementById('colorPreset');
@@ -954,7 +971,7 @@ function renderLogo(g){
   drawLettersAtOffset(0, false);
 
   // Vertically repeat to fill canvas (whole-logo step = rows * rowPitchNow)
-  if (REPEAT_V && rows > 0){
+  if ((REPEAT_V || REPEAT_COUNT > 0) && rows > 0){
     const tileH = rows * rowPitchNow; // next logo starts one line below the last of previous
     if (tileH > 0){
       const viewTopL  = -ty / s;           // canvas top in layout units
@@ -965,8 +982,14 @@ function renderLogo(g){
       const baseBotL = (rows - 1) * rowPitchNow;
 
       // Choose k so copies cover viewport above and below
-      const kStart = Math.floor((viewTopL - baseBotL) / tileH) - 1;
-      const kEnd   = Math.ceil((viewBotL - baseTopL) / tileH) + 1;
+      const kStartViewport = Math.floor((viewTopL - baseBotL) / tileH) - 1;
+      const kEndViewport   = Math.ceil((viewBotL - baseTopL) / tileH) + 1;
+
+      // When REPEAT_COUNT == 0 but REPEAT_V is true, allow unlimited (viewport-limited) repeats
+      const N = (REPEAT_COUNT > 0) ? REPEAT_COUNT : Number.POSITIVE_INFINITY;
+      const kStart = Math.max(kStartViewport, -N);
+      const kEnd   = Math.min(kEndViewport, N);
+
       for (let k = kStart; k <= kEnd; k++){
         if (k === 0) continue; // base already drawn at yOff=0
         const mirrored = REPEAT_MIRROR && ((Math.abs(k) % 2) === 1);
