@@ -71,11 +71,9 @@ let BG_LINES_ALPHA = 255;
 
 let REPEAT_V = false;
 let REPEAT_MIRROR = false;     // if true, every 2nd vertical repeat is mirrored
-let REPEAT_COUNT = 0;          // 0 = off; N = max tiles up/down (clamped to viewport)
-let REPEAT_HALVE = false;      // if true, each subsequent repeat scales by 0.5
-const REPEAT_FIRST_SCALE_MAX = 0.92; // keep first repeat slightly below base size
-const REPEAT_MIN_SCALE       = 0.05; // stop when copies become too small to notice
-const REPEAT_AUTO_MAX_COPIES = 64;   // upper bound when auto-filling without count limit
+let REPEAT_FILL = 0;           // 0..1 progress: 0 = none, 1 = volledige vulling
+const REPEAT_MAX_BANDS = 6;    // aantal stroken per zijde in eindtoestand
+const REPEAT_WEIGHT_EXP = 1.6; // >1 = snellere afname in bandhoogte
 let COLOR_COMBOS = [];
 let activeColorComboIdx = 0;
 
@@ -163,96 +161,37 @@ function stopAnimLoop(){
   if (_animRAF){ cancelAnimationFrame(_animRAF); _animRAF = null; }
 }
 
-function computeVerticalRepeatScales(availPx, baseHeightPx, limitCount){
-  const EPS = 1e-6;
-  if (!Number.isFinite(availPx) || !Number.isFinite(baseHeightPx)) return [];
-  if (availPx <= EPS || baseHeightPx <= EPS) return [];
+function computeProgressiveBandHeights(avail, fillFrac, count){
+  if (!Number.isFinite(avail) || avail <= 1e-6) return [];
+  const n = Math.max(0, count | 0);
+  if (n <= 0) return [];
+  const clampedFill = Math.max(0, Math.min(1, fillFrac));
+  if (clampedFill <= 0) return [];
 
-  const target = availPx / baseHeightPx;
-  if (target <= REPEAT_MIN_SCALE) return [];
-
-  const firstCap = REPEAT_HALVE ? Math.min(0.5, REPEAT_FIRST_SCALE_MAX) : REPEAT_FIRST_SCALE_MAX;
-  let firstScale = Math.min(firstCap, target);
-  if (firstScale < REPEAT_MIN_SCALE){
-    firstScale = Math.min(target, REPEAT_MIN_SCALE);
-    if (firstScale < REPEAT_MIN_SCALE) return [];
+  const weights = new Array(n);
+  let sumWeights = 0;
+  for (let i = 0; i < n; i++){
+    const weight = Math.pow((n - i), Math.max(0.1, REPEAT_WEIGHT_EXP));
+    weights[i] = weight;
+    sumWeights += weight;
   }
+  if (sumWeights <= 0) return [];
+  const targets = weights.map(w => avail * (w / sumWeights));
 
-  if (target <= firstScale + 1e-4){
-    return [firstScale];
+  const scaled = clampedFill * n;
+  const fullBands = Math.floor(scaled);
+  const partialFrac = scaled - fullBands;
+
+  const heights = [];
+  for (let i = 0; i < Math.min(fullBands, n); i++){
+    const h = targets[i];
+    if (h > 0) heights.push(h);
   }
-
-  const maxCopiesBound = Math.max(1, REPEAT_AUTO_MAX_COPIES | 0);
-  let maxCopies;
-  if (!Number.isFinite(limitCount)){
-    const natural = Math.ceil(target / Math.max(firstScale, REPEAT_MIN_SCALE));
-    maxCopies = Math.max(1, Math.min(maxCopiesBound, natural));
-  } else {
-    const safeLimit = Math.max(0, Math.floor(limitCount));
-    if (safeLimit === 0) return [];
-    maxCopies = Math.min(maxCopiesBound, safeLimit);
+  if (fullBands < n){
+    const partial = targets[fullBands] * partialFrac;
+    if (partial > 1e-6) heights.push(partial);
   }
-
-  if (maxCopies <= 1){
-    return [Math.min(firstScale, target)];
-  }
-
-  const desiredSum = Math.min(target, firstScale * maxCopies);
-  const sumFor = (r)=>{
-    if (r <= 0) return firstScale;
-    if (Math.abs(1 - r) < 1e-6) return firstScale * maxCopies;
-    return firstScale * (1 - Math.pow(r, maxCopies)) / (1 - r);
-  };
-
-  const maxRatio = REPEAT_HALVE ? 0.5 : 0.98;
-  const minRatioPreferred = REPEAT_HALVE ? 0.45 : 0.45;
-
-  let hi = Math.min(maxRatio, 0.9995);
-  let ratio;
-  if (sumFor(hi) < desiredSum - 1e-5){
-    ratio = hi;
-  } else {
-    let lo = 0;
-    for (let iter = 0; iter < 40; iter++){
-      const mid = (lo + hi) * 0.5;
-      const sumMid = sumFor(mid);
-      if (sumMid < desiredSum){
-        lo = mid;
-      } else {
-        hi = mid;
-      }
-    }
-    ratio = hi;
-  }
-
-  if (ratio < 0) ratio = 0;
-  if (ratio < minRatioPreferred){
-    if (sumFor(minRatioPreferred) >= desiredSum - 1e-5){
-      ratio = minRatioPreferred;
-    }
-  }
-
-  const sumCap = desiredSum;
-  const scales = [];
-  let accumulated = 0;
-  let prevScale = firstScale;
-  for (let i = 0; i < maxCopies; i++){
-    let scale = (i === 0) ? firstScale : prevScale * ratio;
-    const remaining = sumCap - accumulated;
-    if (remaining <= REPEAT_MIN_SCALE * 0.5) break;
-    if (scale > remaining) scale = remaining;
-    if (scale < REPEAT_MIN_SCALE) break;
-    if (scales.length > 0 && scale > scales[scales.length - 1]){
-      scale = Math.min(scales[scales.length - 1], scale);
-    }
-    if (scale < REPEAT_MIN_SCALE) break;
-    scales.push(scale);
-    accumulated += scale;
-    prevScale = scale;
-    if (sumCap - accumulated <= REPEAT_MIN_SCALE * 0.5) break;
-  }
-
-  return scales;
+  return heights;
 }
 
 // === Preview vs Export ===
@@ -612,18 +551,20 @@ if (elRepeatMirror){
   elRepeatMirror.addEventListener('change', ()=>{ REPEAT_MIRROR = !!elRepeatMirror.checked; requestRedraw(); });
 }
 
-// Vertical repeat: count slider (0 = off)
-const elRepeatCount = document.getElementById('repeatCount');
-const elRepeatCountOut = document.getElementById('repeatCountOut');
-if (elRepeatCount){
-  if (!elRepeatCount.min)  elRepeatCount.min = '0';
-  if (!elRepeatCount.max)  elRepeatCount.max = '10';
-  if (!elRepeatCount.step) elRepeatCount.step = '1';
-  elRepeatCount.value = String(REPEAT_COUNT);
-  if (elRepeatCountOut) elRepeatCountOut.textContent = String(REPEAT_COUNT);
-  elRepeatCount.addEventListener('input', ()=>{
-    REPEAT_COUNT = Math.max(0, parseInt(elRepeatCount.value, 10) || 0);
-    if (elRepeatCountOut) elRepeatCountOut.textContent = String(REPEAT_COUNT);
+// Vertical repeat: schermvulling (0 = none, 100 = volledige ruimte)
+const elRepeatFill = document.getElementById('repeatFill');
+const elRepeatFillOut = document.getElementById('repeatFillOut');
+if (elRepeatFill){
+  if (!elRepeatFill.min)  elRepeatFill.min = '0';
+  if (!elRepeatFill.max)  elRepeatFill.max = '100';
+  if (!elRepeatFill.step) elRepeatFill.step = '1';
+  const initialPct = Math.round(REPEAT_FILL * 100);
+  elRepeatFill.value = String(initialPct);
+  if (elRepeatFillOut) elRepeatFillOut.textContent = `${initialPct}%`;
+  elRepeatFill.addEventListener('input', ()=>{
+    const val = Math.max(0, Math.min(100, parseFloat(elRepeatFill.value) || 0));
+    REPEAT_FILL = val / 100;
+    if (elRepeatFillOut) elRepeatFillOut.textContent = `${Math.round(val)}%`;
     requestRedraw();
   });
 }
@@ -1068,87 +1009,55 @@ function renderLogo(g){
   // Draw base instance (not mirrored)
   drawLettersAtOffset(0, false);
 
-  if ((REPEAT_V || REPEAT_COUNT > 0) && rows > 0){
-    const Hlogo = (rows <= 1) ? 0 : (rows - 1) * rowPitchNow; // true logo height (layout units)
-    if (Hlogo > 0){
-      const Hpx = s * Hlogo;
-      const baseTopPx = ty;
-      const baseBotPx = ty + Hpx;
+  const fillFrac = Math.max(0, Math.min(1, REPEAT_FILL));
+  if (REPEAT_V && fillFrac > 0 && rows > 0){
+    const HlogoCore = Math.max(0, (rows - 1) * rowPitchNow);
+    const halfStroke = linePx * 0.5;
+    const HlogoFull = HlogoCore + linePx; // include half stroke at top/bottom
+
+    if (HlogoFull > 1e-6){
+      const baseTopPx = ty - s * halfStroke;
+      const baseBotPx = ty + s * (HlogoCore + halfStroke);
 
       const availDownPx = Math.max(0, height - baseBotPx);
-      const availUpPx   = Math.max(0, baseTopPx - 0);
+      const availUpPx   = Math.max(0, baseTopPx);
 
-      // Decide how many copies per side and derive per-copy vertical scales with a falloff
-      const unlimited = !(REPEAT_COUNT > 0);
-      const totalLimit = unlimited ? Infinity : Math.max(0, REPEAT_COUNT | 0);
-      const kDownDesired = Math.ceil(availDownPx / Math.max(1e-6, Hpx));
-      const kUpDesired   = Math.ceil(availUpPx   / Math.max(1e-6, Hpx));
+      const downHeights = computeProgressiveBandHeights(availDownPx / s, fillFrac, REPEAT_MAX_BANDS);
+      const upHeights   = computeProgressiveBandHeights(availUpPx   / s, fillFrac, REPEAT_MAX_BANDS);
 
-      let limitDown = unlimited ? Infinity : 0;
-      let limitUp   = unlimited ? Infinity : 0;
-      if (!unlimited){
-        let kDown = kDownDesired;
-        let kUp = kUpDesired;
-        const sumDesired = kDownDesired + kUpDesired;
-        if (sumDesired <= totalLimit){
-          // We can accommodate all requested copies
-          kDown = Math.min(totalLimit, kDownDesired);
-          kUp   = Math.min(totalLimit - kDown, kUpDesired);
-        } else if (totalLimit > 0){
-          const totalAvail = Math.max(1e-6, availDownPx + availUpPx);
-          kDown = Math.max(0, Math.min(totalLimit, Math.round(totalLimit * (availDownPx / totalAvail))));
-          kUp   = Math.max(0, totalLimit - kDown);
-        } else {
-          kDown = 0;
-          kUp = 0;
-        }
-        limitDown = kDown;
-        limitUp = kUp;
-      }
-
-      const downScales = computeVerticalRepeatScales(availDownPx, Hpx, limitDown === Infinity ? Number.POSITIVE_INFINITY : limitDown);
-      const usedDown = downScales.length;
-      let remainingTotal = unlimited ? Infinity : Math.max(0, totalLimit - usedDown);
-      if (!unlimited){
-        remainingTotal = Math.min(remainingTotal, limitUp);
-      }
-      const upScales = computeVerticalRepeatScales(availUpPx, Hpx, remainingTotal === Infinity ? Number.POSITIVE_INFINITY : remainingTotal);
-
-      // Draw DOWNWARD copies using the computed falloff scales
-      let cursorDownPx = baseBotPx;
-      for (let j = 0; j < downScales.length; j++){
-        const scaleY = downScales[j];
-        const blockH = scaleY * Hpx;
-        if (blockH <= 0) continue;
-        if (cursorDownPx >= height) break;
-        const yOffLayout = (cursorDownPx - ty) / s;
-        const mirrored = REPEAT_MIRROR && (((j + 1) % 2) === 1);
+      let cursorDownTopLayout = HlogoCore + halfStroke;
+      for (let i = 0; i < downHeights.length; i++){
+        const h = downHeights[i];
+        if (h <= 0) continue;
+        const scaleY = h / HlogoFull;
+        if (!isFinite(scaleY) || scaleY <= 0) continue;
+        const layoutTranslate = cursorDownTopLayout + scaleY * halfStroke;
+        const mirrored = REPEAT_MIRROR && (((i + 1) % 2) === 1);
         g.push();
-        g.translate(0, yOffLayout);
+        g.translate(0, layoutTranslate);
         g.scale(1, scaleY);
         drawLettersAtOffset(0, mirrored);
         g.pop();
-        cursorDownPx += blockH;
-        if (cursorDownPx - ty > height + Hpx) break; // safety guard
+        cursorDownTopLayout += h;
+        if (ty + s * cursorDownTopLayout >= height + s * linePx) break;
       }
 
-      // Draw UPWARD copies using the computed falloff scales
-      let cursorUpPx = baseTopPx;
-      for (let j = 0; j < upScales.length; j++){
-        const scaleY = upScales[j];
-        const blockH = scaleY * Hpx;
-        if (blockH <= 0) continue;
-        const topPx = cursorUpPx - blockH;
-        if (topPx + blockH <= 0) break;
-        const yOffLayout = (topPx - ty) / s;
-        const mirrored = REPEAT_MIRROR && (((j + 1) % 2) === 1);
+      let cursorUpBottomLayout = -halfStroke;
+      for (let i = 0; i < upHeights.length; i++){
+        const h = upHeights[i];
+        if (h <= 0) continue;
+        const scaleY = h / HlogoFull;
+        if (!isFinite(scaleY) || scaleY <= 0) continue;
+        const topLayout = cursorUpBottomLayout - h;
+        const layoutTranslate = topLayout + scaleY * halfStroke;
+        const mirrored = REPEAT_MIRROR && (((i + 1) % 2) === 1);
         g.push();
-        g.translate(0, yOffLayout);
+        g.translate(0, layoutTranslate);
         g.scale(1, scaleY);
         drawLettersAtOffset(0, mirrored);
         g.pop();
-        cursorUpPx = topPx;
-        if (cursorUpPx - ty < -Hpx) break; // safety guard
+        cursorUpBottomLayout = topLayout;
+        if (ty + s * cursorUpBottomLayout <= -s * linePx) break;
       }
     }
   }

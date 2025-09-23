@@ -198,7 +198,7 @@
 
         <!-- Gewicht -->
         <label>
-          <span>Gewicht</span>
+          <span>Amplitude (!)</span>
           <span id="powerOut" class="sub">1.00×</span>
         </label>
         <input id="powerCtl" type="range" min="0.25" max="3" step="0.05" value="1">
@@ -227,6 +227,7 @@
               <input id="warpOn" type="checkbox"> Warp
             </label>
           </div>
+          <!-- SELECTOR MAKEN EN MEERDERE TOEVOEGEN -->
           <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
             <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
               <input id="bgLines" type="checkbox"> Achtergrondlijnen
@@ -252,11 +253,17 @@
         </label>
         <input id="warpPeriod" type="range" min="0.2" max="12" step="0.1" value="4.0">
 
+        <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
+          <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
+            <input id="repeatV" type="checkbox"> Repeat vert
+          </label>
+        </div>
+
         <div style="display:flex; gap:12px; align-items:center; margin-top:6px;">
           <label style="display:flex; align-items:center; gap:8px; font-size:13px; min-width:160px;">
-            Repeat vert
-            <input id="repeatCount" type="range" min="0" max="10" step="1" value="0" style="width:160px;">
-            <span id="repeatCountOut" style="display:inline-block; width:24px; text-align:right;">0</span>
+            Scherm vulling
+            <input id="repeatFill" type="range" min="0" max="100" step="1" value="0" style="width:160px;">
+            <span id="repeatFillOut" style="display:inline-block; width:48px; text-align:right;">0%</span>
           </label>
         </div>
 
