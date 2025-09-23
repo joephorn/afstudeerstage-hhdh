@@ -15,6 +15,8 @@ const BLOCK_MIN_LEN_FRAC = 0.55; // leftmost block length as fraction of its seg
 const BLOCK_LEAD_FRAC     = 0.65; // how much of the shortened width shifts left (0..1)
 const BLOCK_CAP_FRAC      = 0.12; // extra front cap length as fraction of full len
 
+const TAPER_SPACING = 16; // fixed distance between element centers along the line (layout units)
+
 // Scan behavior
 const BRIDGE_PIXELS     = 0;         // WEGHALEN
 const INK_THRESHOLD     = 140; // KAN WEG // GWN IN CODE ZETTEN?
@@ -67,9 +69,13 @@ let KEEP_TOTAL_WIDTH = true;
 let BG_LINES = false;        // toggle via HTML checkbox
 let BG_LINES_ALPHA = 255;
 
-let REPEAT_V = false;          // vertically tile the logo to fill the canvas
+let REPEAT_V = false;
 let REPEAT_MIRROR = false;     // if true, every 2nd vertical repeat is mirrored
 let REPEAT_COUNT = 0;          // 0 = off; N = max tiles up/down (clamped to viewport)
+let REPEAT_HALVE = false;      // if true, each subsequent repeat scales by 0.5
+const REPEAT_FIRST_SCALE_MAX = 0.92; // keep first repeat slightly below base size
+const REPEAT_MIN_SCALE       = 0.05; // stop when copies become too small to notice
+const REPEAT_AUTO_MAX_COPIES = 64;   // upper bound when auto-filling without count limit
 let COLOR_COMBOS = [];
 let activeColorComboIdx = 0;
 
@@ -155,6 +161,98 @@ function startAnimLoop(){
 }
 function stopAnimLoop(){
   if (_animRAF){ cancelAnimationFrame(_animRAF); _animRAF = null; }
+}
+
+function computeVerticalRepeatScales(availPx, baseHeightPx, limitCount){
+  const EPS = 1e-6;
+  if (!Number.isFinite(availPx) || !Number.isFinite(baseHeightPx)) return [];
+  if (availPx <= EPS || baseHeightPx <= EPS) return [];
+
+  const target = availPx / baseHeightPx;
+  if (target <= REPEAT_MIN_SCALE) return [];
+
+  const firstCap = REPEAT_HALVE ? Math.min(0.5, REPEAT_FIRST_SCALE_MAX) : REPEAT_FIRST_SCALE_MAX;
+  let firstScale = Math.min(firstCap, target);
+  if (firstScale < REPEAT_MIN_SCALE){
+    firstScale = Math.min(target, REPEAT_MIN_SCALE);
+    if (firstScale < REPEAT_MIN_SCALE) return [];
+  }
+
+  if (target <= firstScale + 1e-4){
+    return [firstScale];
+  }
+
+  const maxCopiesBound = Math.max(1, REPEAT_AUTO_MAX_COPIES | 0);
+  let maxCopies;
+  if (!Number.isFinite(limitCount)){
+    const natural = Math.ceil(target / Math.max(firstScale, REPEAT_MIN_SCALE));
+    maxCopies = Math.max(1, Math.min(maxCopiesBound, natural));
+  } else {
+    const safeLimit = Math.max(0, Math.floor(limitCount));
+    if (safeLimit === 0) return [];
+    maxCopies = Math.min(maxCopiesBound, safeLimit);
+  }
+
+  if (maxCopies <= 1){
+    return [Math.min(firstScale, target)];
+  }
+
+  const desiredSum = Math.min(target, firstScale * maxCopies);
+  const sumFor = (r)=>{
+    if (r <= 0) return firstScale;
+    if (Math.abs(1 - r) < 1e-6) return firstScale * maxCopies;
+    return firstScale * (1 - Math.pow(r, maxCopies)) / (1 - r);
+  };
+
+  const maxRatio = REPEAT_HALVE ? 0.5 : 0.98;
+  const minRatioPreferred = REPEAT_HALVE ? 0.45 : 0.45;
+
+  let hi = Math.min(maxRatio, 0.9995);
+  let ratio;
+  if (sumFor(hi) < desiredSum - 1e-5){
+    ratio = hi;
+  } else {
+    let lo = 0;
+    for (let iter = 0; iter < 40; iter++){
+      const mid = (lo + hi) * 0.5;
+      const sumMid = sumFor(mid);
+      if (sumMid < desiredSum){
+        lo = mid;
+      } else {
+        hi = mid;
+      }
+    }
+    ratio = hi;
+  }
+
+  if (ratio < 0) ratio = 0;
+  if (ratio < minRatioPreferred){
+    if (sumFor(minRatioPreferred) >= desiredSum - 1e-5){
+      ratio = minRatioPreferred;
+    }
+  }
+
+  const sumCap = desiredSum;
+  const scales = [];
+  let accumulated = 0;
+  let prevScale = firstScale;
+  for (let i = 0; i < maxCopies; i++){
+    let scale = (i === 0) ? firstScale : prevScale * ratio;
+    const remaining = sumCap - accumulated;
+    if (remaining <= REPEAT_MIN_SCALE * 0.5) break;
+    if (scale > remaining) scale = remaining;
+    if (scale < REPEAT_MIN_SCALE) break;
+    if (scales.length > 0 && scale > scales[scales.length - 1]){
+      scale = Math.min(scales[scales.length - 1], scale);
+    }
+    if (scale < REPEAT_MIN_SCALE) break;
+    scales.push(scale);
+    accumulated += scale;
+    prevScale = scale;
+    if (sumCap - accumulated <= REPEAT_MIN_SCALE * 0.5) break;
+  }
+
+  return scales;
 }
 
 // === Preview vs Export ===
@@ -501,23 +599,23 @@ if (elBgLines){
     requestRedraw(); 
   });
 }
-// Vertical repeat toggle
 const elRepeatV = document.getElementById('repeatV');
 if (elRepeatV){
   elRepeatV.checked = REPEAT_V;
   elRepeatV.addEventListener('change', ()=>{ REPEAT_V = !!elRepeatV.checked; requestRedraw(); });
 }
+
 // Vertical repeat: mirror every 2nd tile
 const elRepeatMirror = document.getElementById('repeatMirror');
 if (elRepeatMirror){
   elRepeatMirror.checked = REPEAT_MIRROR;
   elRepeatMirror.addEventListener('change', ()=>{ REPEAT_MIRROR = !!elRepeatMirror.checked; requestRedraw(); });
 }
+
 // Vertical repeat: count slider (0 = off)
 const elRepeatCount = document.getElementById('repeatCount');
 const elRepeatCountOut = document.getElementById('repeatCountOut');
 if (elRepeatCount){
-  // Provide sensible defaults if not set in HTML
   if (!elRepeatCount.min)  elRepeatCount.min = '0';
   if (!elRepeatCount.max)  elRepeatCount.max = '10';
   if (!elRepeatCount.step) elRepeatCount.step = '1';
@@ -970,30 +1068,87 @@ function renderLogo(g){
   // Draw base instance (not mirrored)
   drawLettersAtOffset(0, false);
 
-  // Vertically repeat to fill canvas (whole-logo step = rows * rowPitchNow)
   if ((REPEAT_V || REPEAT_COUNT > 0) && rows > 0){
-    const tileH = rows * rowPitchNow; // next logo starts one line below the last of previous
-    if (tileH > 0){
-      const viewTopL  = -ty / s;           // canvas top in layout units
-      const viewBotL  = (height - ty) / s; // canvas bottom in layout units
+    const Hlogo = (rows <= 1) ? 0 : (rows - 1) * rowPitchNow; // true logo height (layout units)
+    if (Hlogo > 0){
+      const Hpx = s * Hlogo;
+      const baseTopPx = ty;
+      const baseBotPx = ty + Hpx;
 
-      // Base logo spans [0 .. (rows-1)*rowPitchNow]
-      const baseTopL = 0;
-      const baseBotL = (rows - 1) * rowPitchNow;
+      const availDownPx = Math.max(0, height - baseBotPx);
+      const availUpPx   = Math.max(0, baseTopPx - 0);
 
-      // Choose k so copies cover viewport above and below
-      const kStartViewport = Math.floor((viewTopL - baseBotL) / tileH) - 1;
-      const kEndViewport   = Math.ceil((viewBotL - baseTopL) / tileH) + 1;
+      // Decide how many copies per side and derive per-copy vertical scales with a falloff
+      const unlimited = !(REPEAT_COUNT > 0);
+      const totalLimit = unlimited ? Infinity : Math.max(0, REPEAT_COUNT | 0);
+      const kDownDesired = Math.ceil(availDownPx / Math.max(1e-6, Hpx));
+      const kUpDesired   = Math.ceil(availUpPx   / Math.max(1e-6, Hpx));
 
-      // When REPEAT_COUNT == 0 but REPEAT_V is true, allow unlimited (viewport-limited) repeats
-      const N = (REPEAT_COUNT > 0) ? REPEAT_COUNT : Number.POSITIVE_INFINITY;
-      const kStart = Math.max(kStartViewport, -N);
-      const kEnd   = Math.min(kEndViewport, N);
+      let limitDown = unlimited ? Infinity : 0;
+      let limitUp   = unlimited ? Infinity : 0;
+      if (!unlimited){
+        let kDown = kDownDesired;
+        let kUp = kUpDesired;
+        const sumDesired = kDownDesired + kUpDesired;
+        if (sumDesired <= totalLimit){
+          // We can accommodate all requested copies
+          kDown = Math.min(totalLimit, kDownDesired);
+          kUp   = Math.min(totalLimit - kDown, kUpDesired);
+        } else if (totalLimit > 0){
+          const totalAvail = Math.max(1e-6, availDownPx + availUpPx);
+          kDown = Math.max(0, Math.min(totalLimit, Math.round(totalLimit * (availDownPx / totalAvail))));
+          kUp   = Math.max(0, totalLimit - kDown);
+        } else {
+          kDown = 0;
+          kUp = 0;
+        }
+        limitDown = kDown;
+        limitUp = kUp;
+      }
 
-      for (let k = kStart; k <= kEnd; k++){
-        if (k === 0) continue; // base already drawn at yOff=0
-        const mirrored = REPEAT_MIRROR && ((Math.abs(k) % 2) === 1);
-        drawLettersAtOffset(k * tileH, mirrored);
+      const downScales = computeVerticalRepeatScales(availDownPx, Hpx, limitDown === Infinity ? Number.POSITIVE_INFINITY : limitDown);
+      const usedDown = downScales.length;
+      let remainingTotal = unlimited ? Infinity : Math.max(0, totalLimit - usedDown);
+      if (!unlimited){
+        remainingTotal = Math.min(remainingTotal, limitUp);
+      }
+      const upScales = computeVerticalRepeatScales(availUpPx, Hpx, remainingTotal === Infinity ? Number.POSITIVE_INFINITY : remainingTotal);
+
+      // Draw DOWNWARD copies using the computed falloff scales
+      let cursorDownPx = baseBotPx;
+      for (let j = 0; j < downScales.length; j++){
+        const scaleY = downScales[j];
+        const blockH = scaleY * Hpx;
+        if (blockH <= 0) continue;
+        if (cursorDownPx >= height) break;
+        const yOffLayout = (cursorDownPx - ty) / s;
+        const mirrored = REPEAT_MIRROR && (((j + 1) % 2) === 1);
+        g.push();
+        g.translate(0, yOffLayout);
+        g.scale(1, scaleY);
+        drawLettersAtOffset(0, mirrored);
+        g.pop();
+        cursorDownPx += blockH;
+        if (cursorDownPx - ty > height + Hpx) break; // safety guard
+      }
+
+      // Draw UPWARD copies using the computed falloff scales
+      let cursorUpPx = baseTopPx;
+      for (let j = 0; j < upScales.length; j++){
+        const scaleY = upScales[j];
+        const blockH = scaleY * Hpx;
+        if (blockH <= 0) continue;
+        const topPx = cursorUpPx - blockH;
+        if (topPx + blockH <= 0) break;
+        const yOffLayout = (topPx - ty) / s;
+        const mirrored = REPEAT_MIRROR && (((j + 1) % 2) === 1);
+        g.push();
+        g.translate(0, yOffLayout);
+        g.scale(1, scaleY);
+        drawLettersAtOffset(0, mirrored);
+        g.pop();
+        cursorUpPx = topPx;
+        if (cursorUpPx - ty < -Hpx) break; // safety guard
       }
     }
   }
@@ -1061,99 +1216,109 @@ function drawCircleTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio =
   const R = Math.min(Rfull, maxRByLen);
   const r = Math.min(rfull, R);
 
-  // Number of beads: scale with length/height, clamp to [3..12]
-  const ideal = Math.floor(len / Math.max(1, h * 0.9));
-  const n = Math.max(3, Math.min(12, ideal));
+  // We place circle centers from big cap center (right) towards tip (left)
+  const xRight = rightX - R;            // center of big cap on the right
+  const xLeftLimit = rightX - Math.max(0, len - r); // do not place centers past leftmost small radius tip
 
-  // Centers from big cap center to small tip center
-  const bigX = rightX - R;
-  const tipX = rightX - Math.max(0, len - r); // keep right edge aligned
+  const pathLen = Math.max(0, xRight - xLeftLimit);
+  const step = Math.max(1, TAPER_SPACING);
+  const n = Math.max(1, Math.floor(pathLen / step) + 1);
+
+  g.fill(color2);
   for (let i = 0; i < n; i++){
-    const t = (n === 1) ? 0 : (i / (n - 1));
-    const cx = lerp(bigX, tipX, t);
+    const cx = xRight - i * step;
+    if (cx < xLeftLimit - 1e-3) break; // guard
+    const t = (pathLen > 0) ? ((xRight - cx) / pathLen) : 1; // 0 at right (R), 1 at left (r)
     const rad = lerp(R, r, t);
     g.circle(cx, cy, Math.max(0.0001, rad * 2));
   }
 }
 
 function drawBlockTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_RATIO){
-  // const steps = Math.max(2, BLOCK_STEPS | 0);
-  const steps = 4;
+  const steps = Math.max(2, BLOCK_STEPS | 0);
 
-  // Height is driven by ratios: diameter = h * ratio
+  // Height envelope from ratios: diameter = h * ratio
   function heightAt(frac){ // frac: 0 (right) → 1 (left)
     const ratio = lerp(endRatio, tipRatio, frac); // end → tip
     return Math.max(0.5, h * Math.max(0, Math.min(1, ratio)));
   }
 
-  // Compute cap first (on the RIGHT), then blocks in the remaining width
-  const capLen = Math.max(0, len/2 * BLOCK_CAP_FRAC);
-  const fracSecond = (steps > 1) ? (1 / (steps - 1)) : 0;
-  const capH = heightAt(fracSecond);             // thickness equals second block
-  const yCap = cy - capH * 0.5;
+  // Cap length is a fraction of the FULL taper length
+  const capLen = Math.max(0, len * BLOCK_CAP_FRAC);
   const xCapL = rightX - capLen;                 // cap sits at the far right
-  const remainingLen = Math.max(0, len - capLen);
-  const segLen = (steps > 0) ? (remainingLen / steps) : 0;
+  const fracSecond = (steps > 1) ? (1 / (steps - 1)) : 0; // height similar to 2nd block
+  const capH = heightAt(fracSecond);
+  const yCap = cy - capH * 0.5;
 
-  // Width per block: decrease toward the left, but keep blocks touching
-  function widthAt(frac){
+  // Remaining length gets partitioned over `steps` blocks.
+  const remainingLen = Math.max(0, len - capLen);
+
+  // Raw width profile per block (decreasing towards the left)
+  const rawWeights = [];
+  for (let i = 0; i < steps; i++){
+    const frac = (steps === 1) ? 0 : (i / (steps - 1)); // 0 rightmost → 1 leftmost
     const lenFrac = 1.0 - (1.0 - BLOCK_MIN_LEN_FRAC) * frac; // 1 → min
-    return Math.max(0, segLen * lenFrac);
+    rawWeights.push(Math.max(0.0001, lenFrac));
   }
+  const sumRaw = rawWeights.reduce((a,b)=>a+b,0);
+  const widths = rawWeights.map(w => (remainingLen * w / sumRaw)); // normalized so sum = remainingLen
 
   g.push();
+  g.noStroke();
 
-  // Draw the cap on the right first using selected color2
+  // Draw cap on the right
   g.fill(color2);
   g.rect(xCapL, yCap, capLen, capH);
 
-  // Now march leftwards from the left edge of the cap
+  // March leftwards with normalized block widths so total exactly fills `len`
   let rightEdge = xCapL;
   for (let i = 0; i < steps; i++){
-    const frac = (steps === 1) ? 0 : (i / (steps - 1)); // 0 at rightmost block, 1 at leftmost
-    const w = widthAt(frac);
+    const frac = (steps === 1) ? 0 : (i / (steps - 1));
+    const w = widths[i];
     const hi = heightAt(frac);
     const yTop = cy - hi * 0.5;
-    const xL = rightEdge - w;   // touch the previous element
-    const alpha = Math.floor(255 - (255 - 80) * frac); // darker → lighter
+    const xL = rightEdge - w; // touch previous element
+
+    // Optional subtle fade towards the tip
+    const alpha = Math.floor(255 - (255 - 80) * frac);
     const cc = color(color2);
     cc.setAlpha(alpha);
     g.fill(cc);
     g.rect(xL, yTop, w, hi);
-    rightEdge = xL; // continue left
+
+    rightEdge = xL;
   }
 
   g.pop();
 }
 
 function drawPlusTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_RATIO){
-  // Grootte-envelope vanuit ratios, begrensd door lengte
-  const Hfull = Math.max(0.0001, h * Math.max(0, Math.min(1, endRatio)));
-  const hTip  = Math.max(0.0001, h * Math.max(0, Math.min(1, tipRatio)));
+  // Size envelope from ratios, clamped by available length
+  const Hfull  = Math.max(0.0001, h * Math.max(0, Math.min(1, endRatio)));
+  const hTip   = Math.max(0.0001, h * Math.max(0, Math.min(1, tipRatio)));
   const maxHByLen = Math.max(0.0001, len * 0.5);
-  const Hbig = Math.min(Hfull, maxHByLen);
+  const Hbig   = Math.min(Hfull, maxHByLen);
   const Hsmall = Math.min(hTip, Hbig);
 
-  // Aantal samples uit lengte; klemmen voor performance
-  const baseStep = Math.max(4, Math.floor(Hbig * 0.9));
-  const n = Math.max(3, Math.min(24, Math.floor(len / baseStep)));
+  const xRight = rightX;            // right edge of the taper
+  const xLeft  = rightX - len;      // left edge of the taper
 
-  const xRight = rightX;
-  const xLeft  = rightX - len;
+  const step = Math.max(1, TAPER_SPACING);
+  const usableLen = Math.max(0, (xRight - Hbig * 0.5) - (xLeft + Hsmall * 0.5));
+  const n = Math.max(1, Math.floor(usableLen / step) + 1);
 
-  const BAR_FRAC = 0.28; // dikte van de armen
-
-  g.fill(color2); // use selected color2
+  g.fill(color2);
   for (let i = 0; i < n; i++){
-    const t = (n === 1) ? 0 : i / (n - 1); // 0 = rechts, 1 = links
-    const cx = lerp(xRight, xLeft, t);
+    // Center progresses from near the big end to near the tip at fixed spacing
+    const cx = (xRight - Hbig * 0.5) - i * step;
+    if (cx < (xLeft + Hsmall * 0.5) - 1e-3) break;
+    const t = (usableLen > 0) ? ((xRight - Hbig * 0.5 - cx) / usableLen) : 1; // 0 at big, 1 at tip
     const size = lerp(Hbig, Hsmall, t);
     const half = size * 0.5;
-    const bar = Math.max(0.5, size * BAR_FRAC);
-
-    // horizontaal + verticaal gecentreerd rond (cx, cy)
-    g.rect(cx - half, cy - bar * 0.5, size, bar);   // horizontale arm
-    g.rect(cx - bar * 0.5, cy - half, bar, size);   // verticale arm
+    const bar  = Math.max(0.5, size * 0.28);
+    // horizontal + vertical bars centered at (cx, cy)
+    g.rect(cx - half, cy - bar * 0.5, size, bar);
+    g.rect(cx - bar * 0.5, cy - half, bar, size);
   }
 }
 
