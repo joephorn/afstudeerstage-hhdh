@@ -198,30 +198,14 @@
 
         <!-- Gewicht -->
         <label>
-          <span>Amplitude (!)</span>
+          <span>Amplitude</span>
           <span id="powerOut" class="sub">1.00×</span>
         </label>
         <input id="powerCtl" type="range" min="0.25" max="3" step="0.05" value="1">
 
-      <label for="powerCtl"><strong>Golf</strong></label>
+        <label for="powerCtl"><strong>Golf</strong></label>
 
-      <script>
-        // Koppel power slider (optioneel)
-        (function(){
-          const powerCtl = document.getElementById('powerCtl');
-          const powerOut = document.getElementById('powerOut');
-          if (!powerCtl) return;
-          powerCtl.addEventListener('input', ()=>{
-            // verwacht globale var MOUSE_POWER
-            window.MOUSE_POWER = parseFloat(powerCtl.value) || 1.0;
-            if (powerOut) powerOut.textContent = (Math.round(window.MOUSE_POWER*100)/100).toFixed(2)+'×';
-            // verwacht globale requestRedraw()
-            if (window.requestRedraw) window.requestRedraw();
-          });
-        })();
-      </script>
-
-        <div style="display:flex; gap:.5rem; align-items:center;">
+        <div style="display:flex; gap:.5rem; align-items:center; opacity: 50%;">
           <div style>
             <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
               <input id="warpOn" type="checkbox"> Warp
@@ -235,23 +219,23 @@
           </div>
         </div>
 
-        <label>
+        <label style="opacity: 50%;">
           <span>Amplitude</span>
           <span id="warpAmpOut" class="sub">12 px</span>
         </label>
-        <input id="warpAmp" type="range" min="0" max="80" step="1" value="12">
+        <input id="warpAmp" type="range" min="0" max="80" step="1" value="12" style="opacity: 50%;">
 
-        <label>
+        <label style="opacity: 50%;">
           <span>Golflengte</span>
           <span id="warpLenOut" class="sub">240 px</span>
         </label>
-        <input id="warpLen" type="range" min="40" max="800" step="4" value="240">
+        <input id="warpLen" type="range" min="40" max="800" step="4" value="240" style="opacity: 50%;">
 
-        <label>
+        <label style="opacity: 50%;">
           <span>Cyclus duur</span>
           <span id="warpPeriodOut" class="sub">4.00 s</span>
         </label>
-        <input id="warpPeriod" type="range" min="0.2" max="12" step="0.1" value="4.0">
+        <input id="warpPeriod" type="range" min="0.2" max="12" step="0.1" value="4.0" style="opacity: 50%;">
 
         <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
           <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
@@ -274,12 +258,12 @@
         </div>
         <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
           <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
-            <input id="debug" type="checkbox"> Debug mode
+            <input id="autorand" type="checkbox"> Auto randomize
           </label>
         </div>
-        <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
+        <div style="display:flex; gap:8px; align-items:center; margin-top:6px; opacity: 50%;">
           <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
-            <input id="autorand" type="checkbox"> Auto randomize
+            <input id="debug" type="checkbox"> Debug mode
           </label>
         </div>
       </div>

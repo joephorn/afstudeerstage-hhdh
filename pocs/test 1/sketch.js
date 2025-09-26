@@ -54,9 +54,12 @@ let logoScaleMul = 1.0;
 
 // --- Per-letter stretch (mouseX-weighted) ---
 let PER_LETTER_STRETCH = true;   // toggle on/off
-let MOUSE_STRETCH_MIN  = 0.5;   // min per-letter factor
-let MOUSE_STRETCH_MAX  = 1.5;   // max per-letter factor
+const BASE_STRETCH_MIN = 0.5;    // baseline min per-letter factor when amplitude = 1
+const BASE_STRETCH_MAX = 1.5;    // baseline max per-letter factor when amplitude = 1
+let MOUSE_STRETCH_MIN  = BASE_STRETCH_MIN;
+let MOUSE_STRETCH_MAX  = BASE_STRETCH_MAX;
 let MOUSE_STRETCH_SIGMA_FRAC = 0.15; // Gaussian sigma as fraction of content width
+let MOUSE_AMPLITUDE = 1.0;       // multiplies stretch delta relative to baseline
 
 let baseRowPitch;
 let targetContentH = null; // stays constant; rows change will shrink/grow pitch to keep this height
@@ -626,6 +629,28 @@ if (btnAnimMouse) btnAnimMouse.addEventListener('click', ()=> setAnim('mouse'));
 if (btnAnimOff)   btnAnimOff.addEventListener('click',   ()=> setAnim('off'));
 if (btnAnimPulse) btnAnimPulse.addEventListener('click', ()=> setAnim('pulse'));
 if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
+
+  // Amplitude slider (controls stretch intensity around the mouse)
+  const powerCtl = document.getElementById('powerCtl');
+  const powerOut = document.getElementById('powerOut');
+  if (powerCtl){
+    const updateAmplitude = ()=>{
+      const raw = parseFloat(powerCtl.value);
+      const amp = Number.isFinite(raw) ? Math.max(0.1, raw) : 1.0;
+      MOUSE_AMPLITUDE = amp;
+      const stretchAbove = (BASE_STRETCH_MAX - 1) * amp;
+      const stretchBelow = (1 - BASE_STRETCH_MIN) * amp;
+      MOUSE_STRETCH_MAX = 1 + stretchAbove;
+      MOUSE_STRETCH_MIN = Math.max(0.05, 1 - stretchBelow);
+      window.MOUSE_AMPLITUDE = MOUSE_AMPLITUDE;
+      window.MOUSE_POWER = MOUSE_POWER;
+      if (powerOut) powerOut.textContent = `${amp.toFixed(2)}×`;
+      requestRedraw();
+    };
+    if (!powerCtl.value) powerCtl.value = String(MOUSE_AMPLITUDE);
+    updateAmplitude();
+    powerCtl.addEventListener('input', updateAmplitude);
+  }
 
   // Animation duration (seconds per cycle)
   const animPeriodCtl = document.getElementById('animPeriod');
