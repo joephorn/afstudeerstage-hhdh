@@ -12,7 +12,7 @@
   --radius-panel: 12px;
   --space-page: 16px;
   --space-panel: 12px;
-  --space-field: 12px;
+  --space-field: 2px;
   --gap-control: 8px;
   --gap-control-wide: 12px;
 }
@@ -122,7 +122,7 @@ main {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin: 8px 0 4px;
+  margin: 4px 0 4px;
   font-size: 13px;
 }
 

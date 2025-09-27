@@ -5,269 +5,209 @@
     <title>p5 demo</title>
     <script src="https://cdn.jsdelivr.net/npm/p5@1.11.10/lib/p5.js"></script>
     <script src="https://unpkg.com/p5.js-svg@1.6.0"></script>
-    <link rel="stylesheet" type="text/css" href="style.css">
-
-    <style>
-      html, body { height: 100%; margin: 0; }
-      main {
-        height: 100%;
-        display: flex;
-        gap: 16px;
-        padding: 16px;
-        box-sizing: border-box;
-      }
-
-      #stage {
-        flex: 1 1 auto;
-        min-width: 10px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 8px;
-      }
-
-      #canvasWrap{
-        border:1px solid #e5e5e5;
-        border-radius:12px;
-        box-shadow:0 4px 18px rgba(0,0,0,.06);
-        box-sizing: content-box;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        overflow: hidden; /* clip groter logo */
-      }
-      /* Canvas niet forceren met CSS; intrinsic SVG size is leidend */
-      #canvasWrap canvas { display: block; }
-
-      /* Controls (rechts) — vast maar responsief en scrollbaar */
-      #controls{
-        width: 320px;
-        max-width: 34vw;
-        overflow: auto;
-        background:#fff;
-        border:1px solid #e5e5e5;
-        border-radius:12px;
-        padding:12px;
-        box-shadow:0 4px 18px rgba(0,0,0,.06);
-        font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
-      }
-
-      /* Kleine UI details */
-      #controls label { display:flex; justify-content:space-between; margin:8px 0 2px; }
-      #controls input[type="range"] { width:100%; }
-      #controls .sub { font-variant-numeric:tabular-nums; opacity:.7 }
-    </style>
+    <link rel="stylesheet" href="style.css" />
   </head>
   <body>
     <main>
-      <!-- Linkerkolom: stage met border-viewport -->
       <div id="stage">
         <div id="canvasWrap"></div>
       </div>
 
-      <!-- Rechterkolom: controls -->
       <div id="controls">
-        <!-- Aspect + resolutie preset -->
-        <label style="margin-top:0; margin-bottom:4px;">
-          <span>Aspect &amp; Resolution</span>
-        </label>
-        <select id="preset" style="width:100%; margin-bottom:10px;">
-          <option value="fit" selected>Fit — fill screen</option>
-          <option value="ar1" data-aw="16" data-ah="9" data-w="1920" data-h="1080">16:9 — 1920 × 1080 (Full HD)</option>
-          <option value="ar2" data-aw="16" data-ah="9" data-w="1280" data-h="720">16:9 — 1280 × 720 (HD)</option>
-          <option value="ar3" data-aw="16" data-ah="9" data-w="3840" data-h="2160">16:9 — 3840 × 2160 (4K)</option>
-          <option value="ar4" data-aw="9" data-ah="16" data-w="1080" data-h="1920">9:16 — 1080 × 1920 (Vertical Full HD)</option>
-          <option value="ar5" data-aw="9" data-ah="16" data-w="720"  data-h="1280">9:16 — 720 × 1280</option>
-          <option value="ar6" data-aw="1" data-ah="1" data-w="1080" data-h="1080">1:1 — 1080 × 1080</option>
-          <option value="ar7" data-aw="4" data-ah="5" data-w="1080" data-h="1350">4:5 — 1080 × 1350</option>
-          <option value="ar8" data-aw="3" data-ah="2" data-w="1620" data-h="1080">3:2 — 1620 × 1080</option>
-          <option value="ar9" data-aw="4" data-ah="3" data-w="1024" data-h="768">4:3 — 1024 × 768</option>
-          <option value="ar10" data-aw="4" data-ah="3" data-w="2048" data-h="1536">4:3 — 2048 × 1536</option>
-          <option value="ar11" data-aw="21" data-ah="9" data-w="2560" data-h="1080">21:9 — 2560 × 1080 (Ultrawide)</option>
-          <option value="ar12" data-aw="21" data-ah="9" data-w="3440" data-h="1440">21:9 — 3440 × 1440 (Ultrawide)</option>
-          <option value="custom" data-aw="" data-ah="" data-w="" data-h="">Custom…</option>
-        </select>
-
-        <!-- Custom aspect + resolutie -->
-        <div id="customAR" style="display:none; margin:6px 0 10px;">
-          <label style="display:flex; align-items:center; gap:8px; margin:0 0 6px;">
-            <span>Custom resolution</span>
-            <span class="sub">pixels</span>
-          </label>
-          <div style="display:flex; gap:8px;">
-            <input id="aspectW" type="number" min="1" step="1" value="1920" style="width:100%" placeholder="Width (px)">
-            <input id="aspectH" type="number" min="1" step="1" value="1080" style="width:100%" placeholder="Height (px)">
+        <section class="control-section">
+          <h2 class="control-section-title">Canvas</h2>
+          <div class="control-field">
+            <label class="control-label control-label--compact" for="preset">
+              <span>Aspect &amp; Resolution</span>
+            </label>
+            <select id="preset" class="control-select control-select--loose">
+              <option value="fit" selected>Fit — fill screen</option>
+              <option value="ar1" data-aw="16" data-ah="9" data-w="1920" data-h="1080">16:9 — 1920 × 1080 (Full HD)</option>
+              <option value="ar2" data-aw="16" data-ah="9" data-w="1280" data-h="720">16:9 — 1280 × 720 (HD)</option>
+              <option value="ar3" data-aw="16" data-ah="9" data-w="3840" data-h="2160">16:9 — 3840 × 2160 (4K)</option>
+              <option value="ar4" data-aw="9" data-ah="16" data-w="1080" data-h="1920">9:16 — 1080 × 1920 (Vertical Full HD)</option>
+              <option value="ar5" data-aw="9" data-ah="16" data-w="720" data-h="1280">9:16 — 720 × 1280</option>
+              <option value="ar6" data-aw="1" data-ah="1" data-w="1080" data-h="1080">1:1 — 1080 × 1080</option>
+              <option value="ar7" data-aw="4" data-ah="5" data-w="1080" data-h="1350">4:5 — 1080 × 1350</option>
+              <option value="ar8" data-aw="3" data-ah="2" data-w="1620" data-h="1080">3:2 — 1620 × 1080</option>
+              <option value="ar9" data-aw="4" data-ah="3" data-w="1024" data-h="768">4:3 — 1024 × 768</option>
+              <option value="ar10" data-aw="4" data-ah="3" data-w="2048" data-h="1536">4:3 — 2048 × 1536</option>
+              <option value="ar11" data-aw="21" data-ah="9" data-w="2560" data-h="1080">21:9 — 2560 × 1080 (Ultrawide)</option>
+              <option value="ar12" data-aw="21" data-ah="9" data-w="3440" data-h="1440">21:9 — 3440 × 1440 (Ultrawide)</option>
+              <option value="custom" data-aw="" data-ah="" data-w="" data-h="">Custom…</option>
+            </select>
           </div>
-        </div>
+          <div id="customAR" class="custom-resolution">
+            <label class="control-label inline-label">
+              <span>Custom resolution</span>
+              <span class="sub">pixels</span>
+            </label>
+            <div class="field-row">
+              <input id="aspectW" class="input-fluid" type="number" min="1" step="1" value="1920" placeholder="Width (px)" />
+              <input id="aspectH" class="input-fluid" type="number" min="1" step="1" value="1080" placeholder="Height (px)" />
+            </div>
+          </div>
+          <div class="button-group">
+            <button id="resetDefaults" type="button">Reset naar default</button>
+          </div>
+        </section>
 
-        <!-- Logo scale -->
-        <label>
-          <span>Scale</span>
-          <span id="logoScaleOut" class="sub">100 %</span>
-        </label>
-        <input id="logoScale" type="range" min="10" max="200" step="1" value="100">
+        <section class="control-section">
+          <h2 class="control-section-title">General</h2>
+          <div class="control-field">
+            <label class="control-label" for="logoScale">
+              <span>Scale</span>
+              <span id="logoScaleOut" class="sub">100 %</span>
+            </label>
+            <input id="logoScale" type="range" min="10" max="200" step="1" value="100" />
+          </div>
+          <div class="control-field">
+            <label class="control-label" for="rows">
+              <span>Rows</span>
+              <span id="rowsOut" class="sub">—</span>
+            </label>
+            <input id="rows" type="range" min="4" max="32" step="4" value="12" />
+          </div>
+          <div class="control-field">
+            <label class="control-label" for="thickness">
+              <span>Line height</span>
+              <span id="thicknessOut" class="sub">— px</span>
+            </label>
+            <input id="thickness" type="range" min="1" max="50" step="1" value="10" />
+          </div>
+          <div class="control-field">
+            <label class="control-label" for="tipRatio">
+              <span>Tip ratio</span>
+              <span id="tipOut" class="sub">0.30</span>
+            </label>
+            <input id="tipRatio" type="range" min="0" max="1" step="0.01" value="0.30" />
+          </div>
+          <div class="control-field">
+            <label class="control-label" for="widthScale">
+              <span>Width</span>
+              <span id="widthOut" class="sub">— %</span>
+            </label>
+            <input id="widthScale" type="range" min="10" max="500" step="1" value="110" />
+          </div>
+          <div class="control-field">
+            <label class="control-label" for="gap">
+              <span>Gap</span>
+              <span id="gapOut" class="sub">— px</span>
+            </label>
+            <input id="gap" type="range" min="-20" max="150" step="1" value="9" />
+          </div>
+        </section>
 
+        <section class="control-section">
+          <h2 class="control-section-title">Displacement</h2>
+          <div class="control-field">
+            <label class="control-label" for="groups">
+              <span>Displacement groups</span>
+              <span id="groupsOut" class="sub">—</span>
+            </label>
+            <input id="groups" type="range" min="0" max="5" step="1" value="0" />
+          </div>
+          <div class="control-field">
+            <label class="control-label" for="dispUnit">
+              <span>Displacement unit</span>
+              <span id="dispUnitOut" class="sub">28 px</span>
+            </label>
+            <input id="dispUnit" type="range" min="0" max="80" step="1" value="28" />
+          </div>
+          <div class="control-field">
+            <label class="control-label control-label--spaced" for="taper">
+              <span>Lijn</span>
+            </label>
+            <select id="taper" class="control-select control-select--tight">
+              <option value="rounded" selected>Taper</option>
+              <option value="straight">Recht</option>
+              <option value="circles">Cirkel</option>
+              <option value="blocks">Blok</option>
+              <option value="pluses">Plus</option>
+            </select>
+          </div>
+        </section>
 
-        <!-- Rows -->
-        <label>
-          <span>Rows</span>
-          <span id="rowsOut" class="sub">—</span>
-        </label>
-        <input id="rows" type="range" min="4" max="32" step="4" value="12">
-
-        <!-- Line height -->
-        <label>
-          <span>Line height</span>
-          <span id="thicknessOut" class="sub">— px</span>
-        </label>
-        <input id="thickness" type="range" min="1" max="50" step="1" value="8">
-
-        <!-- Tip/End ratio -->
-        <label>
-          <span>Tip ratio</span>
-          <span id="tipOut" class="sub">0.30</span>
-        </label>
-        <input id="tipRatio" type="range" min="0" max="1" step="0.01" value="0.30">
-
-        <!-- Width -->
-        <label>
-          <span>Width</span>
-          <span id="widthOut" class="sub">— %</span>
-        </label>
-        <input id="widthScale" type="range" min="10" max="500" step="1" value="96">
-
-        <!-- Gap -->
-        <label>
-          <span>Gap</span>
-          <span id="gapOut" class="sub">— px</span>
-        </label>
-        <input id="gap" type="range" min="-20" max="150" step="1" value="5">
-
-        <!-- Displacement groups -->
-        <label>
-          <span>Displacement groups</span>
-          <span id="groupsOut" class="sub">—</span>
-        </label>
-        <input id="groups" type="range" min="0" max="5" step="1" value="5">
-
-        <!-- Displacement unit -->
-        <label>
-          <span>Displacement unit</span>
-          <span id="dispUnitOut" class="sub">20 px</span>
-        </label>
-        <input id="dispUnit" type="range" min="0" max="80" step="1" value="20">
-
-        <label style="margin-top:10px;">
-          <span>Lijn</span>
-        </label>
-        <select id="taper" style="width:100%; margin-bottom:6px;">
-          <option value="rounded" selected>Taper</option>
-          <option value="straight">Recht</option>
-          <option value="circles">Cirkel</option>
-          <option value="blocks">Blok</option>
-          <option value="pluses">Plus</option>
-        </select>
-
-        <label>
-          <span>Kleuren</span>
-          <span class="sub" id="colorPresetLabel">Preset</span>
-        </label>
-        <select id="colorPreset" style="width:100%; margin-bottom:6px;"></select>
-
-        <label for="powerCtl"><strong>Animatie</strong></label>
-
-        <div style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;">
-          <label>Modus</label>
-          <button id="animOff" type="button">Uit</button>
-          <button id="animMouse" type="button">Muis</button>
-          <button id="animPulse" type="button">Pulse ⇆</button>
-          <button id="animScan" type="button">Scan →</button>
-        </div>
-
-        <div style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;">
-          <label>Curve</label>
-          <button id="curveSine"  type="button">Sine</button>
-          <button id="curveSmooth" type="button">Step</button>
-        </div>
-
-        <label>
-          <span>Animatie duur</span>
-          <span id="animPeriodOut" class="sub">— px</span>
-        </label>
-        <input id="animPeriod" type="range" min="2" max="10" step="0.1" value="3.0">
-
-        <!-- Gewicht -->
-        <label>
-          <span>Amplitude</span>
-          <span id="powerOut" class="sub">1.00×</span>
-        </label>
-        <input id="powerCtl" type="range" min="0.25" max="3" step="0.05" value="1">
-
-        <label for="powerCtl"><strong>Golf</strong></label>
-
-        <div style="display:flex; gap:.5rem; align-items:center; opacity: 50%;">
-          <div style>
-            <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
-              <input id="warpOn" type="checkbox"> Warp
+        <section class="control-section">
+          <h2 class="control-section-title">Color</h2>
+          <div class="control-field">
+            <label class="control-label" for="colorPreset">
+              <span>Kleuren</span>
+              <span class="sub" id="colorPresetLabel">Preset</span>
+            </label>
+            <select id="colorPreset" class="control-select control-select--tight"></select>
+          </div>
+          <div class="control-row">
+            <label class="checkbox-label">
+              <input id="bgLines" type="checkbox" /> Achtergrondlijnen
             </label>
           </div>
-          <!-- SELECTOR MAKEN EN MEERDERE TOEVOEGEN -->
-          <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
-            <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
-              <input id="bgLines" type="checkbox"> Achtergrondlijnen
+        </section>
+
+        <section class="control-section">
+          <h2 class="control-section-title">Animation</h2>
+          <div class="button-group">
+            <label class="control-label control-label--inline">Modus</label>
+            <button id="animOff" type="button">Uit</button>
+            <button id="animMouse" type="button">Muis</button>
+            <button id="animPulse" type="button">Pulse ⇆</button>
+            <button id="animScan" type="button">Scan →</button>
+          </div>
+          <div class="button-group">
+            <label class="control-label control-label--inline">Curve</label>
+            <button id="curveSine" type="button">Sine</button>
+            <button id="curveSmooth" type="button">Step</button>
+          </div>
+          <div class="control-field">
+            <label class="control-label" for="animPeriod">
+              <span>Animatie duur</span>
+              <span id="animPeriodOut" class="sub">— px</span>
+            </label>
+            <input id="animPeriod" type="range" min="2" max="10" step="0.1" value="3.0" />
+          </div>
+          <div class="control-field">
+            <label class="control-label" for="powerCtl">
+              <span>Amplitude</span>
+              <span id="powerOut" class="sub">1.00×</span>
+            </label>
+            <input id="powerCtl" type="range" min="0.25" max="3" step="0.05" value="1" />
+          </div>
+        </section>
+
+        <section class="control-section">
+          <h2 class="control-section-title">Repeat</h2>
+          <div class="control-row">
+            <label class="checkbox-label">
+              <input id="repeatV" type="checkbox" /> Repeat vert
             </label>
           </div>
-        </div>
+          <div class="control-row control-row--wide">
+            <label class="checkbox-label checkbox-label--wide" for="repeatFill">
+              Scherm vulling
+              <input id="repeatFill" class="repeat-fill-slider" type="range" min="0" max="100" step="1" value="0" />
+              <span id="repeatFillOut" class="range-output">0%</span>
+            </label>
+          </div>
+          <div class="control-row">
+            <label class="checkbox-label">
+              <input id="repeatMirror" type="checkbox" /> Mirror
+            </label>
+          </div>
+        </section>
 
-        <label style="opacity: 50%;">
-          <span>Amplitude</span>
-          <span id="warpAmpOut" class="sub">12 px</span>
-        </label>
-        <input id="warpAmp" type="range" min="0" max="80" step="1" value="12" style="opacity: 50%;">
-
-        <label style="opacity: 50%;">
-          <span>Golflengte</span>
-          <span id="warpLenOut" class="sub">240 px</span>
-        </label>
-        <input id="warpLen" type="range" min="40" max="800" step="4" value="240" style="opacity: 50%;">
-
-        <label style="opacity: 50%;">
-          <span>Cyclus duur</span>
-          <span id="warpPeriodOut" class="sub">4.00 s</span>
-        </label>
-        <input id="warpPeriod" type="range" min="0.2" max="12" step="0.1" value="4.0" style="opacity: 50%;">
-
-        <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
-          <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
-            <input id="repeatV" type="checkbox"> Repeat vert
-          </label>
-        </div>
-
-        <div style="display:flex; gap:12px; align-items:center; margin-top:6px;">
-          <label style="display:flex; align-items:center; gap:8px; font-size:13px; min-width:160px;">
-            Scherm vulling
-            <input id="repeatFill" type="range" min="0" max="100" step="1" value="0" style="width:160px;">
-            <span id="repeatFillOut" style="display:inline-block; width:48px; text-align:right;">0%</span>
-          </label>
-        </div>
-
-        <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
-          <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
-            <input id="repeatMirror" type="checkbox"> Mirror
-          </label>
-        </div>
-        <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
-          <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
-            <input id="autorand" type="checkbox"> Auto randomize
-          </label>
-        </div>
-        <div style="display:flex; gap:8px; align-items:center; margin-top:6px; opacity: 50%;">
-          <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
-            <input id="debug" type="checkbox"> Debug mode
-          </label>
-        </div>
-
-        <button id="resetDefaults" type="button" style="margin-top:12px; width:100%; padding:10px 0; font-weight:600;">Reset</button>
+        <section class="control-section">
+          <h2 class="control-section-title">Extra</h2>
+          <div class="control-row">
+            <label class="checkbox-label">
+              <input id="autorand" type="checkbox" /> Auto randomize
+            </label>
+          </div>
+          <div class="control-row is-muted">
+            <label class="checkbox-label">
+              <input id="debug" type="checkbox" /> Debug mode
+            </label>
+          </div>
+        </section>
       </div>
     </main>
 
