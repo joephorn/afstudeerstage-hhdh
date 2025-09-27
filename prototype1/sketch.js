@@ -1,14 +1,59 @@
 // ====== CONFIG ======
-const LOGO_TEXT         = "ALBION";
-const ROWS_DEFAULT      = 12;
-const LINE_HEIGHT       = 10;
-let TIP_RATIO           = 0.3; // small (tip) cap radius factor relative to big cap (0..1)
-let END_RATIO           = 1.0; // big (end) cap radius factor relative to h/2 (0..1)
-let DISPLACE_UNIT       = 28;
-let ASPECT_W = 16;
-let ASPECT_H = 9;
-let LOGO_TARGET_W = 0;
-let FIT_MODE = false;
+const LOGO_TEXT                = "ALBION";
+const ROWS_DEFAULT             = 12;
+const LINE_HEIGHT              = 10;
+
+const TIP_RATIO_DEFAULT        = 0.3;
+const END_RATIO_DEFAULT        = 1.0;
+const DISPLACE_UNIT_DEFAULT    = 28;
+const GAP_PX_DEFAULT           = 9;
+const DISPLACE_GROUPS_DEFAULT  = 2;
+const TAPER_MODE_DEFAULT       = 'rounded';
+const DEBUG_MODE_DEFAULT       = false;
+const WIDTH_SCALE_DEFAULT      = 1.1;
+const LOGO_SCALE_DEFAULT       = 1.0;
+const ASPECT_W_DEFAULT         = 16;
+const ASPECT_H_DEFAULT         = 9;
+const PRESET_DEFAULT           = 'fit';
+const FIT_MODE_DEFAULT         = (PRESET_DEFAULT === 'fit');
+const ASPECT_WIDTH_PX_DEFAULT  = 1920;
+const ASPECT_HEIGHT_PX_DEFAULT = 1080;
+const TIP_RATIO_SLIDER_STEP    = 0.01;
+
+const PER_LETTER_STRETCH_DEFAULT      = true;
+const MOUSE_STRETCH_SIGMA_FRAC_DEFAULT = 0.15;
+const MOUSE_AMPLITUDE_DEFAULT         = 1.0;
+const MOUSE_CURVE_DEFAULT             = 'sine';
+const MOUSE_POWER_DEFAULT             = 1.0;
+
+const KEEP_TOTAL_WIDTH_DEFAULT = true;
+const BG_LINES_DEFAULT         = false;
+const REPEAT_V_DEFAULT         = false;
+const REPEAT_MIRROR_DEFAULT    = false;
+const REPEAT_FILL_DEFAULT      = 0;
+
+const COLOR_BACKGROUND_DEFAULT = '#ffffff';
+const COLOR_LOGO_DEFAULT       = '#000000';
+const COLOR_LINES_DEFAULT      = '#000000';
+
+const WARP_ON_DEFAULT      = false;
+const WARP_AMP_DEFAULT     = 12;
+const WARP_WAVELEN_DEFAULT = 240;
+const WARP_PERIOD_DEFAULT  = 4.0;
+const WARP_COL_WIDTH_DEFAULT = 2;
+
+const ANIM_MODE_DEFAULT   = 'off';
+const ANIM_PERIOD_DEFAULT = 3.0;
+
+const AUTO_RANDOM_DEFAULT = false;
+
+let TIP_RATIO        = TIP_RATIO_DEFAULT;        // small (tip) cap radius factor relative to big cap (0..1)
+let END_RATIO        = END_RATIO_DEFAULT;        // big (end) cap radius factor relative to h/2 (0..1)
+let DISPLACE_UNIT    = DISPLACE_UNIT_DEFAULT;
+let ASPECT_W         = ASPECT_W_DEFAULT;
+let ASPECT_H         = ASPECT_H_DEFAULT;
+let LOGO_TARGET_W    = 0;
+let FIT_MODE         = FIT_MODE_DEFAULT;
 const FIT_FRACTION = 0.75;
 const BLOCK_STEPS = 4; // fixed number of blocks for block taper
 const BLOCK_MIN_LEN_FRAC = 0.55; // leftmost block length as fraction of its segment
@@ -40,26 +85,26 @@ let layout;           // computed positions + spans
 let rows = ROWS_DEFAULT;
 let linePx = LINE_HEIGHT;
 
-let elRows, elThickness, elWidth, elGap, elGroups, elDispUnit, elPreset, elLogoScale, elAspectW, elAspectH, elCustomAR;
+let elRows, elThickness, elWidth, elGap, elGroups, elDispUnit, elPreset, elLogoScale, elAspectW, elAspectH, elCustomAR, elReset;
 let elRowsOut, elThicknessOut, elWidthOut, elGapOut, elDispUnitOut, elGroupsOut, elLogoScaleOut;
 let elTaper, elDebug, elAuto;
 let elTipRatio, elTipOut;
-let gapPx = 9;
-let displaceGroups = 2;
-let taperMode = 'rounded';
-let debugMode = false;
-let widthScale = 1.1;
+let gapPx = GAP_PX_DEFAULT;
+let displaceGroups = DISPLACE_GROUPS_DEFAULT;
+let taperMode = TAPER_MODE_DEFAULT;
+let debugMode = DEBUG_MODE_DEFAULT;
+let widthScale = WIDTH_SCALE_DEFAULT;
 
-let logoScaleMul = 1.0;
+let logoScaleMul = LOGO_SCALE_DEFAULT;
 
 // --- Per-letter stretch (mouseX-weighted) ---
-let PER_LETTER_STRETCH = true;   // toggle on/off
+let PER_LETTER_STRETCH = PER_LETTER_STRETCH_DEFAULT;   // toggle on/off
 const BASE_STRETCH_MIN = 0.5;    // baseline min per-letter factor when amplitude = 1
 const BASE_STRETCH_MAX = 1.5;    // baseline max per-letter factor when amplitude = 1
 let MOUSE_STRETCH_MIN  = BASE_STRETCH_MIN;
 let MOUSE_STRETCH_MAX  = BASE_STRETCH_MAX;
-let MOUSE_STRETCH_SIGMA_FRAC = 0.15; // Gaussian sigma as fraction of content width
-let MOUSE_AMPLITUDE = 1.0;       // multiplies stretch delta relative to baseline
+let MOUSE_STRETCH_SIGMA_FRAC = MOUSE_STRETCH_SIGMA_FRAC_DEFAULT; // Gaussian sigma as fraction of content width
+let MOUSE_AMPLITUDE = MOUSE_AMPLITUDE_DEFAULT;       // multiplies stretch delta relative to baseline
 
 let baseRowPitch;
 let targetContentH = null; // stays constant; rows change will shrink/grow pitch to keep this height
@@ -68,22 +113,22 @@ let EXPORT_W = null; // when preset = custom, desired pixel width
 let EXPORT_H = null; // when preset = custom, desired pixel height
 
 // Keep the total logo width constant (sum of letter widths stays fixed)
-let KEEP_TOTAL_WIDTH = true;
-let BG_LINES = false;        // toggle via HTML checkbox
+let KEEP_TOTAL_WIDTH = KEEP_TOTAL_WIDTH_DEFAULT;
+let BG_LINES = BG_LINES_DEFAULT;        // toggle via HTML checkbox
 let BG_LINES_ALPHA = 255;
 
-let REPEAT_V = false;
-let REPEAT_MIRROR = false;     // if true, every 2nd vertical repeat is mirrored
-let REPEAT_FILL = 0;           // 0..1 progress: 0 = none, 1 = volledige vulling
+let REPEAT_V = REPEAT_V_DEFAULT;
+let REPEAT_MIRROR = REPEAT_MIRROR_DEFAULT;     // if true, every 2nd vertical repeat is mirrored
+let REPEAT_FILL = REPEAT_FILL_DEFAULT;           // 0..1 progress: 0 = none, 1 = volledige vulling
 const REPEAT_MAX_BANDS = 6;    // aantal stroken per zijde in eindtoestand
 const REPEAT_WEIGHT_EXP = 1.6; // >1 = snellere afname in bandhoogte
 let COLOR_COMBOS = [];
 let activeColorComboIdx = 0;
 
 // ---- Colors ----
-let color1 = '#ffffff';
-let color2 = '#000000';
-let color3 = '#000000';
+let color1 = COLOR_BACKGROUND_DEFAULT;
+let color2 = COLOR_LOGO_DEFAULT;
+let color3 = COLOR_LINES_DEFAULT;
 
 // --- Color helpers: auto-combo and black detection ---
 function normHex(hex){ return String(hex || '').trim().toLowerCase(); }
@@ -103,9 +148,9 @@ function applyColorComboByIndex(idx){
   const safeIdx = Math.max(0, Math.min(COLOR_COMBOS.length - 1, idx | 0));
   const combo = COLOR_COMBOS[safeIdx];
   activeColorComboIdx = safeIdx;
-  color1 = combo.background || color1;
-  color2 = combo.logo || color2;
-  color3 = combo.lines || color3;
+  color1 = combo.background || COLOR_BACKGROUND_DEFAULT;
+  color2 = combo.logo || COLOR_LOGO_DEFAULT;
+  color3 = combo.lines || COLOR_LINES_DEFAULT;
 }
 
 function sanitizeColor(hex, fallback){
@@ -114,16 +159,16 @@ function sanitizeColor(hex, fallback){
 }
 
 // ---- Canvas warp (final screen-space filter) ----
-let WARP_ON = false;          // toggle via HTML checkbox
-let WARP_AMP_PX = 12;         // peak vertical shift in pixels
-let WARP_WAVELEN_PX = 240;    // wavelength along X in pixels
-let WARP_PERIOD_S = 4.0;      // seconds per full wave cycle
-let WARP_COL_W = 2;           // column slice width in pixels (performance)
+let WARP_ON = WARP_ON_DEFAULT;          // toggle via HTML checkbox
+let WARP_AMP_PX = WARP_AMP_DEFAULT;     // peak vertical shift in pixels
+let WARP_WAVELEN_PX = WARP_WAVELEN_DEFAULT;    // wavelength along X in pixels
+let WARP_PERIOD_S = WARP_PERIOD_DEFAULT;      // seconds per full wave cycle
+let WARP_COL_W = WARP_COL_WIDTH_DEFAULT;           // column slice width in pixels (performance)
 
 // random animate
 let lastAutoRandomMs = 0;
 const RANDOM_INTERVAL_MS = 1000;
-let autoRandomActive = false;
+let autoRandomActive = AUTO_RANDOM_DEFAULT;
 let autoTimer = null;
 function setAuto(on){
   if (autoTimer){ clearInterval(autoTimer); autoTimer = null; }
@@ -135,15 +180,15 @@ function setAuto(on){
 let rowYsCanvas = []; // y-position of each row in canvas coordinates
 
 // --- Curve + Animation controls ---
-let MOUSE_CURVE = 'sine';   // 'sine' | 'smoothstep'
-let MOUSE_POWER = 1.0;       // t^power sharpening
+let MOUSE_CURVE = MOUSE_CURVE_DEFAULT;   // 'sine' | 'smoothstep'
+let MOUSE_POWER = MOUSE_POWER_DEFAULT;       // t^power sharpening
 
-let ANIM_MODE = 'off';     // 'mouse' | 'pulse' | 'scan' | 'off'
+let ANIM_MODE = ANIM_MODE_DEFAULT;     // 'mouse' | 'pulse' | 'scan' | 'off'
 let animTime = 0;            // seconds
 let _animRAF = null;
 let _animStart = 0;
 // Animation timing (seconds per full cycle)
-let ANIM_PERIOD = 3.0;            // default: 3s per cycle
+let ANIM_PERIOD = ANIM_PERIOD_DEFAULT;            // default: 3s per cycle
 const SCAN_MARGIN_FRAC = 0.4; // allow the scan to travel 15% beyond both ends before wrapping
 
 function startAnimLoop(){
@@ -406,9 +451,9 @@ function preload(){
   COLOR_COMBOS = rawCombos
     .map((combo, idx) => {
       if (!combo) return null;
-      const background = sanitizeColor(combo.background || combo.bg, color1).toUpperCase();
-      const logo = sanitizeColor(combo.logo || combo.foreground, color2).toUpperCase();
-      const lines = sanitizeColor(combo.lines || combo.accent, color3).toUpperCase();
+      const background = sanitizeColor(combo.background || combo.bg, COLOR_BACKGROUND_DEFAULT).toUpperCase();
+      const logo = sanitizeColor(combo.logo || combo.foreground, COLOR_LOGO_DEFAULT).toUpperCase();
+      const lines = sanitizeColor(combo.lines || combo.accent, COLOR_LINES_DEFAULT).toUpperCase();
       const label = combo.label ? String(combo.label) : `Preset ${idx + 1}`;
       const id = combo.id ? String(combo.id) : `combo-${idx}`;
       return { id, label, background, logo, lines };
@@ -418,9 +463,9 @@ function preload(){
     COLOR_COMBOS = [{
       id: 'combo-0',
       label: 'Default',
-      background: sanitizeColor(color1, '#FFFFFF').toUpperCase(),
-      logo: sanitizeColor(color2, '#000000').toUpperCase(),
-      lines: sanitizeColor(color3, '#000000').toUpperCase()
+      background: sanitizeColor(color1, COLOR_BACKGROUND_DEFAULT).toUpperCase(),
+      logo: sanitizeColor(color2, COLOR_LOGO_DEFAULT).toUpperCase(),
+      lines: sanitizeColor(color3, COLOR_LINES_DEFAULT).toUpperCase()
     }];
   }
   applyColorComboByIndex(0);
@@ -525,6 +570,11 @@ function setup(){
   elAspectW  = byId('aspectW');
   elAspectH  = byId('aspectH');
   elCustomAR = byId('customAR');
+  elReset    = byId('resetDefaults');
+
+  if (elPreset) elPreset.value = PRESET_DEFAULT;
+  if (elAspectW) elAspectW.value = String(ASPECT_WIDTH_PX_DEFAULT);
+  if (elAspectH) elAspectH.value = String(ASPECT_HEIGHT_PX_DEFAULT);
 
   // Curve buttons
 const btnCurveSine  = document.getElementById('curveSine');
@@ -676,7 +726,7 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
   elWidth.value = Math.round(widthScale * 100);
   elGap.value = gapPx;
   elDebug.checked = debugMode;
-  elAuto.checked = false;
+  elAuto.checked = autoRandomActive;
   if (elTaper) {
     elTaper.value = taperMode;
     elTaper.addEventListener('change', () => {
@@ -684,25 +734,26 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
       if (v === 'rounded' || v === 'straight' || v === 'circles' || v === 'blocks' || v === 'pluses') {
         taperMode = v;
       } else {
-        taperMode = 'rounded';
+        taperMode = TAPER_MODE_DEFAULT;
       }
       requestRedraw();
     });
   }
-    if (elLogoScaleOut) elLogoScaleOut.textContent = '100 %';
+  const defaultLogoPct = Math.round(LOGO_SCALE_DEFAULT * 100);
+  if (elLogoScaleOut) elLogoScaleOut.textContent = `${defaultLogoPct} %`;
   if (elRowsOut)      elRowsOut.textContent      = String(rows);
   if (elThicknessOut) elThicknessOut.textContent = `${linePx} px`;
   if (elWidthOut)     elWidthOut.textContent     = `${Math.round(widthScale * 100)} %`;
   if (elGapOut)       elGapOut.textContent       = `${gapPx} px`;
   if (elLogoScale){
     elLogoScale.min = 10; elLogoScale.max = 200; elLogoScale.step = 1;
-    elLogoScale.value = 100;
+    elLogoScale.value = String(defaultLogoPct);
   }
   if (elPreset){
     elPreset.addEventListener('change', ()=>{
       const val = elPreset.value;
 
-      if (val === 'fit') {
+      if (val === PRESET_DEFAULT) {
         FIT_MODE = true;
         if (elCustomAR) elCustomAR.style.display = 'none';
         fitViewportToWindow();
@@ -757,6 +808,7 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
     if (elDispUnitOut) elDispUnitOut.textContent = `${DISPLACE_UNIT} px`;
   }
   if (elTipRatio){
+    elTipRatio.step = String(TIP_RATIO_SLIDER_STEP);
     elTipRatio.value = TIP_RATIO;
     if (elTipOut) elTipOut.textContent = Number(TIP_RATIO).toFixed(2);
   }
@@ -767,6 +819,127 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
       requestRedraw();
     });
   }
+
+  function resetDefaults(){
+    rows = ROWS_DEFAULT;
+    linePx = LINE_HEIGHT;
+    widthScale = WIDTH_SCALE_DEFAULT;
+    gapPx = GAP_PX_DEFAULT;
+    displaceGroups = DISPLACE_GROUPS_DEFAULT;
+    DISPLACE_UNIT = DISPLACE_UNIT_DEFAULT;
+    TIP_RATIO = TIP_RATIO_DEFAULT;
+    taperMode = TAPER_MODE_DEFAULT;
+    logoScaleMul = LOGO_SCALE_DEFAULT;
+
+    debugMode = DEBUG_MODE_DEFAULT;
+    elDebug.checked = debugMode;
+
+    autoRandomActive = AUTO_RANDOM_DEFAULT;
+    elAuto.checked = autoRandomActive;
+    setAuto(autoRandomActive);
+
+    KEEP_TOTAL_WIDTH = KEEP_TOTAL_WIDTH_DEFAULT;
+    BG_LINES = BG_LINES_DEFAULT;
+    REPEAT_V = REPEAT_V_DEFAULT;
+    REPEAT_MIRROR = REPEAT_MIRROR_DEFAULT;
+    REPEAT_FILL = REPEAT_FILL_DEFAULT;
+
+    elBgLines.checked = BG_LINES;
+    elRepeatV.checked = REPEAT_V;
+    elRepeatMirror.checked = REPEAT_MIRROR;
+
+    WARP_ON = WARP_ON_DEFAULT;
+    WARP_AMP_PX = WARP_AMP_DEFAULT;
+    WARP_WAVELEN_PX = WARP_WAVELEN_DEFAULT;
+    WARP_PERIOD_S = WARP_PERIOD_DEFAULT;
+    WARP_COL_W = WARP_COL_WIDTH_DEFAULT;
+
+    PER_LETTER_STRETCH = PER_LETTER_STRETCH_DEFAULT;
+    MOUSE_STRETCH_SIGMA_FRAC = MOUSE_STRETCH_SIGMA_FRAC_DEFAULT;
+    MOUSE_AMPLITUDE = MOUSE_AMPLITUDE_DEFAULT;
+    MOUSE_STRETCH_MIN = BASE_STRETCH_MIN;
+    MOUSE_STRETCH_MAX = BASE_STRETCH_MAX;
+    MOUSE_CURVE = MOUSE_CURVE_DEFAULT;
+    MOUSE_POWER = MOUSE_POWER_DEFAULT;
+
+    ANIM_MODE = ANIM_MODE_DEFAULT;
+    ANIM_PERIOD = ANIM_PERIOD_DEFAULT;
+    animTime = 0;
+    stopAnimLoop();
+
+    FIT_MODE = FIT_MODE_DEFAULT;
+    ASPECT_W = ASPECT_W_DEFAULT;
+    ASPECT_H = ASPECT_H_DEFAULT;
+    EXPORT_W = null;
+    EXPORT_H = null;
+
+    applyColorComboByIndex(0);
+    elColorPreset.value = String(activeColorComboIdx);
+    updateColorPresetLabel(activeColorComboIdx);
+
+    elPreset.value = PRESET_DEFAULT;
+    elAspectW.value = String(ASPECT_WIDTH_PX_DEFAULT);
+    elAspectH.value = String(ASPECT_HEIGHT_PX_DEFAULT);
+    elCustomAR.style.display = FIT_MODE ? 'none' : '';
+
+    const repeatPct = Math.round(REPEAT_FILL * 100);
+    elRepeatFill.value = String(repeatPct);
+    elRepeatFillOut.textContent = `${repeatPct}%`;
+
+    elWarpOn.checked = WARP_ON;
+    elWarpAmp.value = String(WARP_AMP_PX);
+    elWarpAmpOut.textContent = `${WARP_AMP_PX|0} px`;
+    elWarpLen.value = String(WARP_WAVELEN_PX);
+    elWarpLenOut.textContent = `${WARP_WAVELEN_PX|0} px`;
+    elWarpPer.value = String(ANIM_PERIOD);
+    elWarpPerOut.textContent = `${ANIM_PERIOD.toFixed(2)} s`;
+
+    const logoPct = Math.round(logoScaleMul * 100);
+    elLogoScale.value = String(logoPct);
+    elLogoScaleOut.textContent = `${logoPct} %`;
+
+    elRows.value = String(rows);
+    elRowsOut.textContent = String(rows);
+    elThickness.value = String(linePx);
+    elThicknessOut.textContent = `${linePx} px`;
+    const widthPct = Math.round(widthScale * 100);
+    elWidth.value = String(widthPct);
+    elWidthOut.textContent = `${widthPct} %`;
+    elGap.value = String(gapPx);
+    elGapOut.textContent = `${gapPx} px`;
+    elDispUnit.value = String(DISPLACE_UNIT);
+    elDispUnitOut.textContent = `${DISPLACE_UNIT} px`;
+    elTipRatio.value = TIP_RATIO.toFixed(2);
+    elTipOut.textContent = TIP_RATIO.toFixed(2);
+    elTaper.value = taperMode;
+
+    powerCtl.value = String(MOUSE_AMPLITUDE);
+    powerOut.textContent = `${MOUSE_AMPLITUDE.toFixed(2)}×`;
+    window.MOUSE_AMPLITUDE = MOUSE_AMPLITUDE;
+    window.MOUSE_POWER = MOUSE_POWER;
+
+    animPeriodCtl.value = String(ANIM_PERIOD);
+    animPeriodOut.textContent = ANIM_PERIOD.toFixed(2) + 's';
+
+    lastAutoRandomMs = 0;
+
+    rebuildGroupsSelect();
+
+    if (rows <= 1){
+      baseRowPitch = 0;
+      targetContentH = 0;
+    } else {
+      const refTargetH = (targetContentH != null) ? targetContentH : ((height / rows) * (rows - 1));
+      targetContentH = refTargetH;
+      baseRowPitch = refTargetH / (rows - 1);
+    }
+    layout = buildLayout(LOGO_TEXT, rows);
+
+    fitViewportToWindow();
+    requestRedraw();
+  }
+
+  elReset.addEventListener('click', resetDefaults);
 
   let _signedGroupOptions = [];
   function rebuildGroupsSelect(){
@@ -853,7 +1026,7 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
   });
 
   if (elCustomAR) elCustomAR.style.display = (elPreset && elPreset.value === 'custom') ? '' : 'none';
-  FIT_MODE = (elPreset && elPreset.value === 'fit');
+  FIT_MODE = (elPreset && elPreset.value === PRESET_DEFAULT);
   fitViewportToWindow();
   requestRedraw();
   if (elPreset && elPreset.value === 'custom') updateCustomResolutionAndAspect();
