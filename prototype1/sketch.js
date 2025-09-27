@@ -1663,15 +1663,7 @@ function fitViewportToWindow(){
 
   requestRedraw();
 }
-// ====== INPUT → REDRAW ======
+// ====== INPUT ======
 function mouseMoved(){
-  // Re-render when the mouse moves so per-letter stretch updates
   requestRedraw();
-}
-function mouseDragged(){
-  requestRedraw();
-}
-function touchMoved(){
-  requestRedraw();
-  return false; // prevent default scrolling on touch devices
 }
