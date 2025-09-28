@@ -73,6 +73,10 @@ const LETTERS_PATH      = './src/letters/';
 let glyphImgs = {};   // map: char -> p5.Image (SVG rasterized)
 let glyphDims = {};   // map: char -> {w,h}
 
+function setValue(el, value){ if (el) el.value = String(value); }
+function setText(el, text){ if (el) el.textContent = text; }
+function setChecked(el, value){ if (el) el.checked = !!value; }
+
 // ====== STATE ======
 let glyphBuffer;      // offscreen p5.Graphics used for scanning
 let layout;           // computed positions + spans
@@ -519,59 +523,122 @@ function setup(){
   elCustomAR = byId('customAR');
   elReset    = byId('resetDefaults');
 
+  const elBgLines         = byId('bgLines');
+  const elRepeatV         = byId('repeatV');
+  const elRepeatMirror    = byId('repeatMirror');
+  const elRepeatFill      = byId('repeatFill');
+  const elRepeatFillOut   = byId('repeatFillOut');
+  const elColorPreset     = byId('colorPreset');
+  const elColorPresetLabel= byId('colorPresetLabel');
+  const btnCurveSine      = byId('curveSine');
+  const btnCurveSmooth    = byId('curveSmooth');
+  const powerCtl          = byId('powerCtl');
+  const powerOut          = byId('powerOut');
+  const animPeriodCtl     = byId('animPeriod');
+  const animPeriodOut     = byId('animPeriodOut');
+
+  function updateUIFromState(){
+    const widthPct = Math.round(widthScale * 100);
+    const logoPct = Math.round(logoScaleMul * 100);
+    const repeatPct = Math.round(REPEAT_FILL * 100);
+
+    setValue(elRows, rows);
+    setText(elRowsOut, rows);
+
+    setValue(elThickness, linePx);
+    setText(elThicknessOut, `${linePx} px`);
+
+    setValue(elWidth, widthPct);
+    setText(elWidthOut, `${widthPct} %`);
+
+    setValue(elGap, gapPx);
+    setText(elGapOut, `${gapPx} px`);
+
+    setValue(elLogoScale, logoPct);
+    setText(elLogoScaleOut, `${logoPct} %`);
+
+    setValue(elDispUnit, DISPLACE_UNIT);
+    setText(elDispUnitOut, `${DISPLACE_UNIT} px`);
+
+    setValue(elTipRatio, TIP_RATIO.toFixed(2));
+    setText(elTipOut, TIP_RATIO.toFixed(2));
+
+    setText(elGroupsOut, String(displaceGroups));
+
+    if (elTaper) elTaper.value = taperMode;
+
+    setChecked(elDebug, debugMode);
+    setChecked(elAuto, autoRandomActive);
+
+    setChecked(elBgLines, BG_LINES);
+    setChecked(elRepeatV, REPEAT_V);
+    setChecked(elRepeatMirror, REPEAT_MIRROR);
+
+    if (elRepeatFill) setValue(elRepeatFill, repeatPct);
+    setText(elRepeatFillOut, `${repeatPct}%`);
+
+    if (powerCtl){
+      powerCtl.value = String(MOUSE_AMPLITUDE);
+      setText(powerOut, `${MOUSE_AMPLITUDE.toFixed(2)}×`);
+    }
+
+    if (animPeriodCtl){
+      animPeriodCtl.value = String(ANIM_PERIOD);
+      setText(animPeriodOut, ANIM_PERIOD.toFixed(2) + 's');
+    }
+
+    setValue(elColorPreset, activeColorComboIdx);
+    updateColorPresetLabel(activeColorComboIdx);
+  }
+
   if (elPreset) elPreset.value = PRESET_DEFAULT;
   if (elAspectW) elAspectW.value = String(ASPECT_WIDTH_PX_DEFAULT);
   if (elAspectH) elAspectH.value = String(ASPECT_HEIGHT_PX_DEFAULT);
 
   // Curve buttons
-const btnCurveSine  = document.getElementById('curveSine');
-const btnCurveCos    = document.getElementById('curveCos');
-const btnCurveSmooth = document.getElementById('curveSmooth');
-if (btnCurveSine)  btnCurveSine.addEventListener('click', ()=>{ MOUSE_CURVE='sine'; requestRedraw(); });
-if (btnCurveSmooth) btnCurveSmooth.addEventListener('click',()=>{ MOUSE_CURVE='smoothstep'; requestRedraw(); });
+  if (btnCurveSine)   btnCurveSine.addEventListener('click', ()=>{ MOUSE_CURVE='sine'; requestRedraw(); });
+  if (btnCurveSmooth) btnCurveSmooth.addEventListener('click',()=>{ MOUSE_CURVE='smoothstep'; requestRedraw(); });
 
-const elBgLines = document.getElementById('bgLines');
-if (elBgLines){
-  elBgLines.checked = BG_LINES;
-  elBgLines.addEventListener('change', ()=>{ 
-    BG_LINES = !!elBgLines.checked; 
-    requestRedraw(); 
-  });
-}
-const elRepeatV = document.getElementById('repeatV');
-if (elRepeatV){
-  elRepeatV.checked = REPEAT_V;
-  elRepeatV.addEventListener('change', ()=>{ REPEAT_V = !!elRepeatV.checked; requestRedraw(); });
-}
+  if (elBgLines){
+    elBgLines.checked = BG_LINES;
+    elBgLines.addEventListener('change', ()=>{
+      BG_LINES = !!elBgLines.checked;
+      updateUIFromState();
+      requestRedraw();
+    });
+  }
+  if (elRepeatV){
+    elRepeatV.checked = REPEAT_V;
+    elRepeatV.addEventListener('change', ()=>{
+      REPEAT_V = !!elRepeatV.checked;
+      updateUIFromState();
+      requestRedraw();
+    });
+  }
 
-// Vertical repeat: mirror every 2nd tile
-const elRepeatMirror = document.getElementById('repeatMirror');
-if (elRepeatMirror){
-  elRepeatMirror.checked = REPEAT_MIRROR;
-  elRepeatMirror.addEventListener('change', ()=>{ REPEAT_MIRROR = !!elRepeatMirror.checked; requestRedraw(); });
-}
+  if (elRepeatMirror){
+    elRepeatMirror.checked = REPEAT_MIRROR;
+    elRepeatMirror.addEventListener('change', ()=>{
+      REPEAT_MIRROR = !!elRepeatMirror.checked;
+      updateUIFromState();
+      requestRedraw();
+    });
+  }
 
 // Vertical repeat: schermvulling (0 = none, 100 = volledige ruimte)
-const elRepeatFill = document.getElementById('repeatFill');
-const elRepeatFillOut = document.getElementById('repeatFillOut');
 if (elRepeatFill){
   if (!elRepeatFill.min)  elRepeatFill.min = '0';
   if (!elRepeatFill.max)  elRepeatFill.max = '100';
   if (!elRepeatFill.step) elRepeatFill.step = '1';
-  const initialPct = Math.round(REPEAT_FILL * 100);
-  elRepeatFill.value = String(initialPct);
-  if (elRepeatFillOut) elRepeatFillOut.textContent = `${initialPct}%`;
+  setValue(elRepeatFill, Math.round(REPEAT_FILL * 100));
+  setText(elRepeatFillOut, `${Math.round(REPEAT_FILL * 100)}%`);
   elRepeatFill.addEventListener('input', ()=>{
     const val = Math.max(0, Math.min(100, parseFloat(elRepeatFill.value) || 0));
     REPEAT_FILL = val / 100;
-    if (elRepeatFillOut) elRepeatFillOut.textContent = `${Math.round(val)}%`;
+    updateUIFromState();
     requestRedraw();
   });
 }
-
-// Color presets
-const elColorPreset = document.getElementById('colorPreset');
-const elColorPresetLabel = document.getElementById('colorPresetLabel');
 
 function updateColorPresetLabel(idx){
   if (!elColorPresetLabel) return;
@@ -598,12 +665,13 @@ function populateColorPresetSelect(){
 }
 
 populateColorPresetSelect();
+updateUIFromState();
 
 if (elColorPreset){
   elColorPreset.addEventListener('change', ()=>{
     const idx = parseInt(elColorPreset.value, 10);
     applyColorComboByIndex(Number.isFinite(idx) ? idx : 0);
-    updateColorPresetLabel(activeColorComboIdx);
+    updateUIFromState();
     requestRedraw();
   });
 }
@@ -628,12 +696,10 @@ if (btnAnimPulse) btnAnimPulse.addEventListener('click', ()=> setAnim('pulse'));
 if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
 
   // Amplitude slider (controls stretch intensity around the mouse)
-  const powerCtl = document.getElementById('powerCtl');
-  const powerOut = document.getElementById('powerOut');
   if (powerCtl){
     const updateAmplitude = ()=>{
       const raw = parseFloat(powerCtl.value);
-      const amp = Number.isFinite(raw) ? Math.max(0.1, raw) : 1.0;
+      const amp = Number.isFinite(raw) ? Math.max(0.1, raw) : MOUSE_AMPLITUDE;
       MOUSE_AMPLITUDE = amp;
       const stretchAbove = (BASE_STRETCH_MAX - 1) * amp;
       const stretchBelow = (1 - BASE_STRETCH_MIN) * amp;
@@ -641,39 +707,25 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
       MOUSE_STRETCH_MIN = Math.max(0.05, 1 - stretchBelow);
       window.MOUSE_AMPLITUDE = MOUSE_AMPLITUDE;
       window.MOUSE_POWER = MOUSE_POWER;
-      if (powerOut) powerOut.textContent = `${amp.toFixed(2)}×`;
+      updateUIFromState();
       requestRedraw();
     };
-    if (!powerCtl.value) powerCtl.value = String(MOUSE_AMPLITUDE);
-    updateAmplitude();
     powerCtl.addEventListener('input', updateAmplitude);
   }
 
   // Animation duration (seconds per cycle)
-  const animPeriodCtl = document.getElementById('animPeriod');
-  const animPeriodOut = document.getElementById('animPeriodOut');
   if (animPeriodCtl){
-    // initialize UI from current value
-    animPeriodCtl.value = String(ANIM_PERIOD);
-    if (animPeriodOut) animPeriodOut.textContent = ANIM_PERIOD.toFixed(2) + 's';
     animPeriodCtl.addEventListener('input', ()=>{
       const v = parseFloat(animPeriodCtl.value);
       if (Number.isFinite(v)){
         ANIM_PERIOD = Math.max(0.1, v);
-        if (animPeriodOut) animPeriodOut.textContent = ANIM_PERIOD.toFixed(2) + 's';
-        startAnimLoop(); // ensure loop is running when user tweaks
+        startAnimLoop();
+        updateUIFromState();
         requestRedraw();
       }
     });
   }
 
-  // initialize values to current state
-  elRows.value = rows;
-  elThickness.value = linePx;
-  elWidth.value = Math.round(widthScale * 100);
-  elGap.value = gapPx;
-  elDebug.checked = debugMode;
-  elAuto.checked = autoRandomActive;
   if (elTaper) {
     elTaper.value = taperMode;
     elTaper.addEventListener('change', () => {
@@ -686,15 +738,16 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
       requestRedraw();
     });
   }
-  const defaultLogoPct = Math.round(LOGO_SCALE_DEFAULT * 100);
-  if (elLogoScaleOut) elLogoScaleOut.textContent = `${defaultLogoPct} %`;
-  if (elRowsOut)      elRowsOut.textContent      = String(rows);
-  if (elThicknessOut) elThicknessOut.textContent = `${linePx} px`;
-  if (elWidthOut)     elWidthOut.textContent     = `${Math.round(widthScale * 100)} %`;
-  if (elGapOut)       elGapOut.textContent       = `${gapPx} px`;
   if (elLogoScale){
-    elLogoScale.min = 10; elLogoScale.max = 200; elLogoScale.step = 1;
-    elLogoScale.value = String(defaultLogoPct);
+    elLogoScale.min = 10;
+    elLogoScale.max = 200;
+    elLogoScale.step = 1;
+    elLogoScale.addEventListener('input', ()=>{
+      const perc = Math.max(10, Math.min(200, parseInt(elLogoScale.value, 10) || 100));
+      logoScaleMul = perc / 100;
+      updateUIFromState();
+      requestRedraw();
+    });
   }
   if (elPreset){
     elPreset.addEventListener('change', ()=>{
@@ -742,27 +795,18 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
 
   if (elAspectW) elAspectW.addEventListener('input', ()=>{ if (elPreset && elPreset.value === 'custom') updateCustomResolutionAndAspect(); });
   if (elAspectH) elAspectH.addEventListener('input', ()=>{ if (elPreset && elPreset.value === 'custom') updateCustomResolutionAndAspect(); });
-  if (elLogoScale){
-    elLogoScale.addEventListener('input', ()=>{
-      const perc = Math.max(10, Math.min(200, parseInt(elLogoScale.value, 10) || 100));
-      logoScaleMul = perc / 100;
-      if (elLogoScaleOut) elLogoScaleOut.textContent = `${perc} %`;
-      requestRedraw();
-    });
-  }
-  if (elDispUnit){
-    elDispUnit.value = DISPLACE_UNIT;
-    if (elDispUnitOut) elDispUnitOut.textContent = `${DISPLACE_UNIT} px`;
-  }
-  if (elTipRatio){
-    elTipRatio.step = String(TIP_RATIO_SLIDER_STEP);
-    elTipRatio.value = TIP_RATIO;
-    if (elTipOut) elTipOut.textContent = Number(TIP_RATIO).toFixed(2);
-  }
+  if (elTipRatio) elTipRatio.step = String(TIP_RATIO_SLIDER_STEP);
   if (elDispUnit){
     elDispUnit.addEventListener('input', ()=>{
       DISPLACE_UNIT = parseInt(elDispUnit.value, 10) || 0;
-      if (elDispUnitOut) elDispUnitOut.textContent = `${DISPLACE_UNIT} px`;
+      updateUIFromState();
+      requestRedraw();
+    });
+  }
+  if (elTipRatio){
+    elTipRatio.addEventListener('input', ()=>{
+      TIP_RATIO = Math.max(0, Math.min(1, parseFloat(elTipRatio.value)));
+      updateUIFromState();
       requestRedraw();
     });
   }
@@ -779,10 +823,8 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
     logoScaleMul = LOGO_SCALE_DEFAULT;
 
     debugMode = DEBUG_MODE_DEFAULT;
-    elDebug.checked = debugMode;
 
     autoRandomActive = AUTO_RANDOM_DEFAULT;
-    elAuto.checked = autoRandomActive;
     setAuto(autoRandomActive);
 
     KEEP_TOTAL_WIDTH = KEEP_TOTAL_WIDTH_DEFAULT;
@@ -790,10 +832,6 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
     REPEAT_V = REPEAT_V_DEFAULT;
     REPEAT_MIRROR = REPEAT_MIRROR_DEFAULT;
     REPEAT_FILL = REPEAT_FILL_DEFAULT;
-
-    elBgLines.checked = BG_LINES;
-    elRepeatV.checked = REPEAT_V;
-    elRepeatMirror.checked = REPEAT_MIRROR;
 
     PER_LETTER_STRETCH = PER_LETTER_STRETCH_DEFAULT;
     MOUSE_STRETCH_SIGMA_FRAC = MOUSE_STRETCH_SIGMA_FRAC_DEFAULT;
@@ -815,48 +853,19 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
     EXPORT_H = null;
 
     applyColorComboByIndex(0);
-    elColorPreset.value = String(activeColorComboIdx);
-    updateColorPresetLabel(activeColorComboIdx);
+    if (elPreset) elPreset.value = PRESET_DEFAULT;
+    if (elAspectW) elAspectW.value = String(ASPECT_WIDTH_PX_DEFAULT);
+    if (elAspectH) elAspectH.value = String(ASPECT_HEIGHT_PX_DEFAULT);
+    if (elCustomAR) elCustomAR.style.display = FIT_MODE ? 'none' : '';
 
-    elPreset.value = PRESET_DEFAULT;
-    elAspectW.value = String(ASPECT_WIDTH_PX_DEFAULT);
-    elAspectH.value = String(ASPECT_HEIGHT_PX_DEFAULT);
-    elCustomAR.style.display = FIT_MODE ? 'none' : '';
-
-    const repeatPct = Math.round(REPEAT_FILL * 100);
-    elRepeatFill.value = String(repeatPct);
-    elRepeatFillOut.textContent = `${repeatPct}%`;
-
-    const logoPct = Math.round(logoScaleMul * 100);
-    elLogoScale.value = String(logoPct);
-    elLogoScaleOut.textContent = `${logoPct} %`;
-
-    elRows.value = String(rows);
-    elRowsOut.textContent = String(rows);
-    elThickness.value = String(linePx);
-    elThicknessOut.textContent = `${linePx} px`;
-    const widthPct = Math.round(widthScale * 100);
-    elWidth.value = String(widthPct);
-    elWidthOut.textContent = `${widthPct} %`;
-    elGap.value = String(gapPx);
-    elGapOut.textContent = `${gapPx} px`;
-    elDispUnit.value = String(DISPLACE_UNIT);
-    elDispUnitOut.textContent = `${DISPLACE_UNIT} px`;
-    elTipRatio.value = TIP_RATIO.toFixed(2);
-    elTipOut.textContent = TIP_RATIO.toFixed(2);
-    elTaper.value = taperMode;
-
-    powerCtl.value = String(MOUSE_AMPLITUDE);
-    powerOut.textContent = `${MOUSE_AMPLITUDE.toFixed(2)}×`;
     window.MOUSE_AMPLITUDE = MOUSE_AMPLITUDE;
     window.MOUSE_POWER = MOUSE_POWER;
-
-    animPeriodCtl.value = String(ANIM_PERIOD);
-    animPeriodOut.textContent = ANIM_PERIOD.toFixed(2) + 's';
 
     lastAutoRandomMs = 0;
 
     rebuildGroupsSelect();
+
+    updateUIFromState();
 
     if (rows <= 1){
       baseRowPitch = 0;
@@ -899,7 +908,6 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
     elGroups.step = 1;
     elGroups.value = (idx >= 0) ? idx : 0;
 
-    const groupsAbs = Math.max(1, Math.abs(displaceGroups));
     if (elGroupsOut) elGroupsOut.textContent = String(displaceGroups);
   }
   rebuildGroupsSelect();
@@ -907,27 +915,27 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
   // listeners
   elRows.addEventListener('input', ()=>{
     rows = parseInt(elRows.value,10);
-    if (elRowsOut) elRowsOut.textContent = String(rows);
     rebuildGroupsSelect();             // behoudt sign en clamp ≤
+    updateUIFromState();
     layout = buildLayout(LOGO_TEXT, rows);
     requestRedraw();
   });
 
   elThickness.addEventListener('input', ()=>{
     linePx = parseInt(elThickness.value,10);
-    if (elThicknessOut) elThicknessOut.textContent = `${linePx} px`;
+    updateUIFromState();
     requestRedraw();
   });
 
   elWidth.addEventListener('input', ()=>{
     widthScale = parseInt(elWidth.value,10) / 100;
-    if (elWidthOut) elWidthOut.textContent = `${Math.round(widthScale * 100)} %`;
+    updateUIFromState();
     requestRedraw();
   });
 
   elGap.addEventListener('input', ()=>{
     gapPx = parseInt(elGap.value,10);
-    if (elGapOut) elGapOut.textContent = `${gapPx} px`;
+    updateUIFromState();
     layout = buildLayout(LOGO_TEXT, rows);
     requestRedraw();
   });
@@ -935,31 +943,25 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
   elGroups.addEventListener('input', ()=>{
     const idx = parseInt(elGroups.value,10) || 0;
     displaceGroups = _signedGroupOptions[idx] || 1; // gesigneerd
-    const groupsAbs = Math.max(1, Math.abs(displaceGroups));
-    if (elGroupsOut) elGroupsOut.textContent = String(displaceGroups);
+    updateUIFromState();
     requestRedraw();
   });
 
-  if (elTipRatio){
-    elTipRatio.addEventListener('input', ()=>{
-      TIP_RATIO = Math.max(0, Math.min(1, parseFloat(elTipRatio.value)));
-      if (elTipOut) elTipOut.textContent = Number(TIP_RATIO).toFixed(2);
-      requestRedraw();
-    });
-  }
-
   elDebug.addEventListener('change', ()=>{
     debugMode = elDebug.checked;
+    updateUIFromState();
     requestRedraw();
   });
 
   elAuto.addEventListener('change', ()=>{
     autoRandomActive = elAuto.checked;
     setAuto(autoRandomActive);
+    updateUIFromState();
   });
 
   if (elCustomAR) elCustomAR.style.display = (elPreset && elPreset.value === 'custom') ? '' : 'none';
   FIT_MODE = (elPreset && elPreset.value === PRESET_DEFAULT);
+  updateUIFromState();
   fitViewportToWindow();
   requestRedraw();
   if (elPreset && elPreset.value === 'custom') updateCustomResolutionAndAspect();
