@@ -88,7 +88,8 @@ let elRowsOut, elThicknessOut, elWidthOut, elGapOut, elDispUnitOut, elGroupsOut,
 let elTaper, elDebug, elAuto;
 let elTipRatio, elTipOut;
 let gapPx = GAP_PX_DEFAULT;
-let displaceGroups = DISPLACE_GROUPS_DEFAULT;
+let displaceGroupsTarget = DISPLACE_GROUPS_DEFAULT;
+let displaceGroupsAnim = DISPLACE_GROUPS_DEFAULT;
 let taperMode = TAPER_MODE_DEFAULT;
 let debugMode = DEBUG_MODE_DEFAULT;
 let widthScale = WIDTH_SCALE_DEFAULT;
@@ -394,15 +395,15 @@ function applyRandomTweaks(){
   mutators.push(()=>{
     const opts = divisorsDescSigned(rows);
     if (opts && opts.length){
-      const curIdx = Math.max(0, opts.indexOf(displaceGroups));
+      const curIdx = Math.max(0, opts.indexOf(displaceGroupsTarget));
       let newIdx = randInt(0, opts.length - 1);
       if (opts.length > 1 && newIdx === curIdx) newIdx = (newIdx + 1) % opts.length;
-      displaceGroups = opts[newIdx];
-      const groupsAbs = Math.max(1, Math.abs(displaceGroups));
+      displaceGroupsTarget = opts[newIdx];
       if (elGroups){
         elGroups.min = 0; elGroups.max = Math.max(0, opts.length - 1); elGroups.step = 1; elGroups.value = newIdx;
       }
-      if (elGroupsOut) elGroupsOut.textContent = String(displaceGroups);
+      if (elGroupsOut) elGroupsOut.textContent = String(displaceGroupsTarget);
+      requestRedraw();
     }
   });
 
@@ -563,7 +564,10 @@ function setup(){
     setValue(elTipRatio, TIP_RATIO.toFixed(2));
     setText(elTipOut, TIP_RATIO.toFixed(2));
 
-    setText(elGroupsOut, String(displaceGroups));
+    const dgDisplay = (Math.abs(displaceGroupsTarget - Math.round(displaceGroupsTarget)) < 1e-3)
+      ? String(Math.round(displaceGroupsTarget))
+      : displaceGroupsTarget.toFixed(2);
+    setText(elGroupsOut, dgDisplay);
 
     if (elTaper) elTaper.value = taperMode;
 
@@ -816,7 +820,8 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
     linePx = LINE_HEIGHT;
     widthScale = WIDTH_SCALE_DEFAULT;
     gapPx = GAP_PX_DEFAULT;
-    displaceGroups = DISPLACE_GROUPS_DEFAULT;
+    displaceGroupsTarget = DISPLACE_GROUPS_DEFAULT;
+    displaceGroupsAnim = DISPLACE_GROUPS_DEFAULT;
     DISPLACE_UNIT = DISPLACE_UNIT_DEFAULT;
     TIP_RATIO = TIP_RATIO_DEFAULT;
     taperMode = TAPER_MODE_DEFAULT;
@@ -888,7 +893,7 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
     _signedGroupOptions = divisorsDescSigned(rows); // [-rows..-1, rows..1]
 
     // vorige waarde respecteren: zelfde sign, en grootste geldige |v| die ≤ vorige |v|
-    const prev = displaceGroups || 1;
+    const prev = displaceGroupsTarget || 1;
     const sign = Math.sign(prev) || 1;
     const targetAbs = Math.max(1, Math.abs(prev));
     const posOptions = _signedGroupOptions
@@ -899,16 +904,19 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
     let chosenAbs = posOptions.find(v => v <= targetAbs);
     if (!chosenAbs) chosenAbs = posOptions[posOptions.length - 1] || 1; // val naar kleinste
 
-    displaceGroups = sign * chosenAbs;
+    displaceGroupsTarget = sign * chosenAbs;
+    if (!Number.isFinite(displaceGroupsAnim)) displaceGroupsAnim = displaceGroupsTarget;
 
     // slider = index in de options-array
-    const idx = _signedGroupOptions.indexOf(displaceGroups);
-    elGroups.min = 0;
-    elGroups.max = Math.max(0, _signedGroupOptions.length - 1);
-    elGroups.step = 1;
-    elGroups.value = (idx >= 0) ? idx : 0;
+    const idx = _signedGroupOptions.indexOf(displaceGroupsTarget);
+    if (elGroups){
+      elGroups.min = 0;
+      elGroups.max = Math.max(0, _signedGroupOptions.length - 1);
+      elGroups.step = 1;
+      elGroups.value = (idx >= 0) ? idx : 0;
+    }
 
-    if (elGroupsOut) elGroupsOut.textContent = String(displaceGroups);
+    if (elGroupsOut) elGroupsOut.textContent = String(displaceGroupsTarget);
   }
   rebuildGroupsSelect();
 
@@ -940,12 +948,14 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
     requestRedraw();
   });
 
-  elGroups.addEventListener('input', ()=>{
-    const idx = parseInt(elGroups.value,10) || 0;
-    displaceGroups = _signedGroupOptions[idx] || 1; // gesigneerd
-    updateUIFromState();
-    requestRedraw();
-  });
+  if (elGroups){
+    elGroups.addEventListener('input', ()=>{
+      const idx = parseInt(elGroups.value,10) || 0;
+      displaceGroupsTarget = _signedGroupOptions[idx] || 1; // gesigneerd
+      if (elGroupsOut) elGroupsOut.textContent = String(displaceGroupsTarget);
+      requestRedraw();
+    });
+  }
 
   elDebug.addEventListener('change', ()=>{
     debugMode = elDebug.checked;
@@ -1011,6 +1021,13 @@ function renderLogo(g){
 
   const fit = computeLayoutFit();
   const { tEff, rowPitchNow, leftmost, contentW0, contentH0 } = fit;
+
+  if (!Number.isFinite(displaceGroupsAnim)) displaceGroupsAnim = displaceGroupsTarget;
+  const dgDiff = displaceGroupsTarget - displaceGroupsAnim;
+  if (Math.abs(dgDiff) > 1e-3){
+    displaceGroupsAnim += dgDiff * 0.18;
+    if (Math.abs(displaceGroupsTarget - displaceGroupsAnim) > 0.015) requestRedraw();
+  }
 
   // Center using the *current* content bounds so it stays centered as width/gap change
   const innerW = Math.max(1, width);
@@ -1114,7 +1131,7 @@ function renderLogo(g){
           const baseLen    = Math.max(0, span.runLen * layout.scale * wScaleUse);
           const maxDash = Math.max(0, rightEdgeX - baseX);
           const dashLenClamped = Math.min(baseLen, maxDash);
-          const xShift = computeXShift(r, rows, displaceGroups);
+          const xShift = computeXShift(r, rows, displaceGroupsAnim);
           const rx = rightEdgeX + xShift;
           switch (taperMode) {
             case 'straight':
@@ -1609,13 +1626,27 @@ function drawdebugModeOverlay(){
   pop();
 }
 
-function computeXShift(r, rows, displaceGroups){
-  const groupsAbs = Math.max(1, Math.abs(displaceGroups));
-  const gsize = Math.max(1, Math.floor(rows / groupsAbs));
-  const sectionIndex = Math.floor(r / gsize) % groupsAbs;
-  const centered = sectionIndex - (groupsAbs - 1) * 0.5;
-  const sign = Math.sign(displaceGroups) || 1;
-  return sign * centered * DISPLACE_UNIT;
+function computeXShift(r, rows, groupsValue){
+  if (!Number.isFinite(groupsValue) || rows <= 0) return 0;
+  const sign = Math.sign(groupsValue) || 1;
+  const groupsFloat = Math.max(1, Math.abs(groupsValue));
+  const gLow = Math.floor(groupsFloat);
+  const gHigh = Math.min(rows, Math.max(gLow + 1, gLow));
+  const t = Math.min(1, Math.max(0, groupsFloat - gLow));
+
+  const shiftLow = computeShiftForGroupCount(r, rows, Math.max(1, gLow));
+  const shiftHigh = computeShiftForGroupCount(r, rows, Math.max(1, gHigh));
+  const blended = shiftLow + (shiftHigh - shiftLow) * t;
+  return blended * sign;
+}
+
+function computeShiftForGroupCount(r, rows, groups){
+  if (!Number.isFinite(groups) || groups <= 0) return 0;
+  const groupSize = rows / Math.max(1, groups);
+  const idxRaw = Math.floor(r / Math.max(1e-6, groupSize));
+  const idx = Math.min(groups - 1, Math.max(0, idxRaw));
+  const centered = idx - (groups - 1) * 0.5;
+  return centered * DISPLACE_UNIT;
 }
 
 function fitViewportToWindow(){
