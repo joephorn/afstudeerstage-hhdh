@@ -39,6 +39,8 @@ const COLOR_LINES_DEFAULT      = '#000000';
 const ANIM_MODE_DEFAULT   = 'off';
 const ANIM_PERIOD_DEFAULT = 3.0;
 
+const LOGO_LEFT_SHIFT_PX = 6;
+
 const AUTO_RANDOM_DEFAULT = false;
 
 let TIP_RATIO        = TIP_RATIO_DEFAULT;        // small (tip) cap radius factor relative to big cap (0..1)
@@ -81,6 +83,8 @@ function setChecked(el, value){ if (el) el.checked = !!value; }
 let glyphBuffer;      // offscreen p5.Graphics used for scanning
 let layout;           // computed positions + spans
 let rows = ROWS_DEFAULT;
+let rowsTarget = ROWS_DEFAULT;
+let rowsAnim = ROWS_DEFAULT;
 let linePx = LINE_HEIGHT;
 
 let elRows, elThickness, elWidth, elGap, elGroups, elDispUnit, elPreset, elLogoScale, elAspectW, elAspectH, elCustomAR, elReset;
@@ -170,6 +174,7 @@ function setAuto(on){
 }
 
 let rowYsCanvas = []; // y-position of each row in canvas coordinates
+let rowYsSmooth = [];
 
 // --- Curve + Animation controls ---
 let MOUSE_CURVE = MOUSE_CURVE_DEFAULT;   // 'sine' | 'smoothstep'
@@ -543,8 +548,9 @@ function setup(){
     const logoPct = Math.round(logoScaleMul * 100);
     const repeatPct = Math.round(REPEAT_FILL * 100);
 
-    setValue(elRows, rows);
-    setText(elRowsOut, rows);
+    const rowsDisplay = Math.max(1, Math.round(rowsTarget));
+    setValue(elRows, rowsDisplay);
+    setText(elRowsOut, rowsDisplay);
 
     setValue(elThickness, linePx);
     setText(elThicknessOut, `${linePx} px`);
@@ -817,6 +823,8 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
 
   function resetDefaults(){
     rows = ROWS_DEFAULT;
+    rowsTarget = ROWS_DEFAULT;
+    rowsAnim = ROWS_DEFAULT;
     linePx = LINE_HEIGHT;
     widthScale = WIDTH_SCALE_DEFAULT;
     gapPx = GAP_PX_DEFAULT;
@@ -889,7 +897,8 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
 
   let _signedGroupOptions = [];
   function rebuildGroupsSelect(){
-    _signedGroupOptions = divisorsDescSigned(rows); // [-rows..-1, rows..1]
+    const targetRowsInt = Math.max(1, Math.round(rowsTarget));
+    _signedGroupOptions = divisorsDescSigned(targetRowsInt); // [-rows..-1, rows..1]
 
     // vorige waarde respecteren: zelfde sign, en grootste geldige |v| die ≤ vorige |v|
     const prev = displaceGroupsTarget || 1;
@@ -921,10 +930,10 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
 
   // listeners
   elRows.addEventListener('input', ()=>{
-    rows = parseInt(elRows.value,10);
+    const val = parseInt(elRows.value,10);
+    rowsTarget = Number.isFinite(val) ? Math.max(1, val) : rowsTarget;
     rebuildGroupsSelect();             // behoudt sign en clamp ≤
     updateUIFromState();
-    layout = buildLayout(LOGO_TEXT, rows);
     requestRedraw();
   });
 
@@ -1012,7 +1021,72 @@ function computeLayoutFit(){
   return { tEff, rowPitchNow, leftmost, rightmost, contentW0, contentH0, sFit, left, top };
 }
 
+function remapRowArray(oldArr, newLen){
+  if (newLen <= 0) return [];
+  if (!Array.isArray(oldArr) || oldArr.length === 0){
+    return Array.from({ length: newLen }, () => 0);
+  }
+  if (oldArr.length === 1){
+    return Array.from({ length: newLen }, () => oldArr[0]);
+  }
+  if (newLen === 1){
+    const mid = oldArr[Math.floor((oldArr.length - 1) * 0.5)];
+    return [mid];
+  }
+  const result = new Array(newLen);
+  const maxOldIdx = oldArr.length - 1;
+  for (let i = 0; i < newLen; i++){
+    const t = i / (newLen - 1);
+    const src = t * maxOldIdx;
+    const idx0 = Math.floor(src);
+    const idx1 = Math.min(maxOldIdx, idx0 + 1);
+    const frac = src - idx0;
+    const val0 = oldArr[idx0];
+    const val1 = oldArr[idx1];
+    result[i] = val0 + (val1 - val0) * frac;
+  }
+  return result;
+}
+
+function updateRowYsSmooth(target){
+  const safeTarget = Array.isArray(target) ? target : [];
+  if (!safeTarget.length){
+    rowYsSmooth = [];
+    return 0;
+  }
+  if (rowYsSmooth.length !== safeTarget.length){
+    if (rowYsSmooth.length === 0){
+      rowYsSmooth = safeTarget.slice();
+    } else {
+      rowYsSmooth = remapRowArray(rowYsSmooth, safeTarget.length);
+    }
+  }
+  let maxDelta = 0;
+  const lerpFactor = 0.2;
+  for (let i = 0; i < safeTarget.length; i++){
+    const prev = rowYsSmooth[i];
+    const next = prev + (safeTarget[i] - prev) * lerpFactor;
+    const delta = Math.abs(safeTarget[i] - next);
+    if (delta > maxDelta) maxDelta = delta;
+    rowYsSmooth[i] = next;
+  }
+  return maxDelta;
+}
+
 function renderLogo(g){
+  const targetRowsInt = Math.max(1, Math.round(rowsTarget));
+  if (!Number.isFinite(rowsAnim)) rowsAnim = rows;
+  const rowsEase = 0.2;
+  rowsAnim += (targetRowsInt - rowsAnim) * rowsEase;
+  const rowsAnimInt = Math.max(1, Math.round(rowsAnim));
+  const animatingRows = Math.abs(targetRowsInt - rowsAnim) > 0.01;
+
+  if (rowsAnimInt !== rows){
+    rows = rowsAnimInt;
+    layout = buildLayout(LOGO_TEXT, rows);
+  }
+  if (animatingRows) requestRedraw();
+
   g.push();
   g.background(color1);
   g.fill(color2);
@@ -1078,6 +1152,16 @@ function renderLogo(g){
 
   // (keep txAdj/tyAdj for the final transform below)
 
+  if (rows <= 1){
+    rowYsCanvas = [0];
+  } else {
+    rowYsCanvas = Array.from({ length: rows }, (_, r) => r * rowPitchNow);
+  }
+
+  const rowSmoothDelta = updateRowYsSmooth(rowYsCanvas);
+  if (rowSmoothDelta > 0.2) requestRedraw();
+  const rowPositions = (rowYsSmooth.length === rowYsCanvas.length) ? rowYsSmooth : rowYsCanvas;
+
   // Backdrop lines across the full canvas (pixel space) aligned to row pitch
   if (BG_LINES){
     const pitchPx = rowPitchNow * s;           // spacing between rows in pixels
@@ -1101,16 +1185,10 @@ function renderLogo(g){
   }
 
   // Apply final transform
-  tx = txAdj; ty = tyAdj;
+  tx = txAdj - LOGO_LEFT_SHIFT_PX;
+  ty = tyAdj;
   g.translate(tx, ty);
   g.scale(s, s);
-
-  // Ensure row Y positions are defined for all rows (top at 0), independent of line thickness
-  if (rows <= 1){
-    rowYsCanvas = [0];
-  } else {
-    rowYsCanvas = Array.from({ length: rows }, (_, r) => r * rowPitchNow);
-  }
 
   // Draw all letters with an additional vertical offset in *layout* units
   function drawLettersAtOffset(yOff, mirrored = false){
@@ -1124,7 +1202,10 @@ function renderLogo(g){
 
       for (let r = 0; r < rowsArr.length; r++){
         const tileH = (rows <= 1) ? 0 : (rows - 1) * rowPitchNow;
-        const y = mirrored ? (tileH - rowYsCanvas[r]) + yOff : (rowYsCanvas[r] + yOff);
+        const baseRow = (rowPositions[r] !== undefined)
+          ? rowPositions[r]
+          : (rows <= 1 ? 0 : r * rowPitchNow);
+        const y = mirrored ? (tileH - baseRow) + yOff : (baseRow + yOff);
         for (const span of rowsArr[r]){
           const rightEdgeX = baseX + span.rightRel * layout.scale * wScaleUse; // per-letter stretch
           const baseLen    = Math.max(0, span.runLen * layout.scale * wScaleUse);
