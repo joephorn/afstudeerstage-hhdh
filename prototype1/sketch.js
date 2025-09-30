@@ -851,7 +851,6 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
     animTime = 0;
     stopAnimLoop();
 
-    FIT_MODE = FIT_MODE_DEFAULT;
     ASPECT_W = ASPECT_W_DEFAULT;
     ASPECT_H = ASPECT_H_DEFAULT;
     EXPORT_W = null;
