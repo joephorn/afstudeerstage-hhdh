@@ -86,6 +86,15 @@ let rows = ROWS_DEFAULT;
 let rowsTarget = ROWS_DEFAULT;
 let rowsAnim = ROWS_DEFAULT;
 let linePx = LINE_HEIGHT;
+// --- Taper switch via height collapse/expand ---
+let _lineMul = 1.0;                 // multiplies linePx at draw time (0..1)
+let _taperTransActive = false;      // is a taper transition running?
+let _taperPhase = 'idle';           // 'idle' | 'shrink' | 'expand'
+let _taperPendingMode = null;       // mode to switch to once collapsed
+let _taperT0 = 0;                   // phase start timestamp
+const TAPER_SHRINK_DUR = 0.05;      // seconds
+const TAPER_EXPAND_DUR = 0.1;      // seconds
+const MIN_DRAW_HEIGHT  = 2;    // guard to avoid zero-area issues
 
 let elRows, elThickness, elWidth, elGap, elGroups, elDispUnit, elPreset, elLogoScale, elAspectW, elAspectH, elCustomAR, elReset;
 let elRowsOut, elThicknessOut, elWidthOut, elGapOut, elDispUnitOut, elGroupsOut, elLogoScaleOut;
@@ -193,8 +202,34 @@ function startAnimLoop(){
   _animStart = performance.now();
   const step = (t)=>{
     animTime = (t - _animStart) / 1000.0;
-    if (ANIM_MODE !== 'mouse' && ANIM_MODE !== 'off'){
-      requestRedraw();
+
+    // --- advance taper height transition ---
+    if (_taperTransActive){
+      if (_taperPhase === 'shrink'){
+        const u = Math.min(1, (t - _taperT0) / (TAPER_SHRINK_DUR * 1000));
+        _lineMul = Math.max(0, 1 - u);
+        if (u >= 1){
+          // switch mode at the bottom
+          if (_taperPendingMode){ taperMode = _taperPendingMode; }
+          _taperPendingMode = null;
+          _taperPhase = 'expand';
+          _taperT0 = t;
+        }
+        requestRedraw();
+      } else if (_taperPhase === 'expand'){
+        const u = Math.min(1, (t - _taperT0) / (TAPER_EXPAND_DUR * 1000));
+        _lineMul = Math.max(0, u);
+        if (u >= 1){
+          _taperPhase = 'idle';
+          _taperTransActive = false;
+          _lineMul = 1.0;
+        }
+        requestRedraw();
+      }
+    }
+
+    const needLoop = (ANIM_MODE !== 'mouse' && ANIM_MODE !== 'off') || _taperTransActive;
+    if (needLoop){
       _animRAF = requestAnimationFrame(step);
     } else {
       _animRAF = null;
@@ -473,6 +508,36 @@ function preload(){
   });
 }
 
+function modeFromIndex(idx){
+  switch((idx|0)){
+    case 1: return 'rounded';
+    case 2: return 'straight';
+    case 3: return 'circles';
+    case 4: return 'blocks';
+    case 5: return 'pluses';
+    default: return 'rounded';
+  }
+}
+function indexFromMode(mode){
+  switch(String(mode||'rounded')){
+    case 'rounded': return 1;
+    case 'straight': return 2;
+    case 'circles': return 3;
+    case 'blocks': return 4;
+    case 'pluses': return 5;
+    default: return 1;
+  }
+}
+function triggerTaperSwitch(nextMode){
+  const target = String(nextMode||'rounded');
+  if (target === taperMode){ return; }
+  _taperPendingMode = target;
+  _taperTransActive = true;
+  _taperPhase = 'shrink';
+  _taperT0 = performance.now();
+  startAnimLoop();
+}
+
 function setup(){
   // Warp controls
   mainCanvas = createCanvas(800, 250);
@@ -543,6 +608,9 @@ function setup(){
   const animPeriodCtl     = byId('animPeriod');
   const animPeriodOut     = byId('animPeriodOut');
 
+  const elTaperIndex = byId('taperIndex');
+  const elTaperIndexOut = byId('taperIndexOut');
+
   function updateUIFromState(){
     const widthPct = Math.round(widthScale * 100);
     const logoPct = Math.round(logoScaleMul * 100);
@@ -576,6 +644,9 @@ function setup(){
     setText(elGroupsOut, dgDisplay);
 
     if (elTaper) elTaper.value = taperMode;
+
+    if (elTaperIndex){ elTaperIndex.min = '1'; elTaperIndex.max = '5'; elTaperIndex.step = '1'; elTaperIndex.value = String(indexFromMode(taperMode)); }
+    if (elTaperIndexOut){ elTaperIndexOut.textContent = String(indexFromMode(taperMode)); }
 
     setChecked(elDebug, debugMode);
     setChecked(elAuto, autoRandomActive);
@@ -740,12 +811,19 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
     elTaper.value = taperMode;
     elTaper.addEventListener('change', () => {
       const v = String(elTaper.value || '').toLowerCase();
-      if (v === 'rounded' || v === 'straight' || v === 'circles' || v === 'blocks' || v === 'pluses') {
-        taperMode = v;
-      } else {
-        taperMode = TAPER_MODE_DEFAULT;
-      }
-      requestRedraw();
+      const valid = (v === 'rounded' || v === 'straight' || v === 'circles' || v === 'blocks' || v === 'pluses');
+      const next = valid ? v : TAPER_MODE_DEFAULT;
+      triggerTaperSwitch(next);
+      updateUIFromState();
+    });
+  }
+
+  if (elTaperIndex){
+    elTaperIndex.addEventListener('input', ()=>{
+      const idx = Math.max(1, Math.min(5, parseInt(elTaperIndex.value,10)||1));
+      const next = modeFromIndex(idx);
+      if (elTaperIndexOut) elTaperIndexOut.textContent = String(idx);
+      triggerTaperSwitch(next);
     });
   }
   if (elLogoScale){
@@ -1213,22 +1291,23 @@ function renderLogo(g){
           const dashLenClamped = Math.min(baseLen, maxDash);
           const xShift = computeXShift(r, rows, displaceGroupsAnim);
           const rx = rightEdgeX + xShift;
+          const drawH = Math.max(MIN_DRAW_HEIGHT, linePx * _lineMul);
           switch (taperMode) {
             case 'straight':
-              drawStraightTaper(g, rx, y, dashLenClamped, linePx);
+              drawStraightTaper(g, rx, y, dashLenClamped, drawH);
               break;
             case 'circles':
-              drawCircleTaper(g, rx, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
+              drawCircleTaper(g, rx, y, dashLenClamped, drawH, TIP_RATIO, END_RATIO);
               break;
             case 'blocks':
-              drawBlockTaper(g, rx, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
+              drawBlockTaper(g, rx, y, dashLenClamped, drawH, TIP_RATIO, END_RATIO);
               break;
             case 'pluses':
-              drawPlusTaper(g, rx, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
+              drawPlusTaper(g, rx, y, dashLenClamped, drawH, TIP_RATIO, END_RATIO);
               break;
             case 'rounded':
             default:
-              drawRoundedTaper(g, rx, y, dashLenClamped, linePx, TIP_RATIO, END_RATIO);
+              drawRoundedTaper(g, rx, y, dashLenClamped, drawH, TIP_RATIO, END_RATIO);
               break;
           }
         }

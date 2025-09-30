@@ -115,17 +115,15 @@
             <input id="dispUnit" type="range" min="0" max="80" step="1" value="28" />
           </div>
           <div class="control-field">
-            <label class="control-label control-label--spaced" for="taper">
-              <span>Lijn</span>
-            </label>
-            <select id="taper" class="control-select control-select--tight">
-              <option value="rounded" selected>Taper</option>
-              <option value="straight">Recht</option>
-              <option value="circles">Cirkel</option>
-              <option value="blocks">Blok</option>
-              <option value="pluses">Plus</option>
-            </select>
+          <label class="control-label" for="taperIndex">
+            <span>Lijn (taper)</span>
+            <span id="taperIndexOut" class="sub">1</span>
+          </label>
+          <input id="taperIndex" type="range" min="1" max="5" step="1" value="1" />
+          <div class="sub" style="margin-top:4px; opacity:.75">
+            1=Rounded · 2=Straight · 3=Circles · 4=Blocks · 5=Pluses
           </div>
+        </div>
         </section>
 
         <section class="control-section">
