@@ -31,10 +31,14 @@ const BG_LINES_DEFAULT         = false;
 const REPEAT_V_DEFAULT         = false;
 const REPEAT_MIRROR_DEFAULT    = false;
 const REPEAT_FILL_DEFAULT      = 0;
+const REPEAT_WEIGHT_EXP_DEFAULT = 1.6;
+const REPEAT_UNIFORM_DEFAULT   = false;
 
 const COLOR_BACKGROUND_DEFAULT = '#ffffff';
 const COLOR_LOGO_DEFAULT       = '#000000';
 const COLOR_LINES_DEFAULT      = '#000000';
+
+const PARAM_EASE_FACTOR        = 0.2;
 
 const ANIM_MODE_DEFAULT   = 'off';
 const ANIM_PERIOD_DEFAULT = 3.0;
@@ -86,6 +90,7 @@ let rows = ROWS_DEFAULT;
 let rowsTarget = ROWS_DEFAULT;
 let rowsAnim = ROWS_DEFAULT;
 let linePx = LINE_HEIGHT;
+let linePxTarget = LINE_HEIGHT;
 // --- Taper switch via height collapse/expand ---
 let _lineMul = 1.0;                 // multiplies linePx at draw time (0..1)
 let _taperTransActive = false;      // is a taper transition running?
@@ -98,9 +103,10 @@ const MIN_DRAW_HEIGHT  = 2;    // guard to avoid zero-area issues
 
 let elRows, elThickness, elWidth, elGap, elGroups, elDispUnit, elPreset, elLogoScale, elAspectW, elAspectH, elCustomAR, elReset;
 let elRowsOut, elThicknessOut, elWidthOut, elGapOut, elDispUnitOut, elGroupsOut, elLogoScaleOut;
-let elTaper, elDebug, elAuto;
+let elTaper, elTaperIndex, elTaperIndexOut, elColorPreset, elColorPresetLabel, elRepeatFalloff, elRepeatFalloffOut, elRepeatUniform, elDebug, elAuto;
 let elTipRatio, elTipOut;
 let gapPx = GAP_PX_DEFAULT;
+let gapPxTarget = GAP_PX_DEFAULT;
 let displaceGroupsTarget = DISPLACE_GROUPS_DEFAULT;
 let displaceGroupsAnim = DISPLACE_GROUPS_DEFAULT;
 let taperMode = TAPER_MODE_DEFAULT;
@@ -108,6 +114,9 @@ let debugMode = DEBUG_MODE_DEFAULT;
 let widthScale = WIDTH_SCALE_DEFAULT;
 
 let logoScaleMul = LOGO_SCALE_DEFAULT;
+let DISPLACE_UNIT_TARGET = DISPLACE_UNIT_DEFAULT;
+let TIP_RATIO_TARGET = TIP_RATIO_DEFAULT;
+let _layoutDirty = false;
 
 // --- Per-letter stretch (mouseX-weighted) ---
 let PER_LETTER_STRETCH = PER_LETTER_STRETCH_DEFAULT;   // toggle on/off
@@ -133,7 +142,8 @@ let REPEAT_V = REPEAT_V_DEFAULT;
 let REPEAT_MIRROR = REPEAT_MIRROR_DEFAULT;     // if true, every 2nd vertical repeat is mirrored
 let REPEAT_FILL = REPEAT_FILL_DEFAULT;           // 0..1 progress: 0 = none, 1 = volledige vulling
 const REPEAT_MAX_BANDS = 6;    // aantal stroken per zijde in eindtoestand
-const REPEAT_WEIGHT_EXP = 1.6; // >1 = snellere afname in bandhoogte
+let REPEAT_WEIGHT_EXP = REPEAT_WEIGHT_EXP_DEFAULT; // >1 = snellere afname in bandhoogte
+let REPEAT_UNIFORM = REPEAT_UNIFORM_DEFAULT;
 let COLOR_COMBOS = [];
 let activeColorComboIdx = 0;
 
@@ -250,8 +260,11 @@ function computeProgressiveBandHeights(avail, fillFrac, count){
 
   const weights = new Array(n);
   let sumWeights = 0;
+  const exp = Math.max(0, Number.isFinite(REPEAT_WEIGHT_EXP) ? REPEAT_WEIGHT_EXP : REPEAT_WEIGHT_EXP_DEFAULT);
   for (let i = 0; i < n; i++){
-    const weight = Math.pow((n - i), Math.max(0.1, REPEAT_WEIGHT_EXP));
+    const weight = (exp <= 0)
+      ? 1
+      : Math.pow((n - i), Math.max(0.1, exp));
     weights[i] = weight;
     sumWeights += weight;
   }
@@ -421,62 +434,169 @@ function randFromInputFloat(el, fallbackMin, fallbackMax, fallbackStep){
   return val;
 }
 
-function applyRandomTweaks(){
-  const mutators = [];
+function smoothToward(current, target, ease = PARAM_EASE_FACTOR){
+  if (!Number.isFinite(current)) current = 0;
+  if (!Number.isFinite(target)) target = current;
+  const diff = target - current;
+  if (Math.abs(diff) < 1e-3) return { value: target, changed: false, animating: false };
+  const next = current + diff * ease;
+  if (Math.abs(target - next) < 1e-3){
+    return { value: target, changed: true, animating: false };
+  }
+  return { value: next, changed: true, animating: true };
+}
 
-  // Line thickness
-  if (elThickness) mutators.push(()=>{
-    linePx = randFromInputInt(elThickness, 1, 25, 1);
-    elThickness.value = linePx;
-    if (elThicknessOut) elThicknessOut.textContent = `${linePx} px`;
+function updateAnimatedParameters(){
+  let animating = false;
+  let layoutNeedsRebuild = false;
+
+  const lineStep = smoothToward(linePx, linePxTarget);
+  if (lineStep.changed) linePx = lineStep.value;
+  if (lineStep.animating) animating = true;
+
+  const gapStep = smoothToward(gapPx, gapPxTarget);
+  if (gapStep.changed){
+    gapPx = gapStep.value;
+    layoutNeedsRebuild = true;
+  }
+  if (gapStep.animating) animating = true;
+
+  const dispStep = smoothToward(DISPLACE_UNIT, DISPLACE_UNIT_TARGET);
+  if (dispStep.changed){
+    DISPLACE_UNIT = dispStep.value;
+    layoutNeedsRebuild = true;
+  }
+  if (dispStep.animating) animating = true;
+
+  const tipStep = smoothToward(TIP_RATIO, TIP_RATIO_TARGET);
+  if (tipStep.changed) TIP_RATIO = tipStep.value;
+  if (tipStep.animating) animating = true;
+
+  if (layoutNeedsRebuild) _layoutDirty = true;
+  if (animating) requestRedraw();
+}
+
+function applyRandomTweaks(){
+  let mutated = false;
+
+  const setAndDispatch = (el, value, type = 'input') => {
+    if (!el) return;
+    el.value = String(value);
+    el.dispatchEvent(new Event(type, { bubbles: true }));
+    mutated = true;
+  };
+
+  const maybe = (chance, fn) => {
+    if (Math.random() <= chance) fn();
+  };
+
+  maybe(0.9, ()=>{
+    if (!elRows) return;
+    const { min, max, step } = getInputRange(elRows, 4, 32, 1);
+    const val = randFromRangeInt(Math.round(Math.max(1, min)), Math.round(Math.max(min, max)), Math.max(1, Math.round(step || 1)));
+    setAndDispatch(elRows, val, 'input');
   });
 
-  // Displacement groups
-  mutators.push(()=>{
-    const opts = divisorsDescSigned(rows);
-    if (opts && opts.length){
-      const curIdx = Math.max(0, opts.indexOf(displaceGroupsTarget));
-      let newIdx = randInt(0, opts.length - 1);
-      if (opts.length > 1 && newIdx === curIdx) newIdx = (newIdx + 1) % opts.length;
-      displaceGroupsTarget = opts[newIdx];
-      if (elGroups){
-        elGroups.min = 0; elGroups.max = Math.max(0, opts.length - 1); elGroups.step = 1; elGroups.value = newIdx;
-      }
-      if (elGroupsOut) elGroupsOut.textContent = String(displaceGroupsTarget);
+  maybe(0.8, ()=>{
+    if (!elThickness) return;
+    const { min, max, step } = getInputRange(elThickness, 1, 25, 1);
+    const val = randFromRangeInt(Math.round(Math.max(1, min)), Math.round(Math.max(min, max)), Math.max(1, Math.round(step || 1)));
+    setAndDispatch(elThickness, val, 'input');
+  });
+
+  maybe(0.75, ()=>{
+    if (!elGap) return;
+    const { min, max, step } = getInputRange(elGap, -20, 150, 1);
+    const val = randFromRangeInt(min, Math.min(150, max), Math.max(0.1, step || 1));
+    setAndDispatch(elGap, val, 'input');
+  });
+
+  maybe(0.75, ()=>{
+    if (!elWidth) return;
+    const { min, max, step } = getInputRange(elWidth, 10, 150, 1);
+    const pct = randFromRangeInt(Math.max(10, min), Math.min(150, max), Math.max(0.1, step || 1));
+    setAndDispatch(elWidth, pct, 'input');
+  });
+
+  maybe(0.7, ()=>{
+    if (!elDispUnit) return;
+    const { min, max, step } = getInputRange(elDispUnit, 0, 80, 1);
+    const val = randFromRangeInt(Math.max(0, min), Math.max(min, max), Math.max(0.1, step || 1));
+    setAndDispatch(elDispUnit, val, 'input');
+  });
+
+  maybe(0.7, ()=>{
+    if (!elTipRatio) return;
+    const { min, max, step } = getInputRange(elTipRatio, 0, 1, 0.01);
+    const val = randFromRangeInt(Math.max(0, min), Math.min(1, max), Math.max(0.001, step || 0.01));
+    setAndDispatch(elTipRatio, Number(val.toFixed(2)), 'input');
+  });
+
+  maybe(0.6, ()=>{
+    if (!elTaperIndex) return;
+    const { min, max } = getInputRange(elTaperIndex, 1, 5, 1);
+    const val = randInt(Math.round(Math.max(1, min)), Math.round(Math.max(min, max)) || 5);
+    setAndDispatch(elTaperIndex, val, 'input');
+  });
+
+  maybe(0.65, ()=>{
+    if (!elGroups) return;
+    const min = parseInt(elGroups.min || '0', 10) || 0;
+    const max = parseInt(elGroups.max || '0', 10) || 0;
+    if (max >= min) setAndDispatch(elGroups, randInt(min, max), 'input');
+  });
+
+  maybe(0.7, ()=>{
+    if (!elExtrudeDepth) return;
+    const { min, max, step } = getInputRange(elExtrudeDepth, EXTRUDE_DEPTH_MIN, EXTRUDE_DEPTH_MAX, 1);
+    const val = randFromRangeInt(Math.max(EXTRUDE_DEPTH_MIN, min), Math.min(EXTRUDE_DEPTH_MAX, max), Math.max(0.1, step || 1));
+    setAndDispatch(elExtrudeDepth, val, 'input');
+  });
+
+  maybe(0.6, ()=>{
+    if (!elRotX) return;
+    const { min, max, step } = getInputRange(elRotX, ROT_X_MIN_DEFAULT, ROT_X_MAX_DEFAULT, 1);
+    const val = randFromRangeInt(min, max, Math.max(0.1, step || 1));
+    setAndDispatch(elRotX, val, 'input');
+  });
+
+  maybe(0.6, ()=>{
+    if (!elColorPreset) return;
+    const count = elColorPreset.options ? elColorPreset.options.length : 0;
+    if (count <= 0) return;
+    let idx = randInt(0, count - 1);
+    if (count > 1 && idx === activeColorComboIdx) idx = (idx + 1) % count;
+    setAndDispatch(elColorPreset, idx, 'change');
+  });
+
+  maybe(0.6, ()=>{
+    if (!elRepeatFalloff) return;
+    const { min, max, step } = getInputRange(elRepeatFalloff, 0, 3, 0.05);
+    const val = randFromRangeInt(Math.max(0, min), Math.max(min, max), Math.max(0.001, step || 0.05));
+    setAndDispatch(elRepeatFalloff, Number(val.toFixed(2)), 'input');
+  });
+
+  maybe(0.5, ()=>{
+    if (!elRepeatUniform) return;
+    const choice = Math.random() < 0.5;
+    elRepeatUniform.checked = choice;
+    elRepeatUniform.dispatchEvent(new Event('change', { bubbles: true }));
+    mutated = true;
+  });
+
+  if (!mutated){
+    if (elRows){
+      const { min, max, step } = getInputRange(elRows, 4, 32, 1);
+      const val = randFromRangeInt(Math.round(Math.max(1, min)), Math.round(Math.max(min, max)), Math.max(1, Math.round(step || 1)));
+      setAndDispatch(elRows, val, 'input');
+    } else {
       requestRedraw();
     }
-  });
-
-  // Displacement unit
-  if (elDispUnit) mutators.push(()=>{
-    DISPLACE_UNIT = randFromInputInt(elDispUnit, 0, 80, 1);
-    elDispUnit.value = DISPLACE_UNIT;
-    if (elDispUnitOut) elDispUnitOut.textContent = `${DISPLACE_UNIT} px`;
-  });
-
-  // Tip ratio
-  if (elTipRatio) mutators.push(()=>{
-    TIP_RATIO = randFromInputFloat(elTipRatio, 0, 1, 0.01);
-    elTipRatio.value = TIP_RATIO.toFixed(2);
-    if (elTipOut) elTipOut.textContent = TIP_RATIO.toFixed(2);
-  });
-
-  if (!mutators.length) return false;
-
-  // Kies k mutators (1..all) zonder herhaling
-  const k = randInt(1, mutators.length);
-  const pool = mutators.slice();
-  for (let i = pool.length - 1; i > 0; i--){
-    const j = Math.floor(Math.random() * (i + 1));
-    [pool[i], pool[j]] = [pool[j], pool[i]];
   }
-  for (let i = 0; i < k; i++) pool[i]();
 
-  // Rebuild layout (gap beïnvloedt posities; rebuild is goedkoop genoeg hier)
-  layout = buildLayout(LOGO_TEXT, rows);
-  requestRedraw();
-  return true;
+  return mutated;
 }
+
 
 function preload(){
   const rawCombos = Array.isArray(window.COLOR_COMBINATIONS) ? window.COLOR_COMBINATIONS : [];
@@ -599,8 +719,11 @@ function setup(){
   const elRepeatMirror    = byId('repeatMirror');
   const elRepeatFill      = byId('repeatFill');
   const elRepeatFillOut   = byId('repeatFillOut');
-  const elColorPreset     = byId('colorPreset');
-  const elColorPresetLabel= byId('colorPresetLabel');
+  elRepeatFalloff         = byId('repeatFalloff');
+  elRepeatFalloffOut      = byId('repeatFalloffOut');
+  elRepeatUniform         = byId('repeatUniform');
+  elColorPreset     = byId('colorPreset');
+  elColorPresetLabel= byId('colorPresetLabel');
   const btnCurveSine      = byId('curveSine');
   const btnCurveSmooth    = byId('curveSmooth');
   const powerCtl          = byId('powerCtl');
@@ -608,8 +731,8 @@ function setup(){
   const animPeriodCtl     = byId('animPeriod');
   const animPeriodOut     = byId('animPeriodOut');
 
-  const elTaperIndex = byId('taperIndex');
-  const elTaperIndexOut = byId('taperIndexOut');
+  elTaperIndex = byId('taperIndex');
+  elTaperIndexOut = byId('taperIndexOut');
 
   function updateUIFromState(){
     const widthPct = Math.round(widthScale * 100);
@@ -620,23 +743,23 @@ function setup(){
     setValue(elRows, rowsDisplay);
     setText(elRowsOut, rowsDisplay);
 
-    setValue(elThickness, linePx);
-    setText(elThicknessOut, `${linePx} px`);
+    setValue(elThickness, Math.round(linePxTarget));
+    setText(elThicknessOut, `${Math.round(linePxTarget)} px`);
 
     setValue(elWidth, widthPct);
     setText(elWidthOut, `${widthPct} %`);
 
-    setValue(elGap, gapPx);
-    setText(elGapOut, `${gapPx} px`);
+    setValue(elGap, Math.round(gapPxTarget));
+    setText(elGapOut, `${Math.round(gapPxTarget)} px`);
 
     setValue(elLogoScale, logoPct);
     setText(elLogoScaleOut, `${logoPct} %`);
 
-    setValue(elDispUnit, DISPLACE_UNIT);
-    setText(elDispUnitOut, `${DISPLACE_UNIT} px`);
+    setValue(elDispUnit, Math.round(DISPLACE_UNIT_TARGET));
+    setText(elDispUnitOut, `${Math.round(DISPLACE_UNIT_TARGET)} px`);
 
-    setValue(elTipRatio, TIP_RATIO.toFixed(2));
-    setText(elTipOut, TIP_RATIO.toFixed(2));
+    setValue(elTipRatio, TIP_RATIO_TARGET.toFixed(2));
+    setText(elTipOut, TIP_RATIO_TARGET.toFixed(2));
 
     const dgDisplay = (Math.abs(displaceGroupsTarget - Math.round(displaceGroupsTarget)) < 1e-3)
       ? String(Math.round(displaceGroupsTarget))
@@ -657,6 +780,12 @@ function setup(){
 
     if (elRepeatFill) setValue(elRepeatFill, repeatPct);
     setText(elRepeatFillOut, `${repeatPct}%`);
+    if (elRepeatFalloff){
+      const falloffDisp = REPEAT_WEIGHT_EXP.toFixed(2);
+      elRepeatFalloff.value = falloffDisp;
+      if (elRepeatFalloffOut) elRepeatFalloffOut.textContent = falloffDisp;
+    }
+    if (elRepeatUniform) setChecked(elRepeatUniform, REPEAT_UNIFORM);
 
     if (powerCtl){
       powerCtl.value = String(MOUSE_AMPLITUDE);
@@ -707,19 +836,36 @@ function setup(){
   }
 
 // Vertical repeat: schermvulling (0 = none, 100 = volledige ruimte)
-if (elRepeatFill){
-  if (!elRepeatFill.min)  elRepeatFill.min = '0';
-  if (!elRepeatFill.max)  elRepeatFill.max = '100';
-  if (!elRepeatFill.step) elRepeatFill.step = '1';
-  setValue(elRepeatFill, Math.round(REPEAT_FILL * 100));
-  setText(elRepeatFillOut, `${Math.round(REPEAT_FILL * 100)}%`);
-  elRepeatFill.addEventListener('input', ()=>{
-    const val = Math.max(0, Math.min(100, parseFloat(elRepeatFill.value) || 0));
-    REPEAT_FILL = val / 100;
-    updateUIFromState();
-    requestRedraw();
-  });
-}
+  if (elRepeatFill){
+    if (!elRepeatFill.min)  elRepeatFill.min = '0';
+    if (!elRepeatFill.max)  elRepeatFill.max = '100';
+    if (!elRepeatFill.step) elRepeatFill.step = '1';
+    setValue(elRepeatFill, Math.round(REPEAT_FILL * 100));
+    setText(elRepeatFillOut, `${Math.round(REPEAT_FILL * 100)}%`);
+    elRepeatFill.addEventListener('input', ()=>{
+      const val = Math.max(0, Math.min(100, parseFloat(elRepeatFill.value) || 0));
+      REPEAT_FILL = val / 100;
+      updateUIFromState();
+      requestRedraw();
+    });
+  }
+
+  if (elRepeatFalloff){
+    elRepeatFalloff.addEventListener('input', ()=>{
+      const val = parseFloat(elRepeatFalloff.value);
+      REPEAT_WEIGHT_EXP = Number.isFinite(val) ? Math.max(0, val) : REPEAT_WEIGHT_EXP;
+      updateUIFromState();
+      requestRedraw();
+    });
+  }
+
+  if (elRepeatUniform){
+    elRepeatUniform.addEventListener('change', ()=>{
+      REPEAT_UNIFORM = !!elRepeatUniform.checked;
+      updateUIFromState();
+      requestRedraw();
+    });
+  }
 
 function updateColorPresetLabel(idx){
   if (!elColorPresetLabel) return;
@@ -886,14 +1032,19 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
   if (elTipRatio) elTipRatio.step = String(TIP_RATIO_SLIDER_STEP);
   if (elDispUnit){
     elDispUnit.addEventListener('input', ()=>{
-      DISPLACE_UNIT = parseInt(elDispUnit.value, 10) || 0;
+      const val = parseInt(elDispUnit.value, 10);
+      if (!Number.isFinite(val)) return;
+      DISPLACE_UNIT_TARGET = val;
+      _layoutDirty = true;
       updateUIFromState();
       requestRedraw();
     });
   }
   if (elTipRatio){
     elTipRatio.addEventListener('input', ()=>{
-      TIP_RATIO = Math.max(0, Math.min(1, parseFloat(elTipRatio.value)));
+      const raw = parseFloat(elTipRatio.value);
+      if (!Number.isFinite(raw)) return;
+      TIP_RATIO_TARGET = Math.max(0, Math.min(1, raw));
       updateUIFromState();
       requestRedraw();
     });
@@ -904,12 +1055,16 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
     rowsTarget = ROWS_DEFAULT;
     rowsAnim = ROWS_DEFAULT;
     linePx = LINE_HEIGHT;
+    linePxTarget = LINE_HEIGHT;
     widthScale = WIDTH_SCALE_DEFAULT;
     gapPx = GAP_PX_DEFAULT;
+    gapPxTarget = GAP_PX_DEFAULT;
     displaceGroupsTarget = DISPLACE_GROUPS_DEFAULT;
     displaceGroupsAnim = DISPLACE_GROUPS_DEFAULT;
     DISPLACE_UNIT = DISPLACE_UNIT_DEFAULT;
+    DISPLACE_UNIT_TARGET = DISPLACE_UNIT_DEFAULT;
     TIP_RATIO = TIP_RATIO_DEFAULT;
+    TIP_RATIO_TARGET = TIP_RATIO_DEFAULT;
     taperMode = TAPER_MODE_DEFAULT;
     logoScaleMul = LOGO_SCALE_DEFAULT;
 
@@ -923,6 +1078,8 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
     REPEAT_V = REPEAT_V_DEFAULT;
     REPEAT_MIRROR = REPEAT_MIRROR_DEFAULT;
     REPEAT_FILL = REPEAT_FILL_DEFAULT;
+    REPEAT_WEIGHT_EXP = REPEAT_WEIGHT_EXP_DEFAULT;
+    REPEAT_UNIFORM = REPEAT_UNIFORM_DEFAULT;
 
     PER_LETTER_STRETCH = PER_LETTER_STRETCH_DEFAULT;
     MOUSE_STRETCH_SIGMA_FRAC = MOUSE_STRETCH_SIGMA_FRAC_DEFAULT;
@@ -965,6 +1122,7 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
       targetContentH = refTargetH;
       baseRowPitch = refTargetH / (rows - 1);
     }
+    _layoutDirty = true;
     layout = buildLayout(LOGO_TEXT, rows);
 
     fitViewportToWindow();
@@ -1016,7 +1174,9 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
   });
 
   elThickness.addEventListener('input', ()=>{
-    linePx = parseInt(elThickness.value,10);
+    const val = parseInt(elThickness.value,10);
+    if (!Number.isFinite(val)) return;
+    linePxTarget = Math.max(1, val);
     updateUIFromState();
     requestRedraw();
   });
@@ -1028,9 +1188,11 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
   });
 
   elGap.addEventListener('input', ()=>{
-    gapPx = parseInt(elGap.value,10);
+    const val = parseInt(elGap.value,10);
+    if (!Number.isFinite(val)) return;
+    gapPxTarget = val;
+    _layoutDirty = true;
     updateUIFromState();
-    layout = buildLayout(LOGO_TEXT, rows);
     requestRedraw();
   });
 
@@ -1152,6 +1314,11 @@ function updateRowYsSmooth(target){
 }
 
 function renderLogo(g){
+  updateAnimatedParameters();
+  if (_layoutDirty){
+    layout = buildLayout(LOGO_TEXT, rows);
+    _layoutDirty = false;
+  }
   const targetRowsInt = Math.max(1, Math.round(rowsTarget));
   if (!Number.isFinite(rowsAnim)) rowsAnim = rows;
   const rowsEase = 0.2;
@@ -1331,8 +1498,19 @@ function renderLogo(g){
       const availDownPx = Math.max(0, height - baseBotPx);
       const availUpPx   = Math.max(0, baseTopPx);
 
-      const downHeights = computeProgressiveBandHeights(availDownPx / s, fillFrac, REPEAT_MAX_BANDS);
-      const upHeights   = computeProgressiveBandHeights(availUpPx   / s, fillFrac, REPEAT_MAX_BANDS);
+      let downHeights;
+      let upHeights;
+      if (REPEAT_UNIFORM){
+        const approx = fillFrac * REPEAT_MAX_BANDS;
+        const baseCount = Math.floor(approx);
+        const addPartial = (approx - baseCount) > 1e-3 ? 1 : 0;
+        const count = Math.max(0, baseCount + addPartial);
+        downHeights = Array.from({ length: count }, () => HlogoFull);
+        upHeights   = Array.from({ length: count }, () => HlogoFull);
+      } else {
+        downHeights = computeProgressiveBandHeights(availDownPx / s, fillFrac, REPEAT_MAX_BANDS);
+        upHeights   = computeProgressiveBandHeights(availUpPx   / s, fillFrac, REPEAT_MAX_BANDS);
+      }
 
       let cursorDownTopLayout = HlogoCore + halfStroke;
       for (let i = 0; i < downHeights.length; i++){
