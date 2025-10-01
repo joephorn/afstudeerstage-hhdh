@@ -37,7 +37,7 @@ const COLOR_BACKGROUND_DEFAULT = '#ffffff';
 const COLOR_LOGO_DEFAULT       = '#000000';
 const COLOR_LINES_DEFAULT      = '#000000';
 
-const PARAM_EASE_FACTOR        = 0.2;
+const PARAM_EASE_FACTOR        = 0.1;
 
 const ANIM_MODE_DEFAULT   = 'off';
 const ANIM_PERIOD_DEFAULT = 3.0;
@@ -142,6 +142,8 @@ let REPEAT_ENABLED = REPEAT_ENABLED_DEFAULT;
 let REPEAT_MIRROR = REPEAT_MIRROR_DEFAULT;
 let REPEAT_EXTRA_ROWS = REPEAT_EXTRA_ROWS_DEFAULT;
 let _repeatExtraRowsMax = Math.max(0, ROWS_DEFAULT - 1);
+// Animated version of EXTRA_ROWS (for eased transitions)
+let REPEAT_EXTRA_ROWS_ANIM = (Number.isFinite(REPEAT_EXTRA_ROWS_DEFAULT) ? REPEAT_EXTRA_ROWS_DEFAULT : 0);
 let COLOR_COMBOS = [];
 let activeColorComboIdx = 0;
 
@@ -214,7 +216,7 @@ function updateRepeatSlidersRange(){
   const sBase  = innerW / refW;
   const s      = Math.max(0.01, sBase * FIT_FRACTION * logoScaleMul);
   const pitchPx = fit.rowPitchNow * s;
-  const visRows = (pitchPx > 0) ? Math.floor(height / pitchPx) / 2 : 0;
+  const visRows = Math.floor(height / pitchPx) / 2;
   const maxExtra = Math.max(0, visRows);
   _repeatExtraRowsMax = maxExtra;
 
@@ -518,6 +520,14 @@ function updateAnimatedParameters(){
   if (tipStep.changed) TIP_RATIO = tipStep.value;
   if (tipStep.animating) animating = true;
 
+  // Ease the visible repeat extra rows toward the target (Infinity maps to current max)
+  const targetExtraNumeric = Number.isFinite(REPEAT_EXTRA_ROWS)
+    ? Math.max(0, REPEAT_EXTRA_ROWS)
+    : Math.max(0, _repeatExtraRowsMax);
+  const extraStep = smoothToward(REPEAT_EXTRA_ROWS_ANIM, targetExtraNumeric);
+  if (extraStep.changed) REPEAT_EXTRA_ROWS_ANIM = extraStep.value;
+  if (extraStep.animating) animating = true;
+
   if (layoutNeedsRebuild) _layoutDirty = true;
   if (animating) requestRedraw();
 }
@@ -593,58 +603,12 @@ function applyRandomTweaks(){
   });
 
   maybe(0.6, ()=>{
-    if (!elRepeatEnabled) return;
-    const choice = Math.random() < 0.5;
-    elRepeatEnabled.checked = choice;
-    elRepeatEnabled.dispatchEvent(new Event('change', { bubbles: true }));
-    mutated = true;
-  });
-
-  maybe(0.6, ()=>{
-    if (!elRepeatExtraRows) return;
-    const max = parseInt(elRepeatExtraRows.max || '0', 10) || 0;
-    const val = (max > 0) ? randInt(0, max) : 0;
-    elRepeatExtraRows.value = String(val);
-    elRepeatExtraRows.dispatchEvent(new Event('input', { bubbles: true }));
-    mutated = true;
-  });
-
-  maybe(0.7, ()=>{
-    if (!elExtrudeDepth) return;
-    const { min, max, step } = getInputRange(elExtrudeDepth, EXTRUDE_DEPTH_MIN, EXTRUDE_DEPTH_MAX, 1);
-    const val = randFromRangeInt(Math.max(EXTRUDE_DEPTH_MIN, min), Math.min(EXTRUDE_DEPTH_MAX, max), Math.max(0.1, step || 1));
-    setAndDispatch(elExtrudeDepth, val, 'input');
-  });
-
-  maybe(0.6, ()=>{
-    if (!elRotX) return;
-    const { min, max, step } = getInputRange(elRotX, ROT_X_MIN_DEFAULT, ROT_X_MAX_DEFAULT, 1);
-    const val = randFromRangeInt(min, max, Math.max(0.1, step || 1));
-    setAndDispatch(elRotX, val, 'input');
-  });
-
-  maybe(0.6, ()=>{
     if (!elColorPreset) return;
     const count = elColorPreset.options ? elColorPreset.options.length : 0;
     if (count <= 0) return;
     let idx = randInt(0, count - 1);
     if (count > 1 && idx === activeColorComboIdx) idx = (idx + 1) % count;
     setAndDispatch(elColorPreset, idx, 'change');
-  });
-
-  maybe(0.6, ()=>{
-    if (!elRepeatFalloff) return;
-    const { min, max, step } = getInputRange(elRepeatFalloff, 0, 3, 0.05);
-    const val = randFromRangeInt(Math.max(0, min), Math.max(min, max), Math.max(0.001, step || 0.05));
-    setAndDispatch(elRepeatFalloff, Number(val.toFixed(2)), 'input');
-  });
-
-  maybe(0.5, ()=>{
-    if (!elRepeatUniform) return;
-    const choice = Math.random() < 0.5;
-    elRepeatUniform.checked = choice;
-    elRepeatUniform.dispatchEvent(new Event('change', { bubbles: true }));
-    mutated = true;
   });
 
   if (!mutated){
@@ -1101,6 +1065,7 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
     REPEAT_ENABLED = REPEAT_ENABLED_DEFAULT;
     REPEAT_MIRROR = REPEAT_MIRROR_DEFAULT;
     REPEAT_EXTRA_ROWS = REPEAT_EXTRA_ROWS_DEFAULT;
+    REPEAT_EXTRA_ROWS_ANIM = (Number.isFinite(REPEAT_EXTRA_ROWS_DEFAULT) ? REPEAT_EXTRA_ROWS_DEFAULT : 0);
     updateRepeatSlidersRange();
 
     PER_LETTER_STRETCH = PER_LETTER_STRETCH_DEFAULT;
@@ -1464,6 +1429,9 @@ function renderLogo(g){
   function drawLettersSubset(yOff, mirrored = false, rowStart = 0, rowEnd = maxRowIdx){
     const start = Math.max(0, Math.min(maxRowIdx, rowStart | 0));
     const end = Math.max(start, Math.min(maxRowIdx, rowEnd | 0));
+    // Compute windowRows for tileH in layout units only
+    const windowRows = Math.max(0, end - start);
+    const tileH = (rows <= 1) ? 0 : (windowRows * rowPitchNow);
     for (let li = 0; li < layout.lettersOrder.length; li++){
       const letterKey   = layout.lettersOrder[li];
       const rowsArr = layout.letters[letterKey];
@@ -1473,7 +1441,6 @@ function renderLogo(g){
       const wScaleUse = letterBaseScaledW > 0 ? (wUse / letterBaseScaledW) : widthScale;
       for (let r = start; r <= end; r++){
         const spans = rowsArr[r] || [];
-        const tileH = (rows <= 1) ? 0 : (rows - 1) * rowPitchNow;
         const baseRow = (rowPositions[r] !== undefined)
           ? rowPositions[r]
           : (rows <= 1 ? 0 : r * rowPitchNow);
@@ -1513,29 +1480,28 @@ function renderLogo(g){
   drawLettersSubset(0, false, 0, maxRowIdx);
 
   if (REPEAT_ENABLED && rows > 0){
-    const HlogoCore   = Math.max(0, (rows - 1) * rowPitchNow);
-    const halfStroke  = 0;
-    const HlogoFull   = HlogoCore + linePx;
-    const stepLayout  = HlogoFull + rowPitchNow;
-    const stepPx      = stepLayout * s;
+    // All in layout units (multiples of rowPitchNow) for perfect alignment
+    const HlogoCore   = Math.max(0, (rows - 1) * rowPitchNow); // top row to bottom row distance
+    const HlogoFull   = Math.max(0, rows * rowPitchNow);       // full block including 1-row gap
+    const stepLayout  = HlogoFull;               // adjacent blocks without extra gap
 
-    const finiteExtra = Number.isFinite(REPEAT_EXTRA_ROWS);
-    const extraCap = finiteExtra ? Math.max(0, Math.floor(REPEAT_EXTRA_ROWS)) : Infinity;
+    // Use animated numeric cap; when target is Infinity we smoothly approach the current max
+    const extraCap = Math.max(0, Math.floor(REPEAT_EXTRA_ROWS_ANIM));
 
     // Repeats downward
     let extraBelowRemaining = extraCap;
-    if (!finiteExtra || extraBelowRemaining > 0){
-      let yCursorLayout = HlogoCore + halfStroke;
+    if (extraBelowRemaining > 0){
+      let yCursorLayout = HlogoCore; // bottom of base block in layout units
+      let downIndex = 1; // 1st repeat below = index 1
       while (true){
-        if (finiteExtra && extraBelowRemaining <= 0) break;
-        yCursorLayout += rowPitchNow;
-        const layoutTranslate = yCursorLayout + halfStroke;
-        const yTopPx = ty + s * yCursorLayout;
-        if (yTopPx - stepPx > height + s * linePx) break;
-        const mirrored = REPEAT_MIRROR && (((Math.round(yCursorLayout / stepLayout)) % 2) === 1);
-        const rowsToDraw = finiteExtra ? Math.min(rows, extraBelowRemaining) : rows;
+        if (extraBelowRemaining <= 0) break;
+        const layoutTranslate = yCursorLayout + rowPitchNow; // first next top (built-in 1-row gap)
+        const yTopPx = ty + s * layoutTranslate;
+        if (yTopPx > height) break;
+        const mirrored = REPEAT_MIRROR && ((downIndex % 2) === 1);
+        const rowsToDraw = Math.min(rows, extraBelowRemaining);
         if (rowsToDraw <= 0){
-          if (finiteExtra) extraBelowRemaining = 0;
+          extraBelowRemaining = 0;
           break;
         }
         const rowStart = mirrored
@@ -1548,24 +1514,26 @@ function renderLogo(g){
         g.translate(0, layoutTranslate);
         drawLettersSubset(0, mirrored, rowStart, rowEnd);
         g.pop();
-        if (finiteExtra) extraBelowRemaining -= rowsToDraw;
-        yCursorLayout += HlogoFull;
+        extraBelowRemaining -= rowsToDraw;
+        yCursorLayout += stepLayout; // move to the NEXT block's bottom (top→top distance)
+        downIndex++;
       }
     }
 
     // Repeats upward
     let extraAboveRemaining = extraCap;
-    if (!finiteExtra || extraAboveRemaining > 0){
-      let yCursorLayoutUp = -halfStroke;
+    if (extraAboveRemaining > 0){
+      let yCursorLayoutUp = 0; // top-row of the base block
+      let upIndex = 1; // 1st repeat above = index 1
       while (true){
-        if (finiteExtra && extraAboveRemaining <= 0) break;
-        const topLayout = yCursorLayoutUp - rowPitchNow - HlogoFull;
+        if (extraAboveRemaining <= 0) break;
+        const topLayout = yCursorLayoutUp - stepLayout; // one block above without gap
         const yTopPx = ty + s * topLayout;
-        if (yTopPx < -s * linePx - stepPx) break;
-        const mirrored = REPEAT_MIRROR && (((Math.round((-topLayout) / stepLayout)) % 2) === 1);
-        const rowsToDraw = finiteExtra ? Math.min(rows, extraAboveRemaining) : rows;
+        if ((yTopPx + s * HlogoCore) < 0) break;
+        const mirrored = REPEAT_MIRROR && ((upIndex % 2) === 1);
+        const rowsToDraw = Math.min(rows, extraAboveRemaining);
         if (rowsToDraw <= 0){
-          if (finiteExtra) extraAboveRemaining = 0;
+          extraAboveRemaining = 0;
           break;
         }
         const rowStart = mirrored
@@ -1575,11 +1543,12 @@ function renderLogo(g){
           ? Math.min(rows - 1, rowsToDraw - 1)
           : rows - 1;
         g.push();
-        g.translate(0, topLayout + halfStroke);
+        g.translate(0, topLayout);
         drawLettersSubset(0, mirrored, rowStart, rowEnd);
         g.pop();
-        if (finiteExtra) extraAboveRemaining -= rowsToDraw;
-        yCursorLayoutUp = topLayout;
+        extraAboveRemaining -= rowsToDraw;
+        yCursorLayoutUp = topLayout; // next top-row anchor
+        upIndex++;
       }
     }
   }

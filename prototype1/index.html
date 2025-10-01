@@ -185,21 +185,11 @@
             </label>
           </div>
           <div class="control-group" id="repeatWindow">
-            <label>Visibility range</label>
-
+            <label for="repeatExtraRows">Extra rows</label>
             <div class="row">
-              <label for="repeatVisibleStart">Start row</label>
-              <input id="repeatVisibleStart" type="range" min="0" max="0" step="1" value="0" />
-              <output id="repeatVisibleStartOut">0</output>
+              <input id="repeatExtraRows" type="range" min="0" max="0" step="1" value="0" />
+              <output id="repeatExtraRowsOut">all</output>
             </div>
-
-            <div class="row">
-              <label for="repeatVisibleEnd">End row</label>
-              <input id="repeatVisibleEnd" type="range" min="0" max="0" step="1" value="0" />
-              <output id="repeatVisibleEndOut">0</output>
-            </div>
-
-            <small>Units: row index (0 = first row). Applies to repeats above and below.</small>
           </div>
         </section>
 
