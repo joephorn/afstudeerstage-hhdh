@@ -29,6 +29,9 @@ const MOUSE_POWER_DEFAULT             = 1.0;
 const KEEP_TOTAL_WIDTH_DEFAULT = true;
 const BG_LINES_DEFAULT         = false;
 
+// Transparent background toggle
+let BG_TRANSPARENT = false;
+
 const REPEAT_ENABLED_DEFAULT        = false;
 const REPEAT_MIRROR_DEFAULT         = false;
 const REPEAT_EXTRA_ROWS_DEFAULT     = 0;
@@ -778,6 +781,15 @@ function setup(){
   elTaperIndex = byId('taperIndex');
   elTaperIndexOut = byId('taperIndexOut');
 
+  // Transparent background checkbox
+  const elBgTransparent = document.getElementById('bgTransparent');
+  if (elBgTransparent){
+    elBgTransparent.addEventListener('change', ()=>{
+      BG_TRANSPARENT = elBgTransparent.checked;
+      requestRedraw();
+    });
+  }
+
   function updateUIFromState(){
     const widthPct = Math.round(widthScale * 100);
     const logoPct = Math.round(logoScaleMul * 100);
@@ -1351,7 +1363,11 @@ function renderLogo(g){
   if (animatingRows) requestRedraw();
 
   g.push();
-  g.background(color1);
+  if (BG_TRANSPARENT) {
+    g.clear(); // keep the graphics buffer transparent
+  } else {
+    g.background(color1);
+  }
   g.fill(color2);
   g.noStroke();
 
@@ -1606,7 +1622,11 @@ function renderLogo(g){
 }
 
 function draw(){
-  background(255);
+  if (!BG_TRANSPARENT){
+    background(255);
+  } else {
+    clear(); // keep transparent
+  }
   noStroke();
   renderLogo(this);
   if (debugMode) drawdebugModeOverlay();
