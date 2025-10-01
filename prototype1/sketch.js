@@ -42,6 +42,7 @@ const PARAM_EASE_FACTOR        = 0.2;
 
 const ANIM_MODE_DEFAULT   = 'off';
 const ANIM_PERIOD_DEFAULT = 3.0;
+const ANIM_FPS_DEFAULT    = 30;
 
 const LOGO_LEFT_SHIFT_PX = 6;
 
@@ -103,7 +104,7 @@ const MIN_DRAW_HEIGHT  = 2;    // guard to avoid zero-area issues
 
 let elRows, elThickness, elWidth, elGap, elGroups, elDispUnit, elPreset, elLogoScale, elAspectW, elAspectH, elCustomAR, elReset;
 let elRowsOut, elThicknessOut, elWidthOut, elGapOut, elDispUnitOut, elGroupsOut, elLogoScaleOut;
-let elTaper, elTaperIndex, elTaperIndexOut, elColorPreset, elColorPresetLabel, elRepeatFalloff, elRepeatFalloffOut, elRepeatUniform, elDebug, elAuto;
+let elTaper, elTaperIndex, elTaperIndexOut, elColorPreset, elColorPresetLabel, elRepeatFalloff, elRepeatFalloffOut, elRepeatUniform, elAnimFps, elAnimFpsOut, elDebug, elAuto;
 let elTipRatio, elTipOut;
 let gapPx = GAP_PX_DEFAULT;
 let gapPxTarget = GAP_PX_DEFAULT;
@@ -203,23 +204,33 @@ let ANIM_MODE = ANIM_MODE_DEFAULT;     // 'mouse' | 'pulse' | 'scan' | 'off'
 let animTime = 0;            // seconds
 let _animRAF = null;
 let _animStart = 0;
+let _animLastFrame = 0;
 // Animation timing (seconds per full cycle)
 let ANIM_PERIOD = ANIM_PERIOD_DEFAULT;            // default: 3s per cycle
 const SCAN_MARGIN_FRAC = 0.4; // allow the scan to travel 15% beyond both ends before wrapping
+let animFpsLimit = ANIM_FPS_DEFAULT;
 
 function startAnimLoop(){
   if (_animRAF) return;
   _animStart = performance.now();
+  _animLastFrame = 0;
   const step = (t)=>{
+    const minDelta = 1000 / Math.max(5, animFpsLimit || ANIM_FPS_DEFAULT);
+    if (_animLastFrame && (t - _animLastFrame) < minDelta){
+      _animRAF = requestAnimationFrame(step);
+      return;
+    }
+    _animLastFrame = t;
+
+    // tijd bijwerken
     animTime = (t - _animStart) / 1000.0;
 
-    // --- advance taper height transition ---
+    // taper-transition (ongewijzigd)
     if (_taperTransActive){
       if (_taperPhase === 'shrink'){
         const u = Math.min(1, (t - _taperT0) / (TAPER_SHRINK_DUR * 1000));
         _lineMul = Math.max(0, 1 - u);
         if (u >= 1){
-          // switch mode at the bottom
           if (_taperPendingMode){ taperMode = _taperPendingMode; }
           _taperPendingMode = null;
           _taperPhase = 'expand';
@@ -238,7 +249,13 @@ function startAnimLoop(){
       }
     }
 
-    const needLoop = (ANIM_MODE !== 'mouse' && ANIM_MODE !== 'off') || _taperTransActive;
+    // 👉 Belangrijk: voor tijd-gestuurde animatie altijd redraw vragen
+    const timeDriven = (ANIM_MODE === 'pulse' || ANIM_MODE === 'scan');
+    if (timeDriven) {
+      requestRedraw();
+    }
+
+    const needLoop = timeDriven || _taperTransActive;
     if (needLoop){
       _animRAF = requestAnimationFrame(step);
     } else {
@@ -722,6 +739,8 @@ function setup(){
   elRepeatFalloff         = byId('repeatFalloff');
   elRepeatFalloffOut      = byId('repeatFalloffOut');
   elRepeatUniform         = byId('repeatUniform');
+  elAnimFps               = byId('animFps');
+  elAnimFpsOut            = byId('animFpsOut');
   elColorPreset     = byId('colorPreset');
   elColorPresetLabel= byId('colorPresetLabel');
   const btnCurveSine      = byId('curveSine');
@@ -786,6 +805,11 @@ function setup(){
       if (elRepeatFalloffOut) elRepeatFalloffOut.textContent = falloffDisp;
     }
     if (elRepeatUniform) setChecked(elRepeatUniform, REPEAT_UNIFORM);
+
+    if (elAnimFps){
+      elAnimFps.value = String(Math.round(animFpsLimit));
+      if (elAnimFpsOut) elAnimFpsOut.textContent = `${Math.round(animFpsLimit)} fps`;
+    }
 
     if (powerCtl){
       powerCtl.value = String(MOUSE_AMPLITUDE);
@@ -953,6 +977,16 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
     });
   }
 
+  if (elAnimFps){
+    elAnimFps.addEventListener('input', ()=>{
+      const v = parseFloat(elAnimFps.value);
+      if (Number.isFinite(v)){
+        animFpsLimit = Math.max(5, Math.min(120, v));
+        updateUIFromState();
+      }
+    });
+  }
+
   if (elTaper) {
     elTaper.value = taperMode;
     elTaper.addEventListener('change', () => {
@@ -1091,6 +1125,7 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
 
     ANIM_MODE = ANIM_MODE_DEFAULT;
     ANIM_PERIOD = ANIM_PERIOD_DEFAULT;
+    animFpsLimit = ANIM_FPS_DEFAULT;
     animTime = 0;
     stopAnimLoop();
 
