@@ -142,6 +142,8 @@ let REPEAT_ENABLED = REPEAT_ENABLED_DEFAULT;
 let REPEAT_MIRROR = REPEAT_MIRROR_DEFAULT;
 let REPEAT_EXTRA_ROWS = REPEAT_EXTRA_ROWS_DEFAULT;
 let _repeatExtraRowsMax = Math.max(0, ROWS_DEFAULT - 1);
+// Tracks whether the user explicitly set Extra Rows to FULL (sticky across range changes)
+let REPEAT_EXTRA_ROWS_IS_FULL = !Number.isFinite(REPEAT_EXTRA_ROWS_DEFAULT) && REPEAT_EXTRA_ROWS_DEFAULT > 0;
 // Animated version of EXTRA_ROWS (for eased transitions)
 let REPEAT_EXTRA_ROWS_ANIM = (Number.isFinite(REPEAT_EXTRA_ROWS_DEFAULT) ? REPEAT_EXTRA_ROWS_DEFAULT : 0);
 let COLOR_COMBOS = [];
@@ -215,38 +217,56 @@ function updateRepeatSlidersRange(){
   const refW   = Math.max(1, targetContentW || fit.contentW0);
   const sBase  = innerW / refW;
   const s      = Math.max(0.01, sBase * FIT_FRACTION * logoScaleMul);
-  const pitchPx = fit.rowPitchNow * s;
-  const visRows = Math.floor(height / pitchPx) / 2;
-  const maxExtra = Math.max(0, visRows);
+  // Use target rows for capacity so the slider & FULL state react immediately
+  const rowsForCapacity = Math.max(1, Math.round(rowsTarget));
+  const pitchLayout = (rowsForCapacity <= 1) ? 0 : (targetContentH / (rowsForCapacity - 1));
+  const pitchPx = pitchLayout * s;
+  const visRowsTotal = Math.max(0, Math.floor(height / Math.max(1e-6, pitchPx)));
+  const maxExtra = Math.max(0, Math.floor(visRowsTotal / 2)); // per-side capacity in whole rows
+  // Save the old max before updating
+  const oldRepeatExtraRowsMax = _repeatExtraRowsMax;
   _repeatExtraRowsMax = maxExtra;
 
   const disabled = !REPEAT_ENABLED;
 
   let sliderValue;
-  if (!Number.isFinite(REPEAT_EXTRA_ROWS)){
+
+  // If user chose FULL, keep it FULL regardless of rows/viewport changes
+  if (REPEAT_EXTRA_ROWS_IS_FULL) {
+    REPEAT_EXTRA_ROWS = Number.POSITIVE_INFINITY;
+    sliderValue = maxExtra;
+  } else if (!Number.isFinite(REPEAT_EXTRA_ROWS)) {
+    // Safety: coerce to FULL if state was Infinity but flag wasn't set
+    REPEAT_EXTRA_ROWS_IS_FULL = true;
+    REPEAT_EXTRA_ROWS = Number.POSITIVE_INFINITY;
     sliderValue = maxExtra;
   } else {
+    // Clamp numeric value to new range
     sliderValue = Math.max(0, Math.min(REPEAT_EXTRA_ROWS, maxExtra));
-    if (sliderValue === maxExtra && REPEAT_EXTRA_ROWS > maxExtra){
-      REPEAT_EXTRA_ROWS = Number.POSITIVE_INFINITY;
-    } else {
-      REPEAT_EXTRA_ROWS = sliderValue;
-    }
+    REPEAT_EXTRA_ROWS = sliderValue;
+  }
+
+  if (REPEAT_EXTRA_ROWS_IS_FULL || !Number.isFinite(REPEAT_EXTRA_ROWS)){
+  if (_repeatExtraRowsMax > oldRepeatExtraRowsMax){
+    REPEAT_EXTRA_ROWS_ANIM = _repeatExtraRowsMax; // capaciteit groeide: FULL blijft visueel vol
+  }
+    // Als capaciteit krimpt, laat smoothToward() rustig afbouwen.
+  } else {
   }
 
   if (elRepeatExtraRows){
     elRepeatExtraRows.min = '0';
-    elRepeatExtraRows.max = String(maxExtra);
+    elRepeatExtraRows.max = String(Math.max(0, Math.floor(maxExtra)));
     elRepeatExtraRows.step = '1';
-    elRepeatExtraRows.value = String(sliderValue);
+    elRepeatExtraRows.value = String(Math.max(0, Math.floor(sliderValue)));
     elRepeatExtraRows.disabled = disabled;
   }
 
   if (elRepeatExtraRowsOut){
     if (disabled){
-      elRepeatExtraRowsOut.textContent = 'off';
-    } else if (!Number.isFinite(REPEAT_EXTRA_ROWS) || sliderValue >= maxExtra){
-      elRepeatExtraRowsOut.textContent = 'all';
+      elRepeatExtraRowsOut.textContent = 'OFF';
+    } else if (REPEAT_EXTRA_ROWS_IS_FULL || !Number.isFinite(REPEAT_EXTRA_ROWS) || sliderValue >= maxExtra){
+      elRepeatExtraRowsOut.textContent = 'ALL';
     } else {
       elRepeatExtraRowsOut.textContent = String(sliderValue);
     }
@@ -872,8 +892,11 @@ if (elRepeatEnabled){
       const raw = parseInt(elRepeatExtraRows.value, 10);
       if (!Number.isFinite(raw)) return;
       if (_repeatExtraRowsMax > 0 && raw >= _repeatExtraRowsMax){
+        // User hit the max → mark FULL, laat easing naar capacity gaan
+        REPEAT_EXTRA_ROWS_IS_FULL = true;
         REPEAT_EXTRA_ROWS = Number.POSITIVE_INFINITY;
       } else {
+        REPEAT_EXTRA_ROWS_IS_FULL = false;
         REPEAT_EXTRA_ROWS = Math.max(0, raw);
       }
       updateRepeatSlidersRange();
@@ -1066,6 +1089,7 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
     REPEAT_MIRROR = REPEAT_MIRROR_DEFAULT;
     REPEAT_EXTRA_ROWS = REPEAT_EXTRA_ROWS_DEFAULT;
     REPEAT_EXTRA_ROWS_ANIM = (Number.isFinite(REPEAT_EXTRA_ROWS_DEFAULT) ? REPEAT_EXTRA_ROWS_DEFAULT : 0);
+    REPEAT_EXTRA_ROWS_IS_FULL = !Number.isFinite(REPEAT_EXTRA_ROWS_DEFAULT) && REPEAT_EXTRA_ROWS_DEFAULT > 0;
     updateRepeatSlidersRange();
 
     PER_LETTER_STRETCH = PER_LETTER_STRETCH_DEFAULT;
@@ -1159,6 +1183,11 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
     rebuildGroupsSelect();
     updateRepeatSlidersRange();
     updateUIFromState();
+    // FULL: stick and snap to new capacity immediately when rows jump
+    if (REPEAT_EXTRA_ROWS_IS_FULL){
+      REPEAT_EXTRA_ROWS = Number.POSITIVE_INFINITY;
+      REPEAT_EXTRA_ROWS_ANIM = _repeatExtraRowsMax; // snap to new capacity immediately
+    }
     requestRedraw();
   });
 
