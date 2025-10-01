@@ -28,11 +28,10 @@ const MOUSE_POWER_DEFAULT             = 1.0;
 
 const KEEP_TOTAL_WIDTH_DEFAULT = true;
 const BG_LINES_DEFAULT         = false;
-const REPEAT_V_DEFAULT         = false;
-const REPEAT_MIRROR_DEFAULT    = false;
-const REPEAT_FILL_DEFAULT      = 0;
-const REPEAT_WEIGHT_EXP_DEFAULT = 1.6;
-const REPEAT_UNIFORM_DEFAULT   = false;
+
+const REPEAT_ENABLED_DEFAULT        = false;
+const REPEAT_MIRROR_DEFAULT         = false;
+const REPEAT_EXTRA_ROWS_DEFAULT     = Number.POSITIVE_INFINITY;
 
 const COLOR_BACKGROUND_DEFAULT = '#ffffff';
 const COLOR_LOGO_DEFAULT       = '#000000';
@@ -42,7 +41,6 @@ const PARAM_EASE_FACTOR        = 0.2;
 
 const ANIM_MODE_DEFAULT   = 'off';
 const ANIM_PERIOD_DEFAULT = 3.0;
-const ANIM_FPS_DEFAULT    = 30;
 
 const LOGO_LEFT_SHIFT_PX = 6;
 
@@ -104,7 +102,8 @@ const MIN_DRAW_HEIGHT  = 2;    // guard to avoid zero-area issues
 
 let elRows, elThickness, elWidth, elGap, elGroups, elDispUnit, elPreset, elLogoScale, elAspectW, elAspectH, elCustomAR, elReset;
 let elRowsOut, elThicknessOut, elWidthOut, elGapOut, elDispUnitOut, elGroupsOut, elLogoScaleOut;
-let elTaper, elTaperIndex, elTaperIndexOut, elColorPreset, elColorPresetLabel, elRepeatFalloff, elRepeatFalloffOut, elRepeatUniform, elAnimFps, elAnimFpsOut, elDebug, elAuto;
+let elTaper, elTaperIndex, elTaperIndexOut, elColorPreset, elColorPresetLabel, elRepeatFalloff, elRepeatFalloffOut, elRepeatUniform, elDebug, elAuto;
+let elRepeatEnabled, elRepeatExtraRows, elRepeatExtraRowsOut;
 let elTipRatio, elTipOut;
 let gapPx = GAP_PX_DEFAULT;
 let gapPxTarget = GAP_PX_DEFAULT;
@@ -139,12 +138,10 @@ let KEEP_TOTAL_WIDTH = KEEP_TOTAL_WIDTH_DEFAULT;
 let BG_LINES = BG_LINES_DEFAULT;        // toggle via HTML checkbox
 let BG_LINES_ALPHA = 255;
 
-let REPEAT_V = REPEAT_V_DEFAULT;
-let REPEAT_MIRROR = REPEAT_MIRROR_DEFAULT;     // if true, every 2nd vertical repeat is mirrored
-let REPEAT_FILL = REPEAT_FILL_DEFAULT;           // 0..1 progress: 0 = none, 1 = volledige vulling
-const REPEAT_MAX_BANDS = 6;    // aantal stroken per zijde in eindtoestand
-let REPEAT_WEIGHT_EXP = REPEAT_WEIGHT_EXP_DEFAULT; // >1 = snellere afname in bandhoogte
-let REPEAT_UNIFORM = REPEAT_UNIFORM_DEFAULT;
+let REPEAT_ENABLED = REPEAT_ENABLED_DEFAULT;
+let REPEAT_MIRROR = REPEAT_MIRROR_DEFAULT;
+let REPEAT_EXTRA_ROWS = REPEAT_EXTRA_ROWS_DEFAULT;
+let _repeatExtraRowsMax = Math.max(0, ROWS_DEFAULT - 1);
 let COLOR_COMBOS = [];
 let activeColorComboIdx = 0;
 
@@ -208,24 +205,59 @@ let _animLastFrame = 0;
 // Animation timing (seconds per full cycle)
 let ANIM_PERIOD = ANIM_PERIOD_DEFAULT;            // default: 3s per cycle
 const SCAN_MARGIN_FRAC = 0.4; // allow the scan to travel 15% beyond both ends before wrapping
-let animFpsLimit = ANIM_FPS_DEFAULT;
+
+function updateRepeatSlidersRange(){
+  if (!layout) return;
+  const fit   = computeLayoutFit();
+  const innerW = Math.max(1, width);
+  const refW   = Math.max(1, targetContentW || fit.contentW0);
+  const sBase  = innerW / refW;
+  const s      = Math.max(0.01, sBase * FIT_FRACTION * logoScaleMul);
+  const pitchPx = fit.rowPitchNow * s;
+  const visRows = (pitchPx > 0) ? Math.floor(height / pitchPx) / 2 : 0;
+  const maxExtra = Math.max(0, visRows);
+  _repeatExtraRowsMax = maxExtra;
+
+  const disabled = !REPEAT_ENABLED;
+
+  let sliderValue;
+  if (!Number.isFinite(REPEAT_EXTRA_ROWS)){
+    sliderValue = maxExtra;
+  } else {
+    sliderValue = Math.max(0, Math.min(REPEAT_EXTRA_ROWS, maxExtra));
+    if (sliderValue === maxExtra && REPEAT_EXTRA_ROWS > maxExtra){
+      REPEAT_EXTRA_ROWS = Number.POSITIVE_INFINITY;
+    } else {
+      REPEAT_EXTRA_ROWS = sliderValue;
+    }
+  }
+
+  if (elRepeatExtraRows){
+    elRepeatExtraRows.min = '0';
+    elRepeatExtraRows.max = String(maxExtra);
+    elRepeatExtraRows.step = '1';
+    elRepeatExtraRows.value = String(sliderValue);
+    elRepeatExtraRows.disabled = disabled;
+  }
+
+  if (elRepeatExtraRowsOut){
+    if (disabled){
+      elRepeatExtraRowsOut.textContent = 'off';
+    } else if (!Number.isFinite(REPEAT_EXTRA_ROWS) || sliderValue >= maxExtra){
+      elRepeatExtraRowsOut.textContent = 'all';
+    } else {
+      elRepeatExtraRowsOut.textContent = String(sliderValue);
+    }
+  }
+}
 
 function startAnimLoop(){
   if (_animRAF) return;
   _animStart = performance.now();
-  _animLastFrame = 0;
   const step = (t)=>{
-    const minDelta = 1000 / Math.max(5, animFpsLimit || ANIM_FPS_DEFAULT);
-    if (_animLastFrame && (t - _animLastFrame) < minDelta){
-      _animRAF = requestAnimationFrame(step);
-      return;
-    }
-    _animLastFrame = t;
-
-    // tijd bijwerken
     animTime = (t - _animStart) / 1000.0;
 
-    // taper-transition (ongewijzigd)
+    // taper transition logic
     if (_taperTransActive){
       if (_taperPhase === 'shrink'){
         const u = Math.min(1, (t - _taperT0) / (TAPER_SHRINK_DUR * 1000));
@@ -249,14 +281,11 @@ function startAnimLoop(){
       }
     }
 
-    // 👉 Belangrijk: voor tijd-gestuurde animatie altijd redraw vragen
+    // bij tijdgestuurde animaties altijd redraw
     const timeDriven = (ANIM_MODE === 'pulse' || ANIM_MODE === 'scan');
-    if (timeDriven) {
-      requestRedraw();
-    }
+    if (timeDriven) requestRedraw();
 
-    const needLoop = timeDriven || _taperTransActive;
-    if (needLoop){
+    if (timeDriven || _taperTransActive){
       _animRAF = requestAnimationFrame(step);
     } else {
       _animRAF = null;
@@ -563,6 +592,23 @@ function applyRandomTweaks(){
     if (max >= min) setAndDispatch(elGroups, randInt(min, max), 'input');
   });
 
+  maybe(0.6, ()=>{
+    if (!elRepeatEnabled) return;
+    const choice = Math.random() < 0.5;
+    elRepeatEnabled.checked = choice;
+    elRepeatEnabled.dispatchEvent(new Event('change', { bubbles: true }));
+    mutated = true;
+  });
+
+  maybe(0.6, ()=>{
+    if (!elRepeatExtraRows) return;
+    const max = parseInt(elRepeatExtraRows.max || '0', 10) || 0;
+    const val = (max > 0) ? randInt(0, max) : 0;
+    elRepeatExtraRows.value = String(val);
+    elRepeatExtraRows.dispatchEvent(new Event('input', { bubbles: true }));
+    mutated = true;
+  });
+
   maybe(0.7, ()=>{
     if (!elExtrudeDepth) return;
     const { min, max, step } = getInputRange(elExtrudeDepth, EXTRUDE_DEPTH_MIN, EXTRUDE_DEPTH_MAX, 1);
@@ -732,15 +778,10 @@ function setup(){
   elReset    = byId('resetDefaults');
 
   const elBgLines         = byId('bgLines');
-  const elRepeatV         = byId('repeatV');
+  elRepeatEnabled         = byId('repeatEnabled');
   const elRepeatMirror    = byId('repeatMirror');
-  const elRepeatFill      = byId('repeatFill');
-  const elRepeatFillOut   = byId('repeatFillOut');
-  elRepeatFalloff         = byId('repeatFalloff');
-  elRepeatFalloffOut      = byId('repeatFalloffOut');
-  elRepeatUniform         = byId('repeatUniform');
-  elAnimFps               = byId('animFps');
-  elAnimFpsOut            = byId('animFpsOut');
+  elRepeatExtraRows       = byId('repeatExtraRows');
+  elRepeatExtraRowsOut    = byId('repeatExtraRowsOut');
   elColorPreset     = byId('colorPreset');
   elColorPresetLabel= byId('colorPresetLabel');
   const btnCurveSine      = byId('curveSine');
@@ -756,7 +797,6 @@ function setup(){
   function updateUIFromState(){
     const widthPct = Math.round(widthScale * 100);
     const logoPct = Math.round(logoScaleMul * 100);
-    const repeatPct = Math.round(REPEAT_FILL * 100);
 
     const rowsDisplay = Math.max(1, Math.round(rowsTarget));
     setValue(elRows, rowsDisplay);
@@ -794,36 +834,10 @@ function setup(){
     setChecked(elAuto, autoRandomActive);
 
     setChecked(elBgLines, BG_LINES);
-    setChecked(elRepeatV, REPEAT_V);
+    setChecked(elRepeatEnabled, REPEAT_ENABLED);
     setChecked(elRepeatMirror, REPEAT_MIRROR);
 
-    if (elRepeatFill) setValue(elRepeatFill, repeatPct);
-    setText(elRepeatFillOut, `${repeatPct}%`);
-    if (elRepeatFalloff){
-      const falloffDisp = REPEAT_WEIGHT_EXP.toFixed(2);
-      elRepeatFalloff.value = falloffDisp;
-      if (elRepeatFalloffOut) elRepeatFalloffOut.textContent = falloffDisp;
-    }
-    if (elRepeatUniform) setChecked(elRepeatUniform, REPEAT_UNIFORM);
-
-    if (elAnimFps){
-      elAnimFps.value = String(Math.round(animFpsLimit));
-      if (elAnimFpsOut) elAnimFpsOut.textContent = `${Math.round(animFpsLimit)} fps`;
-    }
-
-    if (powerCtl){
-      powerCtl.value = String(MOUSE_AMPLITUDE);
-      setText(powerOut, `${MOUSE_AMPLITUDE.toFixed(2)}×`);
-    }
-
-    if (animPeriodCtl){
-      animPeriodCtl.value = String(ANIM_PERIOD);
-      setText(animPeriodOut, ANIM_PERIOD.toFixed(2) + 's');
-    }
-
-    setValue(elColorPreset, activeColorComboIdx);
-    updateColorPresetLabel(activeColorComboIdx);
-  }
+    updateRepeatSlidersRange();
 
   if (elPreset) elPreset.value = PRESET_DEFAULT;
   if (elAspectW) elAspectW.value = String(ASPECT_WIDTH_PX_DEFAULT);
@@ -841,14 +855,6 @@ function setup(){
       requestRedraw();
     });
   }
-  if (elRepeatV){
-    elRepeatV.checked = REPEAT_V;
-    elRepeatV.addEventListener('change', ()=>{
-      REPEAT_V = !!elRepeatV.checked;
-      updateUIFromState();
-      requestRedraw();
-    });
-  }
 
   if (elRepeatMirror){
     elRepeatMirror.checked = REPEAT_MIRROR;
@@ -858,38 +864,7 @@ function setup(){
       requestRedraw();
     });
   }
-
-// Vertical repeat: schermvulling (0 = none, 100 = volledige ruimte)
-  if (elRepeatFill){
-    if (!elRepeatFill.min)  elRepeatFill.min = '0';
-    if (!elRepeatFill.max)  elRepeatFill.max = '100';
-    if (!elRepeatFill.step) elRepeatFill.step = '1';
-    setValue(elRepeatFill, Math.round(REPEAT_FILL * 100));
-    setText(elRepeatFillOut, `${Math.round(REPEAT_FILL * 100)}%`);
-    elRepeatFill.addEventListener('input', ()=>{
-      const val = Math.max(0, Math.min(100, parseFloat(elRepeatFill.value) || 0));
-      REPEAT_FILL = val / 100;
-      updateUIFromState();
-      requestRedraw();
-    });
-  }
-
-  if (elRepeatFalloff){
-    elRepeatFalloff.addEventListener('input', ()=>{
-      const val = parseFloat(elRepeatFalloff.value);
-      REPEAT_WEIGHT_EXP = Number.isFinite(val) ? Math.max(0, val) : REPEAT_WEIGHT_EXP;
-      updateUIFromState();
-      requestRedraw();
-    });
-  }
-
-  if (elRepeatUniform){
-    elRepeatUniform.addEventListener('change', ()=>{
-      REPEAT_UNIFORM = !!elRepeatUniform.checked;
-      updateUIFromState();
-      requestRedraw();
-    });
-  }
+}
 
 function updateColorPresetLabel(idx){
   if (!elColorPresetLabel) return;
@@ -916,7 +891,31 @@ function populateColorPresetSelect(){
 }
 
 populateColorPresetSelect();
+updateRepeatSlidersRange();
 updateUIFromState();
+
+if (elRepeatEnabled){
+  elRepeatEnabled.addEventListener('change', ()=>{
+    REPEAT_ENABLED = !!elRepeatEnabled.checked;
+    updateRepeatSlidersRange();
+    updateUIFromState();
+    requestRedraw();
+  });
+}
+
+  if (elRepeatExtraRows){
+    elRepeatExtraRows.addEventListener('input', ()=>{
+      const raw = parseInt(elRepeatExtraRows.value, 10);
+      if (!Number.isFinite(raw)) return;
+      if (_repeatExtraRowsMax > 0 && raw >= _repeatExtraRowsMax){
+        REPEAT_EXTRA_ROWS = Number.POSITIVE_INFINITY;
+      } else {
+        REPEAT_EXTRA_ROWS = Math.max(0, raw);
+      }
+      updateRepeatSlidersRange();
+      requestRedraw();
+    });
+  }
 
 if (elColorPreset){
   elColorPreset.addEventListener('change', ()=>{
@@ -973,16 +972,6 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
         startAnimLoop();
         updateUIFromState();
         requestRedraw();
-      }
-    });
-  }
-
-  if (elAnimFps){
-    elAnimFps.addEventListener('input', ()=>{
-      const v = parseFloat(elAnimFps.value);
-      if (Number.isFinite(v)){
-        animFpsLimit = Math.max(5, Math.min(120, v));
-        updateUIFromState();
       }
     });
   }
@@ -1109,11 +1098,10 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
 
     KEEP_TOTAL_WIDTH = KEEP_TOTAL_WIDTH_DEFAULT;
     BG_LINES = BG_LINES_DEFAULT;
-    REPEAT_V = REPEAT_V_DEFAULT;
+    REPEAT_ENABLED = REPEAT_ENABLED_DEFAULT;
     REPEAT_MIRROR = REPEAT_MIRROR_DEFAULT;
-    REPEAT_FILL = REPEAT_FILL_DEFAULT;
-    REPEAT_WEIGHT_EXP = REPEAT_WEIGHT_EXP_DEFAULT;
-    REPEAT_UNIFORM = REPEAT_UNIFORM_DEFAULT;
+    REPEAT_EXTRA_ROWS = REPEAT_EXTRA_ROWS_DEFAULT;
+    updateRepeatSlidersRange();
 
     PER_LETTER_STRETCH = PER_LETTER_STRETCH_DEFAULT;
     MOUSE_STRETCH_SIGMA_FRAC = MOUSE_STRETCH_SIGMA_FRAC_DEFAULT;
@@ -1203,7 +1191,8 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
   elRows.addEventListener('input', ()=>{
     const val = parseInt(elRows.value,10);
     rowsTarget = Number.isFinite(val) ? Math.max(1, val) : rowsTarget;
-    rebuildGroupsSelect();             // behoudt sign en clamp ≤
+    rebuildGroupsSelect();
+    updateRepeatSlidersRange();
     updateUIFromState();
     requestRedraw();
   });
@@ -1470,8 +1459,11 @@ function renderLogo(g){
   g.translate(tx, ty);
   g.scale(s, s);
 
-  // Draw all letters with an additional vertical offset in *layout* units
-  function drawLettersAtOffset(yOff, mirrored = false){
+  const maxRowIdx = Math.max(0, rows - 1);
+
+  function drawLettersSubset(yOff, mirrored = false, rowStart = 0, rowEnd = maxRowIdx){
+    const start = Math.max(0, Math.min(maxRowIdx, rowStart | 0));
+    const end = Math.max(start, Math.min(maxRowIdx, rowEnd | 0));
     for (let li = 0; li < layout.lettersOrder.length; li++){
       const letterKey   = layout.lettersOrder[li];
       const rowsArr = layout.letters[letterKey];
@@ -1479,15 +1471,15 @@ function renderLogo(g){
       const letterBaseScaledW = layout.letterW[li] * layout.scale;
       const wUse = wUseArr[li];
       const wScaleUse = letterBaseScaledW > 0 ? (wUse / letterBaseScaledW) : widthScale;
-
-      for (let r = 0; r < rowsArr.length; r++){
+      for (let r = start; r <= end; r++){
+        const spans = rowsArr[r] || [];
         const tileH = (rows <= 1) ? 0 : (rows - 1) * rowPitchNow;
         const baseRow = (rowPositions[r] !== undefined)
           ? rowPositions[r]
           : (rows <= 1 ? 0 : r * rowPitchNow);
         const y = mirrored ? (tileH - baseRow) + yOff : (baseRow + yOff);
-        for (const span of rowsArr[r]){
-          const rightEdgeX = baseX + span.rightRel * layout.scale * wScaleUse; // per-letter stretch
+        for (const span of spans){
+          const rightEdgeX = baseX + span.rightRel * layout.scale * wScaleUse;
           const baseLen    = Math.max(0, span.runLen * layout.scale * wScaleUse);
           const maxDash = Math.max(0, rightEdgeX - baseX);
           const dashLenClamped = Math.min(baseLen, maxDash);
@@ -1518,68 +1510,76 @@ function renderLogo(g){
   }
 
   // Draw base instance (not mirrored)
-  drawLettersAtOffset(0, false);
+  drawLettersSubset(0, false, 0, maxRowIdx);
 
-  const fillFrac = Math.max(0, Math.min(1, REPEAT_FILL));
-  if (REPEAT_V && fillFrac > 0 && rows > 0){
-    const HlogoCore = Math.max(0, (rows - 1) * rowPitchNow);
-    const halfStroke = linePx * 0.5;
-    const HlogoFull = HlogoCore + linePx; // include half stroke at top/bottom
+  if (REPEAT_ENABLED && rows > 0){
+    const HlogoCore   = Math.max(0, (rows - 1) * rowPitchNow);
+    const halfStroke  = 0;
+    const HlogoFull   = HlogoCore + linePx;
+    const stepLayout  = HlogoFull + rowPitchNow;
+    const stepPx      = stepLayout * s;
 
-    if (HlogoFull > 1e-6){
-      const baseTopPx = ty - s * halfStroke;
-      const baseBotPx = ty + s * (HlogoCore + halfStroke);
+    const finiteExtra = Number.isFinite(REPEAT_EXTRA_ROWS);
+    const extraCap = finiteExtra ? Math.max(0, Math.floor(REPEAT_EXTRA_ROWS)) : Infinity;
 
-      const availDownPx = Math.max(0, height - baseBotPx);
-      const availUpPx   = Math.max(0, baseTopPx);
-
-      let downHeights;
-      let upHeights;
-      if (REPEAT_UNIFORM){
-        const approx = fillFrac * REPEAT_MAX_BANDS;
-        const baseCount = Math.floor(approx);
-        const addPartial = (approx - baseCount) > 1e-3 ? 1 : 0;
-        const count = Math.max(0, baseCount + addPartial);
-        downHeights = Array.from({ length: count }, () => HlogoFull);
-        upHeights   = Array.from({ length: count }, () => HlogoFull);
-      } else {
-        downHeights = computeProgressiveBandHeights(availDownPx / s, fillFrac, REPEAT_MAX_BANDS);
-        upHeights   = computeProgressiveBandHeights(availUpPx   / s, fillFrac, REPEAT_MAX_BANDS);
-      }
-
-      let cursorDownTopLayout = HlogoCore + halfStroke;
-      for (let i = 0; i < downHeights.length; i++){
-        const h = downHeights[i];
-        if (h <= 0) continue;
-        const scaleY = h / HlogoFull;
-        if (!isFinite(scaleY) || scaleY <= 0) continue;
-        const layoutTranslate = cursorDownTopLayout + scaleY * halfStroke;
-        const mirrored = REPEAT_MIRROR && (((i + 1) % 2) === 1);
+    // Repeats downward
+    let extraBelowRemaining = extraCap;
+    if (!finiteExtra || extraBelowRemaining > 0){
+      let yCursorLayout = HlogoCore + halfStroke;
+      while (true){
+        if (finiteExtra && extraBelowRemaining <= 0) break;
+        yCursorLayout += rowPitchNow;
+        const layoutTranslate = yCursorLayout + halfStroke;
+        const yTopPx = ty + s * yCursorLayout;
+        if (yTopPx - stepPx > height + s * linePx) break;
+        const mirrored = REPEAT_MIRROR && (((Math.round(yCursorLayout / stepLayout)) % 2) === 1);
+        const rowsToDraw = finiteExtra ? Math.min(rows, extraBelowRemaining) : rows;
+        if (rowsToDraw <= 0){
+          if (finiteExtra) extraBelowRemaining = 0;
+          break;
+        }
+        const rowStart = mirrored
+          ? Math.max(0, rows - rowsToDraw)
+          : 0;
+        const rowEnd = mirrored
+          ? rows - 1
+          : rowsToDraw - 1;
         g.push();
         g.translate(0, layoutTranslate);
-        g.scale(1, scaleY);
-        drawLettersAtOffset(0, mirrored);
+        drawLettersSubset(0, mirrored, rowStart, rowEnd);
         g.pop();
-        cursorDownTopLayout += h;
-        if (ty + s * cursorDownTopLayout >= height + s * linePx) break;
+        if (finiteExtra) extraBelowRemaining -= rowsToDraw;
+        yCursorLayout += HlogoFull;
       }
+    }
 
-      let cursorUpBottomLayout = -halfStroke;
-      for (let i = 0; i < upHeights.length; i++){
-        const h = upHeights[i];
-        if (h <= 0) continue;
-        const scaleY = h / HlogoFull;
-        if (!isFinite(scaleY) || scaleY <= 0) continue;
-        const topLayout = cursorUpBottomLayout - h;
-        const layoutTranslate = topLayout + scaleY * halfStroke;
-        const mirrored = REPEAT_MIRROR && (((i + 1) % 2) === 1);
+    // Repeats upward
+    let extraAboveRemaining = extraCap;
+    if (!finiteExtra || extraAboveRemaining > 0){
+      let yCursorLayoutUp = -halfStroke;
+      while (true){
+        if (finiteExtra && extraAboveRemaining <= 0) break;
+        const topLayout = yCursorLayoutUp - rowPitchNow - HlogoFull;
+        const yTopPx = ty + s * topLayout;
+        if (yTopPx < -s * linePx - stepPx) break;
+        const mirrored = REPEAT_MIRROR && (((Math.round((-topLayout) / stepLayout)) % 2) === 1);
+        const rowsToDraw = finiteExtra ? Math.min(rows, extraAboveRemaining) : rows;
+        if (rowsToDraw <= 0){
+          if (finiteExtra) extraAboveRemaining = 0;
+          break;
+        }
+        const rowStart = mirrored
+          ? 0
+          : Math.max(0, rows - rowsToDraw);
+        const rowEnd = mirrored
+          ? Math.min(rows - 1, rowsToDraw - 1)
+          : rows - 1;
         g.push();
-        g.translate(0, layoutTranslate);
-        g.scale(1, scaleY);
-        drawLettersAtOffset(0, mirrored);
+        g.translate(0, topLayout + halfStroke);
+        drawLettersSubset(0, mirrored, rowStart, rowEnd);
         g.pop();
-        cursorUpBottomLayout = topLayout;
-        if (ty + s * cursorUpBottomLayout <= -s * linePx) break;
+        if (finiteExtra) extraAboveRemaining -= rowsToDraw;
+        yCursorLayoutUp = topLayout;
       }
     }
   }
@@ -2066,6 +2066,7 @@ function fitViewportToWindow(){
     svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
   }
 
+  updateRepeatSlidersRange();
   requestRedraw();
 }
 // ====== INPUT ======
