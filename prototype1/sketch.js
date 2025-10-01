@@ -31,7 +31,7 @@ const BG_LINES_DEFAULT         = false;
 
 const REPEAT_ENABLED_DEFAULT        = false;
 const REPEAT_MIRROR_DEFAULT         = false;
-const REPEAT_EXTRA_ROWS_DEFAULT     = Number.POSITIVE_INFINITY;
+const REPEAT_EXTRA_ROWS_DEFAULT     = 0;
 
 const COLOR_BACKGROUND_DEFAULT = '#ffffff';
 const COLOR_LOGO_DEFAULT       = '#000000';
@@ -1427,11 +1427,18 @@ function renderLogo(g){
   const maxRowIdx = Math.max(0, rows - 1);
 
   function drawLettersSubset(yOff, mirrored = false, rowStart = 0, rowEnd = maxRowIdx){
-    const start = Math.max(0, Math.min(maxRowIdx, rowStart | 0));
-    const end = Math.max(start, Math.min(maxRowIdx, rowEnd | 0));
-    // Compute windowRows for tileH in layout units only
-    const windowRows = Math.max(0, end - start);
-    const tileH = (rows <= 1) ? 0 : (windowRows * rowPitchNow);
+        const start = Math.max(0, Math.min(maxRowIdx, rowStart | 0));
+    const end   = Math.max(start, Math.min(maxRowIdx, rowEnd | 0));
+
+    // Window-relatieve metrics met smoothed rows → geen drift t.o.v. background grid
+    const baseStartAbs = (rowPositions[start] !== undefined)
+      ? rowPositions[start]
+      : (rows <= 1 ? 0 : start * rowPitchNow);
+    const baseEndAbs = (rowPositions[end] !== undefined)
+      ? rowPositions[end]
+      : (rows <= 1 ? 0 : end * rowPitchNow);
+    const tileH = Math.max(0, baseEndAbs - baseStartAbs); // hoogte van dit venster
+
     for (let li = 0; li < layout.lettersOrder.length; li++){
       const letterKey   = layout.lettersOrder[li];
       const rowsArr = layout.letters[letterKey];
@@ -1439,12 +1446,19 @@ function renderLogo(g){
       const letterBaseScaledW = layout.letterW[li] * layout.scale;
       const wUse = wUseArr[li];
       const wScaleUse = letterBaseScaledW > 0 ? (wUse / letterBaseScaledW) : widthScale;
+
       for (let r = start; r <= end; r++){
         const spans = rowsArr[r] || [];
-        const baseRow = (rowPositions[r] !== undefined)
+
+        // Absoluut → relatief binnen dit venster
+        const baseRowAbs = (rowPositions[r] !== undefined)
           ? rowPositions[r]
           : (rows <= 1 ? 0 : r * rowPitchNow);
-        const y = mirrored ? (tileH - baseRow) + yOff : (baseRow + yOff);
+        const baseRowRel = baseRowAbs - baseStartAbs; // 0 op start, stijgt per rowPitch
+
+        const y = mirrored
+          ? (tileH - baseRowRel) + yOff    // spiegel binnen venster-hoogte
+          : (baseRowRel + yOff);
         for (const span of spans){
           const rightEdgeX = baseX + span.rightRel * layout.scale * wScaleUse;
           const baseLen    = Math.max(0, span.runLen * layout.scale * wScaleUse);
@@ -1527,7 +1541,7 @@ function renderLogo(g){
       let upIndex = 1; // 1st repeat above = index 1
       while (true){
         if (extraAboveRemaining <= 0) break;
-        const topLayout = yCursorLayoutUp - stepLayout; // one block above without gap
+        const topLayout = yCursorLayoutUp - stepLayout; // one full block above (includes 1-row gap)
         const yTopPx = ty + s * topLayout;
         if ((yTopPx + s * HlogoCore) < 0) break;
         const mirrored = REPEAT_MIRROR && ((upIndex % 2) === 1);
@@ -1542,9 +1556,16 @@ function renderLogo(g){
         const rowEnd = mirrored
           ? Math.min(rows - 1, rowsToDraw - 1)
           : rows - 1;
+
+        // Offset the subset so it sits flush against the BOTTOM of this block
+        // (downward repeats sit flush at the TOP by construction).
+        const tileRows = Math.max(0, rowEnd - rowStart); // inclusive end → rowsToDraw-1
+        const tileHWin = tileRows * rowPitchNow;         // window height in layout units
+        const yOffWin  = Math.max(0, HlogoCore - tileHWin);
+
         g.push();
         g.translate(0, topLayout);
-        drawLettersSubset(0, mirrored, rowStart, rowEnd);
+        drawLettersSubset(yOffWin, mirrored, rowStart, rowEnd);
         g.pop();
         extraAboveRemaining -= rowsToDraw;
         yCursorLayoutUp = topLayout; // next top-row anchor
