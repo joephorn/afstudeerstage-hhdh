@@ -4,7 +4,6 @@ const ROWS_DEFAULT             = 12;
 const LINE_HEIGHT              = 10;
 
 const TIP_RATIO_DEFAULT        = 0.3;
-const END_RATIO_DEFAULT        = 1.0;
 const DISPLACE_UNIT_DEFAULT    = 28;
 const GAP_PX_DEFAULT           = 9;
 const DISPLACE_GROUPS_DEFAULT  = 2;
@@ -45,13 +44,9 @@ const PARAM_EASE_FACTOR        = 0.1;
 
 const ANIM_MODE_DEFAULT   = 'off';
 const ANIM_PERIOD_DEFAULT = 3.0;
-
-const LOGO_LEFT_SHIFT_PX = 6;
-
 const AUTO_RANDOM_DEFAULT = false;
 
-let TIP_RATIO        = TIP_RATIO_DEFAULT;        // small (tip) cap radius factor relative to big cap (0..1)
-let END_RATIO        = END_RATIO_DEFAULT;        // big (end) cap radius factor relative to h/2 (0..1)
+let TIP_RATIO        = TIP_RATIO_DEFAULT;
 let DISPLACE_UNIT    = DISPLACE_UNIT_DEFAULT;
 let ASPECT_W         = ASPECT_W_DEFAULT;
 let ASPECT_H         = ASPECT_H_DEFAULT;
@@ -1500,7 +1495,7 @@ function renderLogo(g){
   }
 
   // Apply final transform
-  tx = txAdj - LOGO_LEFT_SHIFT_PX;
+  tx = txAdj;
   ty = tyAdj;
   g.translate(tx, ty);
   g.scale(s, s);
@@ -1558,17 +1553,17 @@ function renderLogo(g){
               drawStraightTaper(g, rx, y, dashLenClamped, drawH);
               break;
             case 'Circles':
-              drawCircleTaper(g, rx, y, dashLenClamped, drawH, TIP_RATIO, END_RATIO);
+              drawCircleTaper(g, rx, y, dashLenClamped, drawH, TIP_RATIO);
               break;
             case 'Blocks':
-              drawBlockTaper(g, rx, y, dashLenClamped, drawH, TIP_RATIO, END_RATIO);
+              drawBlockTaper(g, rx, y, dashLenClamped, drawH, TIP_RATIO);
               break;
             case 'Pluses':
-              drawPlusTaper(g, rx, y, dashLenClamped, drawH, TIP_RATIO, END_RATIO);
+              drawPlusTaper(g, rx, y, dashLenClamped, drawH, TIP_RATIO);
               break;
             case 'Rounded':
             default:
-              drawRoundedTaper(g, rx, y, dashLenClamped, drawH, TIP_RATIO, END_RATIO);
+              drawRoundedTaper(g, rx, y, dashLenClamped, drawH, TIP_RATIO);
               break;
           }
         }
@@ -1675,9 +1670,9 @@ function draw(){
 
 // ====== DRAWING ======
 
-function drawRoundedTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_RATIO){
+function drawRoundedTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
   // Base radii from stroke height
-  const Rfull = Math.max(0.0001, (h * 0.5) * Math.max(0, Math.min(1, endRatio)));
+  const Rfull = Math.max(0.0001, (h * 0.5));
   const rfull = Math.max(0.0001, Rfull * Math.max(0, Math.min(1, tipRatio)));
 
   // Clamp radii based on available length
@@ -1716,9 +1711,9 @@ function drawStraightTaper(g, rightX, cy, len, h){
   g.endShape(CLOSE);
 }
 
-function drawCircleTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_RATIO){
+function drawCircleTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
   // Base radii from stroke height
-  const Rfull = Math.max(0.0001, (h * 0.5) * Math.max(0, Math.min(1, endRatio)));
+  const Rfull = Math.max(0.0001, (h * 0.5)); // end ratio fixed at 1.0
   const rfull = Math.max(0.0001, Rfull * Math.max(0, Math.min(1, tipRatio)));
 
   // Clamp by available length
@@ -1744,12 +1739,11 @@ function drawCircleTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio =
   }
 }
 
-function drawBlockTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_RATIO){
+function drawBlockTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
   const steps = Math.max(2, BLOCK_STEPS | 0);
 
-  // Height envelope from ratios: diameter = h * ratio
-  function heightAt(frac){ // frac: 0 (right) → 1 (left)
-    const ratio = lerp(endRatio, tipRatio, frac); // end → tip
+  function heightAt(frac){
+    const ratio = lerp(1.0, tipRatio, frac);
     return Math.max(0.5, h * Math.max(0, Math.min(1, ratio)));
   }
 
@@ -1802,9 +1796,8 @@ function drawBlockTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = 
   g.pop();
 }
 
-function drawPlusTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO, endRatio = END_RATIO){
-  // Size envelope from ratios, clamped by available length
-  const Hfull  = Math.max(0.0001, h * Math.max(0, Math.min(1, endRatio)));
+function drawPlusTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
+  const Hfull  = Math.max(0.0001, h);
   const hTip   = Math.max(0.0001, h * Math.max(0, Math.min(1, tipRatio)));
   const maxHByLen = Math.max(0.0001, len * 0.5);
   const Hbig   = Math.min(Hfull, maxHByLen);
@@ -1917,7 +1910,7 @@ function buildLayout(word, rowsCount = rows){
     glyphBuffer.noSmooth();
   }
   glyphBuffer.push();
-  glyphBuffer.noSmooth(); //?
+  glyphBuffer.noSmooth();
   glyphBuffer.background(255);
   glyphBuffer.fill(0);
   glyphBuffer.noStroke();
@@ -2107,13 +2100,11 @@ function fitViewportToWindow(){
   const wrap  = document.getElementById('canvasWrap');
   if (!stage || !wrap) return;
 
-  // beschikbare ruimte
   const availW = Math.max(100, stage.clientWidth);
   const availH = Math.max(100, stage.clientHeight);
 
   let boxW, boxH;
   if (FIT_MODE) {
-    // Vul de hele stage, negeer aspect ratio
     boxW = availW;
     boxH = availH;
   } else {
@@ -2137,19 +2128,10 @@ function fitViewportToWindow(){
     layout = buildLayout(LOGO_TEXT, rows);
   }
 
-  // Ensure the underlying SVG element uses the same intrinsic size (no CSS scaling)
-  const svg = mainCanvas.elt;
-  if (svg && svg.tagName && svg.tagName.toLowerCase() === 'svg'){
-    svg.setAttribute('width', String(boxW));
-    svg.setAttribute('height', String(boxH));
-    svg.setAttribute('viewBox', `0 0 ${boxW} ${boxH}`);
-    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
-  }
-
   updateRepeatSlidersRange();
   requestRedraw();
 }
 // ====== INPUT ======
 function mouseMoved(){
-  requestRedraw();
+  requestRedraw(); // KAN WEG?
 }
