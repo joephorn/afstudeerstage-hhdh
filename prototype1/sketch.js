@@ -35,6 +35,9 @@ let BG_TRANSPARENT = false;
 const REPEAT_ENABLED_DEFAULT        = false;
 const REPEAT_MIRROR_DEFAULT         = false;
 const REPEAT_EXTRA_ROWS_DEFAULT     = 0;
+// Falloff repeat mode
+const REPEAT_FALLOFF_DEFAULT  = 1.0;       // 1.0 = uniform (no falloff); <1.0 = aflopend
+const REPEAT_MODE_DEFAULT     = 'uniform'; // 'uniform' | 'falloff'
 
 const COLOR_BACKGROUND_DEFAULT = '#ffffff';
 const COLOR_LOGO_DEFAULT       = '#000000';
@@ -147,6 +150,8 @@ let _repeatExtraRowsMax = Math.max(0, ROWS_DEFAULT - 1);
 let REPEAT_EXTRA_ROWS_IS_FULL = !Number.isFinite(REPEAT_EXTRA_ROWS_DEFAULT) && REPEAT_EXTRA_ROWS_DEFAULT > 0;
 // Animated version of EXTRA_ROWS (for eased transitions)
 let REPEAT_EXTRA_ROWS_ANIM = (Number.isFinite(REPEAT_EXTRA_ROWS_DEFAULT) ? REPEAT_EXTRA_ROWS_DEFAULT : 0);
+let REPEAT_FALLOFF = REPEAT_FALLOFF_DEFAULT;
+let REPEAT_MODE    = REPEAT_MODE_DEFAULT;   // 'uniform' or 'falloff'
 let COLOR_COMBOS = [];
 let activeColorComboIdx = 0;
 
@@ -781,6 +786,10 @@ function setup(){
   const elRepeatMirror    = byId('repeatMirror');
   elRepeatExtraRows       = byId('repeatExtraRows');
   elRepeatExtraRowsOut    = byId('repeatExtraRowsOut');
+  const elRepeatFalloff     = byId('repeatFalloff');
+  const elRepeatFalloffOut  = byId('repeatFalloffOut');
+  const elRepeatModeUniform = byId('repeatModeUniform');
+  const elRepeatModeFalloff = byId('repeatModeFalloff');
   elColorPreset           = byId('colorPreset');
   elColorPresetLabel      = byId('colorPresetLabel');
   const btnCurveSine      = byId('curveSine');
@@ -854,6 +863,47 @@ function setup(){
     setChecked(elRepeatMirror, REPEAT_MIRROR);
 
     updateRepeatSlidersRange();
+    // Repeat falloff + mode (optional controls)
+    if (elRepeatFalloff){
+      elRepeatFalloff.min = '0';
+      elRepeatFalloff.max = '1';
+      elRepeatFalloff.step = '0.01';
+      elRepeatFalloff.value = REPEAT_FALLOFF.toFixed(2);
+    }
+    if (elRepeatFalloffOut){
+      elRepeatFalloffOut.textContent = REPEAT_FALLOFF.toFixed(2);
+    }
+    if (elRepeatModeUniform) elRepeatModeUniform.checked = (REPEAT_MODE === 'uniform');
+    if (elRepeatModeFalloff) elRepeatModeFalloff.checked = (REPEAT_MODE === 'falloff');
+  // Repeat falloff + mode listeners (optional)
+  if (elRepeatFalloff){
+    elRepeatFalloff.addEventListener('input', ()=>{
+      const v = parseFloat(elRepeatFalloff.value);
+      if (Number.isFinite(v)){
+        REPEAT_FALLOFF = Math.max(0, Math.min(1, v));
+        if (elRepeatFalloffOut) elRepeatFalloffOut.textContent = REPEAT_FALLOFF.toFixed(2);
+        requestRedraw();
+      }
+    });
+  }
+  if (elRepeatModeUniform){
+    elRepeatModeUniform.addEventListener('change', ()=>{
+      if (elRepeatModeUniform.checked){
+        REPEAT_MODE = 'uniform';
+        updateUIFromState();
+        requestRedraw();
+      }
+    });
+  }
+  if (elRepeatModeFalloff){
+    elRepeatModeFalloff.addEventListener('change', ()=>{
+      if (elRepeatModeFalloff.checked){
+        REPEAT_MODE = 'falloff';
+        updateUIFromState();
+        requestRedraw();
+      }
+    });
+  }
 
     // Power (amplitude) + Anim period outputs
     if (powerCtl) setValue(powerCtl, MOUSE_AMPLITUDE.toFixed(2));
@@ -1134,6 +1184,8 @@ function setup(){
     REPEAT_EXTRA_ROWS_ANIM = (Number.isFinite(REPEAT_EXTRA_ROWS_DEFAULT) ? REPEAT_EXTRA_ROWS_DEFAULT : 0);
     REPEAT_EXTRA_ROWS_IS_FULL = !Number.isFinite(REPEAT_EXTRA_ROWS_DEFAULT) && REPEAT_EXTRA_ROWS_DEFAULT > 0;
     updateRepeatSlidersRange();
+    REPEAT_FALLOFF = REPEAT_FALLOFF_DEFAULT;
+    REPEAT_MODE    = REPEAT_MODE_DEFAULT;
 
     PER_LETTER_STRETCH = PER_LETTER_STRETCH_DEFAULT;
     MOUSE_STRETCH_SIGMA_FRAC = MOUSE_STRETCH_SIGMA_FRAC_DEFAULT;
@@ -1350,6 +1402,7 @@ function remapRowArray(oldArr, newLen){
 }
 
 function updateRowYsSmooth(target){
+// Compute per-repeat rows with geometric falloff
   const safeTarget = Array.isArray(target) ? target : [];
   if (!safeTarget.length){
     rowYsSmooth = [];
@@ -1372,6 +1425,33 @@ function updateRowYsSmooth(target){
     rowYsSmooth[i] = next;
   }
   return maxDelta;
+}
+
+function computeRepeatRowsSequence(totalExtraRows, rowsPerBlock, falloff){
+  const out = [];
+  let remain = Math.max(0, totalExtraRows|0);
+  const rpb = Math.max(1, rowsPerBlock|0);
+  const f = Math.max(0, Math.min(1, Number(falloff)));
+  if (f >= 0.999){
+    // Uniform: consecutive full blocks until exhausted
+    while (remain > 0){
+      const n = Math.min(rpb, remain);
+      out.push(n);
+      remain -= n;
+      if (out.length > 2048) break;
+    }
+    return out;
+  }
+  let k = 0;
+  while (remain > 0){
+    const ideal = rpb * Math.pow(f, k);
+    const n = Math.max(1, Math.min(remain, Math.round(ideal)));
+    out.push(n);
+    remain -= n;
+    k++;
+    if (k > 2048) break;
+  }
+  return out;
 }
 
 function renderLogo(g){
@@ -1502,7 +1582,7 @@ function renderLogo(g){
 
   const maxRowIdx = Math.max(0, rows - 1);
 
-  function drawLettersSubset(yOff, mirrored = false, rowStart = 0, rowEnd = maxRowIdx){
+  function drawLettersSubset(yOff, mirrored = false, rowStart = 0, rowEnd = maxRowIdx, hMul = 1){
         const start = Math.max(0, Math.min(maxRowIdx, rowStart | 0));
     const end   = Math.max(start, Math.min(maxRowIdx, rowEnd | 0));
 
@@ -1514,6 +1594,7 @@ function renderLogo(g){
       ? rowPositions[end]
       : (rows <= 1 ? 0 : end * rowPitchNow);
     const tileH = Math.max(0, baseEndAbs - baseStartAbs); // hoogte van dit venster
+    const tileHScaled = tileH * Math.max(0.01, hMul);
 
     for (let li = 0; li < layout.lettersOrder.length; li++){
       const letterKey   = layout.lettersOrder[li];
@@ -1531,10 +1612,11 @@ function renderLogo(g){
           ? rowPositions[r]
           : (rows <= 1 ? 0 : r * rowPitchNow);
         const baseRowRel = baseRowAbs - baseStartAbs; // 0 op start, stijgt per rowPitch
+        const baseRowRelScaled = baseRowRel * Math.max(0.01, hMul);
 
         const y = mirrored
-          ? (tileH - baseRowRel) + yOff    // spiegel binnen venster-hoogte
-          : (baseRowRel + yOff);
+          ? (tileHScaled - baseRowRelScaled) + yOff    // spiegel binnen geschaalde venster-hoogte
+          : (baseRowRelScaled + yOff);
         for (const span of spans){
           const rightEdgeX = baseX + span.rightRel * layout.scale * wScaleUse;
           const baseLen    = Math.max(0, span.runLen * layout.scale * wScaleUse);
@@ -1547,7 +1629,7 @@ function renderLogo(g){
             const phase = (r / rows) * TWO_PI - animTime * TWO_PI * 0.35;
             rx += Math.sin(phase) * ampLayout;
           }
-          const drawH = Math.max(MIN_DRAW_HEIGHT, linePx * _lineMul);
+          const drawH = Math.max(MIN_DRAW_HEIGHT, linePx * _lineMul * Math.max(0.01, hMul));
           switch (taperMode) {
             case 'Straight':
               drawStraightTaper(g, rx, y, dashLenClamped, drawH);
@@ -1572,7 +1654,7 @@ function renderLogo(g){
   }
 
   // Draw base instance (not mirrored)
-  drawLettersSubset(0, false, 0, maxRowIdx);
+  drawLettersSubset(0, false, 0, maxRowIdx, 1);
 
   if (REPEAT_ENABLED && rows > 0){
     // All in layout units (multiples of rowPitchNow) for perfect alignment
@@ -1581,36 +1663,44 @@ function renderLogo(g){
     const stepLayout  = HlogoFull;               // adjacent blocks without extra gap
 
     // Use animated numeric cap; when target is Infinity we smoothly approach the current max
-    const extraCap = Math.max(0, Math.floor(REPEAT_EXTRA_ROWS_ANIM));
+    const useFalloff = (REPEAT_MODE === 'falloff' && REPEAT_FALLOFF < 0.999);
+    const extraCap = useFalloff
+      ? Number.MAX_SAFE_INTEGER // in falloff: ignore slider; draw until offscreen
+      : Math.max(0, Math.floor(REPEAT_EXTRA_ROWS_ANIM));
 
     // Repeats downward
     let extraBelowRemaining = extraCap;
     if (extraBelowRemaining > 0){
-      let yCursorLayout = HlogoCore; // bottom of base block in layout units
+      let yCursorLayout = HlogoCore; // bottom of base block (unscaled base)
       let downIndex = 1; // 1st repeat below = index 1
       while (true){
         if (extraBelowRemaining <= 0) break;
-        const layoutTranslate = yCursorLayout + rowPitchNow; // first next top (built-in 1-row gap)
+
+        // Height multiplier for this repeat (e.g. 0.8, 0.64, ...)
+        const hMulDown = useFalloff ? Math.pow(REPEAT_FALLOFF, Math.max(1, downIndex)) : 1.0;
+
+        // Top of this repeat sits one *scaled* row below previous bottom
+        const layoutTranslate = yCursorLayout + rowPitchNow * Math.max(0.01, hMulDown);
         const yTopPx = ty + s * layoutTranslate;
         if (yTopPx > height) break;
+
         const mirrored = REPEAT_MIRROR && ((downIndex % 2) === 1);
-        const rowsToDraw = Math.min(rows, extraBelowRemaining);
+        let rowsToDraw = Math.min(rows, extraBelowRemaining);
         if (rowsToDraw <= 0){
           extraBelowRemaining = 0;
           break;
         }
-        const rowStart = mirrored
-          ? Math.max(0, rows - rowsToDraw)
-          : 0;
-        const rowEnd = mirrored
-          ? rows - 1
-          : rowsToDraw - 1;
+        const rowStart = mirrored ? Math.max(0, rows - rowsToDraw) : 0;
+        const rowEnd   = mirrored ? (rows - 1) : (rowsToDraw - 1);
+
         g.push();
         g.translate(0, layoutTranslate);
-        drawLettersSubset(0, mirrored, rowStart, rowEnd);
+        drawLettersSubset(0, mirrored, rowStart, rowEnd, hMulDown);
         g.pop();
+
         extraBelowRemaining -= rowsToDraw;
-        yCursorLayout += stepLayout; // move to the NEXT block's bottom (top→top distance)
+        // Advance cursor by scaled block height + one scaled row gap => HlogoFull * hMulDown
+        yCursorLayout += HlogoFull * Math.max(0.01, hMulDown);
         downIndex++;
       }
     }
@@ -1618,38 +1708,38 @@ function renderLogo(g){
     // Repeats upward
     let extraAboveRemaining = extraCap;
     if (extraAboveRemaining > 0){
-      let yCursorLayoutUp = 0; // top-row of the base block
+      let yCursorLayoutUp = 0; // top of base block (unscaled base)
       let upIndex = 1; // 1st repeat above = index 1
       while (true){
         if (extraAboveRemaining <= 0) break;
-        const topLayout = yCursorLayoutUp - stepLayout; // one full block above (includes 1-row gap)
+
+        const hMulUp = useFalloff ? Math.pow(REPEAT_FALLOFF, Math.max(1, upIndex)) : 1.0;
+        // Top of this repeat sits one *scaled* block above the current top
+        const topLayout = yCursorLayoutUp - HlogoFull * Math.max(0.01, hMulUp);
         const yTopPx = ty + s * topLayout;
-        if ((yTopPx + s * HlogoCore) < 0) break;
+        if ((yTopPx + s * (HlogoCore * Math.max(0.01, hMulUp))) < 0) break;
+
         const mirrored = REPEAT_MIRROR && ((upIndex % 2) === 1);
-        const rowsToDraw = Math.min(rows, extraAboveRemaining);
+        let rowsToDraw = Math.min(rows, extraAboveRemaining);
         if (rowsToDraw <= 0){
           extraAboveRemaining = 0;
           break;
         }
-        const rowStart = mirrored
-          ? 0
-          : Math.max(0, rows - rowsToDraw);
-        const rowEnd = mirrored
-          ? Math.min(rows - 1, rowsToDraw - 1)
-          : rows - 1;
+        const rowStart = mirrored ? 0 : Math.max(0, rows - rowsToDraw);
+        const rowEnd   = mirrored ? Math.min(rows - 1, rowsToDraw - 1) : (rows - 1);
 
-        // Offset the subset so it sits flush against the BOTTOM of this block
-        // (downward repeats sit flush at the TOP by construction).
-        const tileRows = Math.max(0, rowEnd - rowStart); // inclusive end → rowsToDraw-1
-        const tileHWin = tileRows * rowPitchNow;         // window height in layout units
-        const yOffWin  = Math.max(0, HlogoCore - tileHWin);
+        // Offset so the compressed block's bottom touches the base block's top
+        const tileRows = Math.max(0, rowEnd - rowStart);
+        const tileHWin = tileRows * rowPitchNow;
+        const yOffWin  = Math.max(0, HlogoCore * Math.max(0.01, hMulUp) - tileHWin * Math.max(0.01, hMulUp));
 
         g.push();
         g.translate(0, topLayout);
-        drawLettersSubset(yOffWin, mirrored, rowStart, rowEnd);
+        drawLettersSubset(yOffWin, mirrored, rowStart, rowEnd, hMulUp);
         g.pop();
+
         extraAboveRemaining -= rowsToDraw;
-        yCursorLayoutUp = topLayout; // next top-row anchor
+        yCursorLayoutUp = topLayout; // next anchor is this repeat's top
         upIndex++;
       }
     }
@@ -2135,3 +2225,4 @@ function fitViewportToWindow(){
 function mouseMoved(){
   requestRedraw(); // KAN WEG?
 }
+  
