@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>p5 demo</title>
+    <title>Prototype</title>
     <script src="https://cdn.jsdelivr.net/npm/p5@1.11.10/lib/p5.js"></script>
     <script src="https://unpkg.com/p5.js-svg@1.6.0"></script>
     <link rel="stylesheet" href="style.css" />
@@ -45,6 +45,10 @@
             <div class="field-row">
               <input id="aspectW" class="input-fluid" type="number" min="1" step="1" value="1920" placeholder="Width (px)" />
               <input id="aspectH" class="input-fluid" type="number" min="1" step="1" value="1080" placeholder="Height (px)" />
+            </div>
+            <div class="field-row" style="align-items:center; gap:8px; margin-top:6px;">
+              <div id="customARPreview" class="sub">1920 × 1080 px</div>
+              <button id="applyCustomAR" type="button">Apply</button>
             </div>
           </div>
           <div class="button-group">
@@ -192,8 +196,8 @@
             </label>
           </div>
           <div class="control-row">
-            <label><input type="radio" name="repeatMode" id="repeatModeUniform" checked> Uniform</label>
-            <label><input type="radio" name="repeatMode" id="repeatModeFalloff"> Falloff</label>
+            <label class="checkbox-label"><input type="radio" name="repeatMode" id="repeatModeUniform" checked> Uniform</label>
+            <label class="checkbox-label"><input type="radio" name="repeatMode" id="repeatModeFalloff"> Falloff</label>
           </div>
           <div class="control-field">
             <label class="control-label" for="repeatFalloff">

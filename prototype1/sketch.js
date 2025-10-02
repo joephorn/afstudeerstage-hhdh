@@ -779,6 +779,8 @@ function setup(){
   elAspectW      = byId('aspectW');
   elAspectH      = byId('aspectH');
   elCustomAR     = byId('customAR');
+  const elApplyCustomAR   = byId('applyCustomAR');
+  const elCustomARPreview = byId('customARPreview');
   elReset        = byId('resetDefaults');
 
   const elBgLines         = byId('bgLines');
@@ -865,7 +867,7 @@ function setup(){
     updateRepeatSlidersRange();
     // Repeat falloff + mode (optional controls)
     if (elRepeatFalloff){
-      elRepeatFalloff.min = '0';
+      elRepeatFalloff.min = '0.5';
       elRepeatFalloff.max = '1';
       elRepeatFalloff.step = '0.01';
       elRepeatFalloff.value = REPEAT_FALLOFF.toFixed(2);
@@ -1102,9 +1104,11 @@ function setup(){
 
       if (val === 'custom') {
         if (elCustomAR) elCustomAR.style.display = '';
+        updateCustomPreview();
         updateCustomResolutionAndAspect();
       } else {
         if (elCustomAR) elCustomAR.style.display = 'none';
+        updateCustomPreview();
         EXPORT_W = null; EXPORT_H = null;
         const opt = elPreset.options[elPreset.selectedIndex];
         const aw = parseInt(opt.dataset.aw, 10);
@@ -1117,6 +1121,24 @@ function setup(){
         }
       }
     });
+    if (elApplyCustomAR){
+      elApplyCustomAR.addEventListener('click', ()=>{
+        const w = parseInt(elAspectW && elAspectW.value, 10);
+        const h = parseInt(elAspectH && elAspectH.value, 10);
+        if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return;
+
+        // Forceer ‘custom’-stand en pas aspect toe
+        if (elPreset) elPreset.value = 'custom';
+        FIT_MODE = false;
+        EXPORT_W = w; EXPORT_H = h; // handig voor export; voor de viewport gebruiken we vooral de aspect
+        ASPECT_W = w; ASPECT_H = h;
+
+        if (elCustomAR) elCustomAR.style.display = '';
+        fitViewportToWindow();
+        updateCustomPreview();
+        requestRedraw();
+      });
+    }
   }
 
   function updateCustomResolutionAndAspect(){
@@ -1130,8 +1152,25 @@ function setup(){
     }
   }
 
+  function updateCustomPreview(){
+    const w = parseInt(elAspectW && elAspectW.value, 10);
+    const h = parseInt(elAspectH && elAspectH.value, 10);
+    if (elCustomAR && elCustomAR.style) {
+      elCustomAR.style.display = (elPreset && elPreset.value === 'custom') ? '' : 'none';
+    }
+    if (elCustomARPreview){
+      if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0){
+        elCustomARPreview.textContent = `${w} × ${h} px`;
+      } else {
+        elCustomARPreview.textContent = `— × — px`;
+      }
+    }
+  }
+
   if (elAspectW) elAspectW.addEventListener('input', ()=>{ if (elPreset && elPreset.value === 'custom') updateCustomResolutionAndAspect(); });
   if (elAspectH) elAspectH.addEventListener('input', ()=>{ if (elPreset && elPreset.value === 'custom') updateCustomResolutionAndAspect(); });
+  if (elAspectW) elAspectW.addEventListener('input', updateCustomPreview);
+  if (elAspectH) elAspectH.addEventListener('input', updateCustomPreview);
   if (elTipRatio) elTipRatio.step = String(TIP_RATIO_SLIDER_STEP);
   if (elDispUnit){
     elDispUnit.addEventListener('input', ()=>{
