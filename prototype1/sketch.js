@@ -743,7 +743,6 @@ function setup(){
   baseRowPitch = height / rows;
   // Freeze the visual logo height in pre-scale units; adding rows should not stretch the logo
   targetContentH = (rows <= 1) ? 0 : (rows - 1) * baseRowPitch;
-  // noLoop();
   layout = buildLayout(LOGO_TEXT);
   if (targetContentW == null){
     const _ws = widthScale;
@@ -853,32 +852,38 @@ function setup(){
 
     updateRepeatSlidersRange();
 
-  if (elPreset) elPreset.value = PRESET_DEFAULT;
-  if (elAspectW) elAspectW.value = String(ASPECT_WIDTH_PX_DEFAULT);
-  if (elAspectH) elAspectH.value = String(ASPECT_HEIGHT_PX_DEFAULT);
+    // Power (amplitude) + Anim period outputs
+    if (powerCtl) setValue(powerCtl, MOUSE_AMPLITUDE.toFixed(2));
+    if (powerOut) setText(powerOut, MOUSE_AMPLITUDE.toFixed(2));
+    if (animPeriodCtl) setValue(animPeriodCtl, ANIM_PERIOD.toFixed(2));
+    if (animPeriodOut) setText(animPeriodOut, ANIM_PERIOD.toFixed(2) + ' s');
 
-  // Curve buttons
-  if (btnCurveSine)   btnCurveSine.addEventListener('click', ()=>{ MOUSE_CURVE='sine'; requestRedraw(); });
-  if (btnCurveSmooth) btnCurveSmooth.addEventListener('click',()=>{ MOUSE_CURVE='smoothstep'; requestRedraw(); });
+    if (elPreset) elPreset.value = PRESET_DEFAULT;
+    if (elAspectW) elAspectW.value = String(ASPECT_WIDTH_PX_DEFAULT);
+    if (elAspectH) elAspectH.value = String(ASPECT_HEIGHT_PX_DEFAULT);
 
-  if (elBgLines){
-    elBgLines.checked = BG_LINES;
-    elBgLines.addEventListener('change', ()=>{
-      BG_LINES = !!elBgLines.checked;
-      updateUIFromState();
-      requestRedraw();
-    });
+    // Curve buttons
+    if (btnCurveSine)   btnCurveSine.addEventListener('click', ()=>{ MOUSE_CURVE='sine'; requestRedraw(); });
+    if (btnCurveSmooth) btnCurveSmooth.addEventListener('click',()=>{ MOUSE_CURVE='smoothstep'; requestRedraw(); });
+
+    if (elBgLines){
+      elBgLines.checked = BG_LINES;
+      elBgLines.addEventListener('change', ()=>{
+        BG_LINES = !!elBgLines.checked;
+        updateUIFromState();
+        requestRedraw();
+      });
+    }
+
+    if (elRepeatMirror){
+      elRepeatMirror.checked = REPEAT_MIRROR;
+      elRepeatMirror.addEventListener('change', ()=>{
+        REPEAT_MIRROR = !!elRepeatMirror.checked;
+        updateUIFromState();
+        requestRedraw();
+      });
+    }
   }
-
-  if (elRepeatMirror){
-    elRepeatMirror.checked = REPEAT_MIRROR;
-    elRepeatMirror.addEventListener('change', ()=>{
-      REPEAT_MIRROR = !!elRepeatMirror.checked;
-      updateUIFromState();
-      requestRedraw();
-    });
-  }
-}
 
 function updateColorPresetLabel(idx){
   if (!elColorPresetLabel) return;
@@ -974,6 +979,7 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
       MOUSE_STRETCH_MIN = Math.max(0.05, 1 - stretchBelow);
       window.MOUSE_AMPLITUDE = MOUSE_AMPLITUDE;
       window.MOUSE_POWER = MOUSE_POWER;
+      if (powerOut) powerOut.textContent = MOUSE_AMPLITUDE.toFixed(2);
       updateUIFromState();
       requestRedraw();
     };
@@ -986,6 +992,7 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
       const v = parseFloat(animPeriodCtl.value);
       if (Number.isFinite(v)){
         ANIM_PERIOD = Math.max(0.1, v);
+        if (animPeriodOut) animPeriodOut.textContent = ANIM_PERIOD.toFixed(2) + ' s';
         startAnimLoop();
         updateUIFromState();
         requestRedraw();
@@ -1271,7 +1278,8 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
   fitViewportToWindow();
   requestRedraw();
   if (elPreset && elPreset.value === 'custom') updateCustomResolutionAndAspect();
-  loop();
+  noLoop();
+  requestRedraw();
 }
 
 function computeLayoutFit(){
