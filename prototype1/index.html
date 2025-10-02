@@ -96,6 +96,16 @@
             </label>
             <input id="gap" type="range" min="-20" max="150" step="1" value="9" />
           </div>
+          <div class="control-field">
+            <label class="control-label" for="taperIndex">
+              <span>Lijn (taper)</span>
+              <span id="taperIndexOut" class="sub">1</span>
+            </label>
+            <input id="taperIndex" type="range" min="1" max="5" step="1" value="1" />
+            <div class="sub" style="margin-top:4px; opacity:.75">
+              1=Rounded 2=Straight 3=Circles 4=Blocks 5=Pluses
+            </div>
+          </div>
         </section>
 
         <section class="control-section">
@@ -114,16 +124,6 @@
             </label>
             <input id="dispUnit" type="range" min="0" max="80" step="1" value="28" />
           </div>
-          <div class="control-field">
-          <label class="control-label" for="taperIndex">
-            <span>Lijn (taper)</span>
-            <span id="taperIndexOut" class="sub">1</span>
-          </label>
-          <input id="taperIndex" type="range" min="1" max="5" step="1" value="1" />
-          <div class="sub" style="margin-top:4px; opacity:.75">
-            1=Rounded 2=Straight 3=Circles 4=Blocks 5=Pluses
-          </div>
-        </div>
         </section>
 
         <section class="control-section">
@@ -175,6 +175,13 @@
               <span id="powerOut" class="sub">1.00×</span>
             </label>
             <input id="powerCtl" type="range" min="0.25" max="3" step="0.05" value="1" />
+          </div>
+          <div class="control-field">
+            <label class="control-label" for="hWaveAmp">
+              <span>Horizontal wave</span>
+              <span id="hWaveAmpOut" class="sub">0.35×</span>
+            </label>
+            <input id="hWaveAmp" type="range" min="-5" max="5" step="0.01" value="0" />
           </div>
         </section>
 

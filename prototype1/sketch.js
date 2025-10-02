@@ -11,6 +11,7 @@ const DISPLACE_GROUPS_DEFAULT  = 2;
 const TAPER_MODE_DEFAULT       = 'rounded';
 const DEBUG_MODE_DEFAULT       = false;
 const WIDTH_SCALE_DEFAULT      = 1.1;
+const H_WAVE_AMP_DEFAULT       = 0;
 const LOGO_SCALE_DEFAULT       = 1.0;
 const ASPECT_W_DEFAULT         = 16;
 const ASPECT_H_DEFAULT         = 9;
@@ -61,6 +62,8 @@ const BLOCK_STEPS = 4; // fixed number of blocks for block taper
 const BLOCK_MIN_LEN_FRAC = 0.55; // leftmost block length as fraction of its segment
 const BLOCK_LEAD_FRAC     = 0.65; // how much of the shortened width shifts left (0..1)
 const BLOCK_CAP_FRAC      = 0.12; // extra front cap length as fraction of full len
+
+let H_WAVE_AMP = H_WAVE_AMP_DEFAULT;
 
 const TAPER_SPACING = 16; // fixed distance between element centers along the line (layout units)
 
@@ -307,7 +310,7 @@ function startAnimLoop(){
     }
 
     // bij tijdgestuurde animaties altijd redraw
-    const timeDriven = (ANIM_MODE === 'pulse' || ANIM_MODE === 'scan');
+    const timeDriven = (ANIM_MODE === 'pulse' || ANIM_MODE === 'scan' || H_WAVE_AMP !== 0);
     if (timeDriven) requestRedraw();
 
     if (timeDriven || _taperTransActive){
@@ -709,6 +712,21 @@ function triggerTaperSwitch(nextMode){
 }
 
 function setup(){
+  const elHWaveAmp = document.getElementById('hWaveAmp');
+  const elHWaveAmpOut = document.getElementById('hWaveAmpOut');
+  if (elHWaveAmp){
+    elHWaveAmp.value = String(H_WAVE_AMP);
+    if (elHWaveAmpOut) elHWaveAmpOut.textContent = H_WAVE_AMP.toFixed(2) + '×';
+    elHWaveAmp.addEventListener('input', ()=>{
+      const v = parseFloat(elHWaveAmp.value);
+      if (Number.isFinite(v)){
+        H_WAVE_AMP = v;
+        if (elHWaveAmpOut) elHWaveAmpOut.textContent = v.toFixed(2) + '×';
+        requestRedraw();
+        startAnimLoop();
+      }
+    });
+  }
   // Warp controls
   mainCanvas = createCanvas(800, 250);
   // Initialize intrinsic size to match the created canvas (will be updated by fitViewportToWindow)
@@ -725,7 +743,7 @@ function setup(){
   baseRowPitch = height / rows;
   // Freeze the visual logo height in pre-scale units; adding rows should not stretch the logo
   targetContentH = (rows <= 1) ? 0 : (rows - 1) * baseRowPitch;
-  noLoop();
+  // noLoop();
   layout = buildLayout(LOGO_TEXT);
   if (targetContentW == null){
     const _ws = widthScale;
@@ -1253,8 +1271,7 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
   fitViewportToWindow();
   requestRedraw();
   if (elPreset && elPreset.value === 'custom') updateCustomResolutionAndAspect();
-  noLoop();
-  requestRedraw();
+  loop();
 }
 
 function computeLayoutFit(){
@@ -1364,7 +1381,7 @@ function renderLogo(g){
 
   g.push();
   if (BG_TRANSPARENT) {
-    g.clear(); // keep the graphics buffer transparent
+    g.clear();
   } else {
     g.background(color1);
   }
@@ -1510,7 +1527,12 @@ function renderLogo(g){
           const maxDash = Math.max(0, rightEdgeX - baseX);
           const dashLenClamped = Math.min(baseLen, maxDash);
           const xShift = computeXShift(r, rows, displaceGroupsAnim);
-          const rx = rightEdgeX + xShift;
+          let rx = rightEdgeX + xShift;
+          if (H_WAVE_AMP !== 0 && rowPitchNow > 0){
+            const ampLayout = rowPitchNow * H_WAVE_AMP;
+            const phase = (r / rows) * TWO_PI - animTime * TWO_PI * 0.35;
+            rx += Math.sin(phase) * ampLayout;
+          }
           const drawH = Math.max(MIN_DRAW_HEIGHT, linePx * _lineMul);
           switch (taperMode) {
             case 'straight':
