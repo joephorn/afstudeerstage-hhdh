@@ -98,12 +98,12 @@
           </div>
           <div class="control-field">
             <label class="control-label" for="taperIndex">
-              <span>Lijn (taper)</span>
+              <span>Shape</span>
               <span id="taperIndexOut" class="sub">1</span>
             </label>
             <input id="taperIndex" type="range" min="1" max="5" step="1" value="1" />
-            <div class="sub" style="margin-top:4px; opacity:.75">
-              1=Rounded 2=Straight 3=Circles 4=Blocks 5=Pluses
+            <div class="sub" style="margin-top:4px; opacity:.5; font-size:15.5px;">
+              Rounded Straight Circles Blocks Pluses
             </div>
           </div>
         </section>
@@ -112,14 +112,14 @@
           <h2 class="control-section-title">Displacement</h2>
           <div class="control-field">
             <label class="control-label" for="groups">
-              <span>Displacement groups</span>
+              <span>Groups</span>
               <span id="groupsOut" class="sub">—</span>
             </label>
             <input id="groups" type="range" min="0" max="5" step="1" value="0" />
           </div>
           <div class="control-field">
             <label class="control-label" for="dispUnit">
-              <span>Displacement unit</span>
+              <span>Unit</span>
               <span id="dispUnitOut" class="sub">28 px</span>
             </label>
             <input id="dispUnit" type="range" min="0" max="80" step="1" value="28" />
@@ -130,20 +130,19 @@
           <h2 class="control-section-title">Color</h2>
           <div class="control-field">
             <label class="control-label" for="colorPreset">
-              <span>Kleuren</span>
+              <span>Preset</span>
               <span class="sub" id="colorPresetLabel">Preset</span>
             </label>
             <select id="colorPreset" class="control-select control-select--tight"></select>
           </div>
           <div class="control-row">
             <label class="checkbox-label">
-              <input id="bgLines" type="checkbox" /> Achtergrondlijnen
+              <input id="bgLines" type="checkbox" /> Background lines
             </label>
           </div>
           <div class="control-row">
             <label class="checkbox-label">
-              <input id="bgTransparent" type="checkbox" />
-              Transparant background
+              <input id="bgTransparent" type="checkbox" /> Transparant background
             </label>
           </div>
         </section>
@@ -151,9 +150,9 @@
         <section class="control-section">
           <h2 class="control-section-title">Animation</h2>
           <div class="button-group">
-            <label class="control-label control-label--inline">Modus</label>
-            <button id="animOff" type="button">Uit</button>
-            <button id="animMouse" type="button">Muis</button>
+            <label class="control-label control-label--inline">Mode</label>
+            <button id="animOff" type="button">Off</button>
+            <button id="animMouse" type="button">Mouse</button>
             <button id="animPulse" type="button">Pulse ⇆</button>
             <button id="animScan" type="button">Scan →</button>
           </div>
@@ -164,7 +163,7 @@
           </div>
           <div class="control-field">
             <label class="control-label" for="animPeriod">
-              <span>Animatie duur</span>
+              <span>Duration</span>
               <span id="animPeriodOut" class="sub">0s</span>
             </label>
             <input id="animPeriod" type="range" min="2" max="10" step="0.1" value="3.0" />

@@ -683,26 +683,26 @@ function preload(){
 
 function modeFromIndex(idx){
   switch((idx|0)){
-    case 1: return 'rounded';
-    case 2: return 'straight';
-    case 3: return 'circles';
-    case 4: return 'blocks';
-    case 5: return 'pluses';
-    default: return 'rounded';
+    case 1: return 'Rounded';
+    case 2: return 'Straight';
+    case 3: return 'Circles';
+    case 4: return 'Blocks';
+    case 5: return 'Pluses';
+    default: return 'Rounded';
   }
 }
-function indexFromMode(mode){
-  switch(String(mode||'rounded')){
-    case 'rounded': return 1;
-    case 'straight': return 2;
-    case 'circles': return 3;
-    case 'blocks': return 4;
-    case 'pluses': return 5;
-    default: return 1;
+function modeToIndex(mode){
+  switch(String(mode||'rounded').toLowerCase()){
+    case 'Rounded':  return 1;
+    case 'Straight': return 2;
+    case 'Circles':  return 3;
+    case 'Blocks':   return 4;
+    case 'Pluses':   return 5;
+    default:         return 1;
   }
 }
 function triggerTaperSwitch(nextMode){
-  const target = String(nextMode||'rounded');
+  const target = String(nextMode||'Rounded');
   if (target === taperMode){ return; }
   _taperPendingMode = target;
   _taperTransActive = true;
@@ -756,38 +756,38 @@ function setup(){
 
   // Hook up HTML controls from index.html
   function byId(id){ return document.getElementById(id); }
-  elRows      = byId('rows');
-  elThickness = byId('thickness');
-  elWidth     = byId('widthScale');
-  elGap       = byId('gap');
-  elGroups    = byId('groups');
-  elGroupsOut = byId('groupsOut');
-  elTaper     = byId('taper');
-  elDebug     = byId('debug');
-  elAuto      = byId('autorand');
+  elRows         = byId('rows');
+  elThickness    = byId('thickness');
+  elWidth        = byId('widthScale');
+  elGap          = byId('gap');
+  elGroups       = byId('groups');
+  elGroupsOut    = byId('groupsOut');
+  elTaper        = byId('taper');
+  elDebug        = byId('debug');
+  elAuto         = byId('autorand');
   elRowsOut      = byId('rowsOut');
   elThicknessOut = byId('thicknessOut');
   elWidthOut     = byId('widthOut');
   elGapOut       = byId('gapOut');
-  elDispUnit    = byId('dispUnit');
-  elDispUnitOut = byId('dispUnitOut');
+  elDispUnit     = byId('dispUnit');
+  elDispUnitOut  = byId('dispUnitOut');
   elPreset       = byId('preset');
   elLogoScale    = byId('logoScale');
   elLogoScaleOut = byId('logoScaleOut');
-  elTipRatio = byId('tipRatio');
-  elTipOut   = byId('tipOut');
-  elAspectW  = byId('aspectW');
-  elAspectH  = byId('aspectH');
-  elCustomAR = byId('customAR');
-  elReset    = byId('resetDefaults');
+  elTipRatio     = byId('tipRatio');
+  elTipOut       = byId('tipOut');
+  elAspectW      = byId('aspectW');
+  elAspectH      = byId('aspectH');
+  elCustomAR     = byId('customAR');
+  elReset        = byId('resetDefaults');
 
   const elBgLines         = byId('bgLines');
   elRepeatEnabled         = byId('repeatEnabled');
   const elRepeatMirror    = byId('repeatMirror');
   elRepeatExtraRows       = byId('repeatExtraRows');
   elRepeatExtraRowsOut    = byId('repeatExtraRowsOut');
-  elColorPreset     = byId('colorPreset');
-  elColorPresetLabel= byId('colorPresetLabel');
+  elColorPreset           = byId('colorPreset');
+  elColorPresetLabel      = byId('colorPresetLabel');
   const btnCurveSine      = byId('curveSine');
   const btnCurveSmooth    = byId('curveSmooth');
   const powerCtl          = byId('powerCtl');
@@ -808,6 +808,7 @@ function setup(){
   }
 
   function updateUIFromState(){
+    if (elColorPreset) elColorPreset.value = String(activeColorComboIdx);
     const widthPct = Math.round(widthScale * 100);
     const logoPct = Math.round(logoScaleMul * 100);
 
@@ -840,8 +841,15 @@ function setup(){
 
     if (elTaper) elTaper.value = taperMode;
 
-    if (elTaperIndex){ elTaperIndex.min = '1'; elTaperIndex.max = '5'; elTaperIndex.step = '1'; elTaperIndex.value = String(indexFromMode(taperMode)); }
-    if (elTaperIndexOut){ elTaperIndexOut.textContent = String(indexFromMode(taperMode)); }
+    if (elTaperIndex){
+      elTaperIndex.min = '1';
+      elTaperIndex.max = '5';
+      elTaperIndex.step = '1';
+      elTaperIndex.value = String(modeToIndex(taperMode));
+    }
+    if (elTaperIndexOut){
+      elTaperIndexOut.textContent = modeFromIndex(modeToIndex(taperMode));
+    }
 
     setChecked(elDebug, debugMode);
     setChecked(elAuto, autoRandomActive);
@@ -885,42 +893,42 @@ function setup(){
     }
   }
 
-function updateColorPresetLabel(idx){
-  if (!elColorPresetLabel) return;
-  if (!Array.isArray(COLOR_COMBOS) || !COLOR_COMBOS.length){
-    elColorPresetLabel.textContent = 'Preset';
-    return;
+  function updateColorPresetLabel(idx){
+    if (!elColorPresetLabel) return;
+    if (!Array.isArray(COLOR_COMBOS) || !COLOR_COMBOS.length){
+      elColorPresetLabel.textContent = 'Preset';
+      return;
+    }
+    const combo = COLOR_COMBOS[Math.max(0, Math.min(COLOR_COMBOS.length - 1, idx | 0))] || COLOR_COMBOS[0];
+    const label = combo.label || `Preset ${idx + 1}`;
+    elColorPresetLabel.textContent = `${label} — ${combo.background} / ${combo.logo} / ${combo.lines}`;
   }
-  const combo = COLOR_COMBOS[Math.max(0, Math.min(COLOR_COMBOS.length - 1, idx | 0))] || COLOR_COMBOS[0];
-  const label = combo.label || `Preset ${idx + 1}`;
-  elColorPresetLabel.textContent = `${label} — ${combo.background} / ${combo.logo} / ${combo.lines}`;
-}
 
-function populateColorPresetSelect(){
-  if (!elColorPreset) return;
-  elColorPreset.innerHTML = '';
-  COLOR_COMBOS.forEach((combo, idx) => {
-    const opt = document.createElement('option');
-    opt.value = String(idx);
-    opt.textContent = combo.label || `Preset ${idx + 1}`;
-    elColorPreset.appendChild(opt);
-  });
-  elColorPreset.value = String(activeColorComboIdx);
-  updateColorPresetLabel(activeColorComboIdx);
-}
+  function populateColorPresetSelect(){
+    if (!elColorPreset) return;
+    elColorPreset.innerHTML = '';
+    COLOR_COMBOS.forEach((combo, idx) => {
+      const opt = document.createElement('option');
+      opt.value = String(idx);
+      opt.textContent = combo.label || `Preset ${idx + 1}`;
+      elColorPreset.appendChild(opt);
+    });
+    elColorPreset.value = String(activeColorComboIdx);
+    updateColorPresetLabel(activeColorComboIdx);
+  }
 
-populateColorPresetSelect();
-updateRepeatSlidersRange();
-updateUIFromState();
+  populateColorPresetSelect();
+  updateRepeatSlidersRange();
+  updateUIFromState();
 
-if (elRepeatEnabled){
-  elRepeatEnabled.addEventListener('change', ()=>{
-    REPEAT_ENABLED = !!elRepeatEnabled.checked;
-    updateRepeatSlidersRange();
-    updateUIFromState();
-    requestRedraw();
-  });
-}
+  if (elRepeatEnabled){
+    elRepeatEnabled.addEventListener('change', ()=>{
+      REPEAT_ENABLED = !!elRepeatEnabled.checked;
+      updateRepeatSlidersRange();
+      updateUIFromState();
+      requestRedraw();
+    });
+  }
 
   if (elRepeatExtraRows){
     elRepeatExtraRows.addEventListener('input', ()=>{
@@ -939,33 +947,36 @@ if (elRepeatEnabled){
     });
   }
 
-if (elColorPreset){
-  elColorPreset.addEventListener('change', ()=>{
-    const idx = parseInt(elColorPreset.value, 10);
-    applyColorComboByIndex(Number.isFinite(idx) ? idx : 0);
-    updateUIFromState();
+  if (elColorPreset){
+    elColorPreset.addEventListener('change', ()=>{
+      const idx = parseInt(elColorPreset.value, 10);
+      const safeIdx = Number.isFinite(idx) ? idx : 0;
+      applyColorComboByIndex(safeIdx);
+      updateColorPresetLabel(safeIdx);   // ← update label text immediately
+      if (elColorPreset) elColorPreset.value = String(activeColorComboIdx); // keep select in sync
+      updateUIFromState();
+      requestRedraw();
+    });
+  }
+
+  // Animation buttons
+  const btnAnimMouse = document.getElementById('animMouse');
+  const btnAnimOff   = document.getElementById('animOff');
+  const btnAnimPulse = document.getElementById('animPulse');
+  const btnAnimScan  = document.getElementById('animScan');
+
+  function setAnim(mode){
+    ANIM_MODE = mode;
+    // Enable/disable stretch based on mode
+    PER_LETTER_STRETCH = (mode !== 'off');
+    // Start RAF only for time-based modes
+    if (mode === 'pulse' || mode === 'scan') startAnimLoop(); else stopAnimLoop();
     requestRedraw();
-  });
-}
-
-// Animation buttons
-const btnAnimMouse = document.getElementById('animMouse');
-const btnAnimOff   = document.getElementById('animOff');
-const btnAnimPulse = document.getElementById('animPulse');
-const btnAnimScan  = document.getElementById('animScan');
-
-function setAnim(mode){
-  ANIM_MODE = mode;
-  // Enable/disable stretch based on mode
-  PER_LETTER_STRETCH = (mode !== 'off');
-  // Start RAF only for time-based modes
-  if (mode === 'pulse' || mode === 'scan') startAnimLoop(); else stopAnimLoop();
-  requestRedraw();
-}
-if (btnAnimMouse) btnAnimMouse.addEventListener('click', ()=> setAnim('mouse'));
-if (btnAnimOff)   btnAnimOff.addEventListener('click',   ()=> setAnim('off'));
-if (btnAnimPulse) btnAnimPulse.addEventListener('click', ()=> setAnim('pulse'));
-if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
+  }
+  if (btnAnimMouse) btnAnimMouse.addEventListener('click', ()=> setAnim('mouse'));
+  if (btnAnimOff)   btnAnimOff.addEventListener('click',   ()=> setAnim('off'));
+  if (btnAnimPulse) btnAnimPulse.addEventListener('click', ()=> setAnim('pulse'));
+  if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
 
   // Amplitude slider (controls stretch intensity around the mouse)
   if (powerCtl){
@@ -1004,7 +1015,7 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
     elTaper.value = taperMode;
     elTaper.addEventListener('change', () => {
       const v = String(elTaper.value || '').toLowerCase();
-      const valid = (v === 'rounded' || v === 'straight' || v === 'circles' || v === 'blocks' || v === 'pluses');
+      const valid = (v === 'Rounded' || v === 'Straight' || v === 'Circles' || v === 'Blocks' || v === 'Pluses');
       const next = valid ? v : TAPER_MODE_DEFAULT;
       triggerTaperSwitch(next);
       updateUIFromState();
@@ -1015,7 +1026,7 @@ if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
     elTaperIndex.addEventListener('input', ()=>{
       const idx = Math.max(1, Math.min(5, parseInt(elTaperIndex.value,10)||1));
       const next = modeFromIndex(idx);
-      if (elTaperIndexOut) elTaperIndexOut.textContent = String(idx);
+      if (elTaperIndexOut) elTaperIndexOut.textContent = modeFromIndex(idx); // ← naam tonen
       triggerTaperSwitch(next);
     });
   }
@@ -1543,19 +1554,19 @@ function renderLogo(g){
           }
           const drawH = Math.max(MIN_DRAW_HEIGHT, linePx * _lineMul);
           switch (taperMode) {
-            case 'straight':
+            case 'Straight':
               drawStraightTaper(g, rx, y, dashLenClamped, drawH);
               break;
-            case 'circles':
+            case 'Circles':
               drawCircleTaper(g, rx, y, dashLenClamped, drawH, TIP_RATIO, END_RATIO);
               break;
-            case 'blocks':
+            case 'Blocks':
               drawBlockTaper(g, rx, y, dashLenClamped, drawH, TIP_RATIO, END_RATIO);
               break;
-            case 'pluses':
+            case 'Pluses':
               drawPlusTaper(g, rx, y, dashLenClamped, drawH, TIP_RATIO, END_RATIO);
               break;
-            case 'rounded':
+            case 'Rounded':
             default:
               drawRoundedTaper(g, rx, y, dashLenClamped, drawH, TIP_RATIO, END_RATIO);
               break;

@@ -1,14 +1,14 @@
 window.COLOR_COMBINATIONS = [
   {
-    id: 'default',
-    label: 'default',
+    id: 'Default',
+    label: 'Default',
     background: '#FFFFFF',
     logo: '#000000',
     lines: '#000000'
   },
   {
-    id: 'inverted',
-    label: 'inverted',
+    id: 'Inverted',
+    label: 'Inverted',
     background: '#000000',
     logo: '#FFFFFF',  
     lines: '#FFFFFF'
