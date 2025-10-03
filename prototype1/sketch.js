@@ -595,8 +595,8 @@ function applyRandomTweaks(){
 
   maybe(0.75, ()=>{
     if (!elWidth) return;
-    const { min, max, step } = getInputRange(elWidth, 10, 150, 1);
-    const pct = randFromRangeInt(Math.max(10, min), Math.min(150, max), Math.max(0.1, step || 1));
+    const { min, max, step } = getInputRange(elWidth);
+    const pct = randFromRangeInt(Math.max(min), Math.min(max), Math.max(step));
     setAndDispatch(elWidth, pct, 'input');
   });
 
@@ -1103,7 +1103,6 @@ function setup(){
 
       if (val === 'custom') {
         if (elCustomAR) elCustomAR.style.display = 'block';
-        // Do not auto-apply on change; wait for Apply button
       } else {
         if (elCustomAR) elCustomAR.style.display = 'none';
         EXPORT_W = null; EXPORT_H = null;
@@ -1137,18 +1136,6 @@ function setup(){
     }
   }
 
-  function updateCustomResolutionAndAspect(){
-    const w = parseInt(elAspectW && elAspectW.value, 10);
-    const h = parseInt(elAspectH && elAspectH.value, 10);
-    if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0){
-      EXPORT_W = w; EXPORT_H = h;
-      ASPECT_W = w; ASPECT_H = h;
-      fitViewportToWindow();
-      requestRedraw();
-    }
-  }
-
-  // Removed updateCustomPreview and related input listeners.
   if (elTipRatio) elTipRatio.step = String(TIP_RATIO_SLIDER_STEP);
   if (elDispUnit){
     elDispUnit.addEventListener('input', ()=>{
@@ -1288,7 +1275,6 @@ function setup(){
   }
   rebuildGroupsSelect();
 
-  // listeners
   elRows.addEventListener('input', ()=>{
     const val = parseInt(elRows.value,10);
     rowsTarget = Number.isFinite(val) ? Math.max(1, val) : rowsTarget;
@@ -1558,7 +1544,6 @@ function renderLogo(g){
   wUseArr = adj.wUse;
 
   // (keep txAdj/tyAdj for the final transform below)
-
   if (rows <= 1){
     rowYsCanvas = [0];
   } else {
@@ -1670,7 +1655,6 @@ function renderLogo(g){
     }
   }
 
-  // Draw base instance (not mirrored)
   drawLettersSubset(0, false, 0, maxRowIdx, 1);
 
   if (REPEAT_ENABLED && rows > 0){
@@ -1776,7 +1760,6 @@ function draw(){
 }
 
 // ====== DRAWING ======
-
 function drawRoundedTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
   // Base radii from stroke height
   const Rfull = Math.max(0.0001, (h * 0.5));
@@ -1933,7 +1916,6 @@ function drawPlusTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
 }
 
 // ====== SCANNING HELPERS ======
-
 function isInkRowKernel(g, x, y, halfK){
   // check a small vertical window around y; returns true if any pixel is ink
   const yi = y | 0;
