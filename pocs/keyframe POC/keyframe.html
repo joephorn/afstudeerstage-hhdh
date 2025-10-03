@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Keyframe POC – p5.js</title>
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.3/lib/p5.min.js"></script>
+  <style>
+    :root { --bg:#0b0b0c; --panel:#141416; --ink:#e8e8ea; --muted:#a4a4aa; --accent:#6ee7ff; }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { margin:0; display:grid; grid-template-columns: 1fr 320px; background:var(--bg); color:var(--ink); font:14px/1.25 system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial; }
+    #wrap { display:flex; align-items:center; justify-content:center; height:100vh; }
+    canvas { outline:1px solid #222; background:#0f1012; }
+    aside { background:var(--panel); padding:16px; border-left:1px solid #1f2023; overflow:auto; }
+    h1 { font-size:16px; margin:0 0 12px; letter-spacing:.4px; }
+    .row { display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:10px; }
+    .row3 { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px; margin-bottom:10px; }
+    label { font-size:12px; color:var(--muted); display:block; margin-bottom:6px; }
+    input[type="number"], input[type="text"] { width:100%; padding:8px 10px; border-radius:8px; border:1px solid #27282c; background:#0f1012; color:var(--ink); }
+    input[type="color"] { width:100%; height:36px; border-radius:8px; border:1px solid #27282c; background:#0f1012; }
+    button { padding:8px 10px; border-radius:8px; border:1px solid #27282c; background:#15161a; color:var(--ink); cursor:pointer; }
+    button:hover { border-color:#35363b; }
+    button.primary { background:linear-gradient(180deg, #1a2630, #111a22); border-color:#2b3a45; }
+    .stack { display:flex; gap:8px; }
+    .small { font-size:12px; color:var(--muted); }
+    .divider { height:1px; background:#1f2023; margin:14px 0; }
+    .list { display:flex; gap:6px; flex-wrap:wrap; }
+    .tag { padding:6px 8px; border-radius:6px; background:#0f1012; border:1px solid #27282c; cursor:pointer; }
+    .tag.active { border-color:var(--accent); color:var(--accent); }
+  </style>
+</head>
+<body>
+  <div id="wrap"></div>
+  <aside>
+    <h1>Keyframe Panel</h1>
+
+    <div class="row">
+      <div>
+        <label for="kfIndex">Keyframes</label>
+        <div id="kfList" class="list"></div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="dur">Time between keyframes (ms)</label>
+        <input id="dur" type="number" min="50" step="50" value="800" />
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <div class="stack">
+          <button id="add" title="Add keyframe">+ Add</button>
+          <button id="del" title="Remove keyframe">– Remove</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="stack">
+        <button id="play" class="primary">▶ Play</button>
+        <button id="pause">⏸ Pause</button>
+        <span id="status" class="small" style="margin-left:6px; align-self:center;">stopped</span>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+    <div class="small">Klik op een keyframe om te selecteren. Play loopt de keyframes af zonder tussentijdse interpolatie.</div>
+  </aside>
+
+  <script>
+    // ---------- State ----------
+    const KF = []; // list of keyframes: {x,y,w,h,fill,stroke}
+    let current = 0;
+    let playing = false;
+    let loopStart = 0; // millis at start of current transition
+    let kfDuration = 800; // ms between keyframes
+
+    // p5 sketch
+    const S = new p5((p)=>{
+      let W = 640, H = 400;
+
+      p.setup = () => {
+        const c = p.createCanvas(W, H);
+        c.parent('wrap');
+        p.frameRate(60);
+        // seed with two keyframes
+        pushKF({x:100,y:100,w:160,h:100,fill:'#3aa1ff',stroke:'#ffffff'});
+        pushKF({x:380,y:200,w:240,h:140,fill:'#ff6e6e',stroke:'#ffffff'});
+        selectKF(0);
+        rebuildKFList();
+      };
+
+      p.draw = () => {
+        p.background(18);
+
+        const k = KF[current];
+        if (!k){ return; }
+
+        if (playing && KF.length > 1){
+          const now = p.millis();
+          const dt = now - loopStart;
+          const dur = Math.max(1, kfDuration);
+          if (dt >= dur){
+            current = (current + 1) % KF.length;
+            loopStart = now;
+            rebuildKFList();
+          }
+        }
+
+        p.noFill();
+        p.stroke(k.stroke);
+        p.strokeWeight(2);
+        p.fill(k.fill);
+        p.rect(k.x, k.y, k.w, k.h, 6);
+      };
+    });
+
+    // ---------- UI wiring ----------
+    const $ = (id) => document.getElementById(id);
+    const durIn = $('dur');
+    const addBtn = $('add'), delBtn = $('del');
+    const playBtn = $('play'), pauseBtn = $('pause');
+    const statusEl = $('status');
+    const kfList = $('kfList');
+
+    function pushKF(obj={}){
+      const k = {
+        x: Number.isFinite(obj.x) ? obj.x : Math.floor(Math.random()*480)+60,
+        y: Number.isFinite(obj.y) ? obj.y : Math.floor(Math.random()*260)+60,
+        w: Number.isFinite(obj.w) ? Math.max(20, obj.w) : Math.floor(Math.random()*200)+60,
+        h: Number.isFinite(obj.h) ? Math.max(20, obj.h) : Math.floor(Math.random()*160)+60,
+        fill: obj.fill || '#3aa1ff',
+        stroke: obj.stroke || '#ffffff'
+      };
+      KF.push(k);
+      return k;
+    }
+
+    function selectKF(idx){
+      current = Math.max(0, Math.min(KF.length-1, idx));
+      loopStart = S.millis();
+      rebuildKFList();
+    }
+
+    function rebuildKFList(){
+      kfList.innerHTML = '';
+      KF.forEach((_, i) => {
+        const tag = document.createElement('button');
+        tag.className = 'tag' + (i===current ? ' active' : '');
+        tag.textContent = String(i+1);
+        tag.addEventListener('click', ()=> selectKF(i));
+        kfList.appendChild(tag);
+      });
+    }
+
+    addBtn.addEventListener('click', ()=>{
+      const base = KF[current] || {};
+      pushKF({
+        x: base.x + Math.floor(Math.random()*80-40),
+        y: base.y + Math.floor(Math.random()*80-40),
+        w: base.w,
+        h: base.h,
+        fill: base.fill,
+        stroke: base.stroke
+      });
+      selectKF(KF.length-1);
+      statusEl.textContent = 'keyframe added';
+    });
+
+    delBtn.addEventListener('click', ()=>{
+      if (!KF.length) return;
+      KF.splice(current, 1);
+      if (!KF.length){
+        pushKF();
+      }
+      selectKF(Math.max(0, current-1));
+      statusEl.textContent = 'keyframe removed';
+    });
+
+    durIn.addEventListener('input', ()=>{
+      kfDuration = Math.max(1, Number(durIn.value)||800);
+    });
+
+    playBtn.addEventListener('click', ()=>{
+      if (KF.length <= 1){ statusEl.textContent = 'add >= 2 keyframes'; return; }
+      playing = true; loopStart = S.millis(); statusEl.textContent = 'playing';
+    });
+
+    pauseBtn.addEventListener('click', ()=>{ playing = false; statusEl.textContent = 'stopped'; });
+  </script>
+</body>
+</html>
