@@ -3,30 +3,30 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Keyframe POC – p5.js</title>
+  <title>Keyframe POC</title>
   <script src="https://cdn.jsdelivr.net/npm/p5@1.9.3/lib/p5.min.js"></script>
   <style>
-    :root { --bg:#0b0b0c; --panel:#141416; --ink:#e8e8ea; --muted:#a4a4aa; --accent:#6ee7ff; }
+    :root { --bg:#efefef; --panel:#ffffff; --ink:#0a0a0a; --muted:#5555e6; --accent:#338899; }
     * { box-sizing: border-box; }
     html, body { height: 100%; }
     body { margin:0; display:grid; grid-template-columns: 1fr 320px; background:var(--bg); color:var(--ink); font:14px/1.25 system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial; }
     #wrap { display:flex; align-items:center; justify-content:center; height:100vh; }
-    canvas { outline:1px solid #222; background:#0f1012; }
-    aside { background:var(--panel); padding:16px; border-left:1px solid #1f2023; overflow:auto; }
+    canvas { outline:1px solid #b9b9b9; background:#ffffff; }
+    aside { background:var(--panel); padding:16px; border-left:1px solid #c8c8c8; overflow:auto; }
     h1 { font-size:16px; margin:0 0 12px; letter-spacing:.4px; }
     .row { display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:10px; }
     .row3 { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px; margin-bottom:10px; }
     label { font-size:12px; color:var(--muted); display:block; margin-bottom:6px; }
-    input[type="number"], input[type="text"] { width:100%; padding:8px 10px; border-radius:8px; border:1px solid #27282c; background:#0f1012; color:var(--ink); }
-    input[type="color"] { width:100%; height:36px; border-radius:8px; border:1px solid #27282c; background:#0f1012; }
-    button { padding:8px 10px; border-radius:8px; border:1px solid #27282c; background:#15161a; color:var(--ink); cursor:pointer; }
+    input[type="number"], input[type="text"] { width:100%; padding:8px 10px; border-radius:8px; border:1px solid #aaaaaa; background:#e8e8e8; color:var(--ink); }
+    input[type="color"] { width:100%; height:36px; border-radius:8px; border:1px solid #27282c; background:#dfdfdf; }
+    button { padding:8px 10px; border-radius:8px; border:1px solid #e6e6e6; background:#e6e6e6; color:var(--ink); cursor:pointer; }
     button:hover { border-color:#35363b; }
-    button.primary { background:linear-gradient(180deg, #1a2630, #111a22); border-color:#2b3a45; }
+    button.primary { background:linear-gradient(180deg, #f2f2f2, #e0e0e0); border-color:#2b3a45; }
     .stack { display:flex; gap:8px; }
     .small { font-size:12px; color:var(--muted); }
-    .divider { height:1px; background:#1f2023; margin:14px 0; }
+    .divider { height:1px; background:#c4c4c4; margin:14px 0; }
     .list { display:flex; gap:6px; flex-wrap:wrap; }
-    .tag { padding:6px 8px; border-radius:6px; background:#0f1012; border:1px solid #27282c; cursor:pointer; }
+    .tag { padding:6px 8px; border-radius:6px; background:#dcdcdc; border:1px solid #b8b8b8; cursor:pointer; }
     .tag.active { border-color:var(--accent); color:var(--accent); }
   </style>
 </head>
@@ -92,7 +92,7 @@
       };
 
       p.draw = () => {
-        p.background(18);
+        p.background(250);
 
         const k = KF[current];
         if (!k){ return; }

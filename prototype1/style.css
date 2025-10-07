@@ -6,7 +6,7 @@
   --color-panel-bg: #ffffff;
   --color-panel-border: #e5e5e5;
   --color-divider: #ececec;
-  --color-heading: #5a5a5a;
+  --color-heading: #3b3b3b;
   --shadow-panel: 0 4px 18px rgba(0, 0, 0, 0.06);
   --radius-stage: 8px;
   --radius-panel: 12px;
@@ -239,10 +239,11 @@ button#resetDefaults {
   font-weight: var(--font-weight-strong);
   border: 1px solid var(--color-panel-border);
   border-radius: 8px;
-  background: #f0f0f0;
+  color: white;
+  background: #383838;
   cursor: pointer;
 }
 
 button#resetDefaults:hover {
-  background: #e5e5e5;
+  background: #0b0b0b;
 }

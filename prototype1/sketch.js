@@ -7,7 +7,7 @@ const TIP_RATIO_DEFAULT        = 0.3;
 const DISPLACE_UNIT_DEFAULT    = 28;
 const GAP_PX_DEFAULT           = 9;
 const DISPLACE_GROUPS_DEFAULT  = 2;
-const TAPER_MODE_DEFAULT       = 'rounded';
+const TAPER_MODE_DEFAULT       = 'Rounded';
 const DEBUG_MODE_DEFAULT       = false;
 const WIDTH_SCALE_DEFAULT      = 1.1;
 const H_WAVE_AMP_DEFAULT       = 0;
@@ -692,7 +692,7 @@ function modeFromIndex(idx){
   }
 }
 function modeToIndex(mode){
-  switch(String(mode||'rounded').toLowerCase()){
+  switch(String(mode||'Rounded').toLowerCase()){
     case 'Rounded':  return 1;
     case 'Straight': return 2;
     case 'Circles':  return 3;
