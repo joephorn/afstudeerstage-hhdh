@@ -192,6 +192,36 @@
         </section>
 
         <section class="control-section">
+          <h2 class="control-section-title">Easing</h2>
+          <div class="control-field">
+            <label class="control-label" for="easeType">
+              <span>Type</span>
+              <span class="sub">for slider transitions</span>
+            </label>
+            <select id="easeType" class="control-select control-select--tight">
+              <option value="smooth" selected>Smoothstep</option>
+              <option value="linear">Linear</option>
+              <option value="easeInOut">Ease In-Out</option>
+              <option value="elastic">Elastic (overshoot)</option>
+            </select>
+          </div>
+          <div class="control-field">
+            <label class="control-label" for="easeDur">
+              <span>Duration</span>
+              <span id="easeDurOut" class="sub">0.25 s</span>
+            </label>
+            <input id="easeDur" type="range" min="0" max="2" step="0.01" value="0.25" />
+          </div>
+          <div class="control-field">
+            <label class="control-label" for="easeAmp">
+              <span>Amplitude</span>
+              <span id="easeAmpOut" class="sub">1.00×</span>
+            </label>
+            <input id="easeAmp" type="range" min="0" max="2" step="0.05" value="1.00" />
+          </div>
+        </section>
+
+        <section class="control-section">
           <h2 class="control-section-title">Repeat</h2>
           <div class="control-row">
             <label class="checkbox-label">
@@ -224,17 +254,26 @@
         </section>
 
         <section class="control-section">
-          <h2 class="control-section-title">Extra</h2>
+          <h2 class="control-section-title">Randomizer</h2>
           <div class="control-row">
             <label class="checkbox-label">
               <input id="autorand" type="checkbox" /> Auto randomize
             </label>
           </div>
+          <div class="control-field">
+            <label class="control-label" for="autorandDur">
+              <span>Duration</span>
+              <span id="autorandDurOut" class="sub">1.00 s</span>
+            </label>
+            <input id="autorandDur" type="range" min="0.5" max="5" step="0.1" value="1.0" />
+          </div>
+          <!-- Debug mode (temporarily disabled)
           <div class="control-row is-muted">
             <label class="checkbox-label">
               <input id="debug" type="checkbox" /> Debug mode
             </label>
           </div>
+          -->
         </section>
 
         <section class="control-section">

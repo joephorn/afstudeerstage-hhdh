@@ -28,6 +28,13 @@ window.COLOR_COMBINATIONS = [
     lines: '#EC6448'
   },
   {
+    id: '2.5',
+    label: '2.5',
+    background: '#0F2350',
+    logo: '#96CDEB',
+    lines: '#EC6448'
+  },
+  {
     id: '3',
     label: '3',
     background: '#28A596',

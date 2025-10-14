@@ -43,11 +43,17 @@ const COLOR_BACKGROUND_DEFAULT = '#ffffff';
 const COLOR_LOGO_DEFAULT       = '#000000';
 const COLOR_LINES_DEFAULT      = '#000000';
 
-const PARAM_EASE_FACTOR        = 0.1;
+const PARAM_EASE_FACTOR        = 0.1; // legacy smoothing factor (kept for rows/displace animation)
+
+// Global easing for slider-driven transitions (gap, line height, etc.)
+const EASE_TYPE_DEFAULT     = 'smooth';   // 'linear' | 'smooth' | 'easeInOut' | 'elastic'
+const EASE_DURATION_DEFAULT = 0.25;       // seconds
+const EASE_AMPLITUDE_DEFAULT= 1.0;        // only used for 'elastic' (overshoot)
 
 const ANIM_MODE_DEFAULT   = 'off';
 const ANIM_PERIOD_DEFAULT = 3.0;
-const AUTO_RANDOM_DEFAULT = false;
+const AUTO_RANDOM_DEFAULT = false; // disabled by default
+const AUTO_RANDOM_PERIOD_DEFAULT = 1.0; // seconds
 
 let TIP_RATIO        = TIP_RATIO_DEFAULT;
 let DISPLACE_UNIT    = DISPLACE_UNIT_DEFAULT;
@@ -106,7 +112,9 @@ const MIN_DRAW_HEIGHT  = 2;    // guard to avoid zero-area issues
 
 let elRows, elThickness, elWidth, elGap, elGroups, elDispUnit, elPreset, elLogoScale, elAspectW, elAspectH, elCustomAR, elReset;
 let elRowsOut, elThicknessOut, elWidthOut, elGapOut, elDispUnitOut, elGroupsOut, elLogoScaleOut;
+let elEaseType, elEaseDur, elEaseDurOut, elEaseAmp, elEaseAmpOut;
 let elTaper, elTaperIndex, elTaperIndexOut, elColorPreset, elColorPresetLabel, elRepeatFalloff, elRepeatFalloffOut, elRepeatUniform, elDebug, elAuto;
+let elAutoDur, elAutoDurOut;
 let elRepeatEnabled, elRepeatExtraRows, elRepeatExtraRowsOut;
 let elTipRatio, elTipOut;
 let gapPx = GAP_PX_DEFAULT;
@@ -116,8 +124,81 @@ let displaceGroupsAnim = DISPLACE_GROUPS_DEFAULT;
 let taperMode = TAPER_MODE_DEFAULT;
 let debugMode = DEBUG_MODE_DEFAULT;
 let widthScale = WIDTH_SCALE_DEFAULT;
+let widthScaleTarget = WIDTH_SCALE_DEFAULT;
+
+// Global easing state
+let EASE_TYPE = EASE_TYPE_DEFAULT;
+let EASE_DURATION = EASE_DURATION_DEFAULT;
+let EASE_AMPLITUDE = EASE_AMPLITUDE_DEFAULT;
+
+// Per-parameter tween states for time-based easings
+function makeTween(initial){
+  return { from: Number(initial)||0, to: Number(initial)||0, start: 0, dur: EASE_DURATION_DEFAULT, active: false };
+}
+const _paramTweens = {
+  linePx: makeTween(LINE_HEIGHT),
+  gapPx: makeTween(GAP_PX_DEFAULT),
+  dispUnit: makeTween(DISPLACE_UNIT_DEFAULT),
+  tipRatio: makeTween(TIP_RATIO_DEFAULT),
+  extraRows: makeTween(Number.isFinite(REPEAT_EXTRA_ROWS_DEFAULT) ? REPEAT_EXTRA_ROWS_DEFAULT : 0),
+  widthScale: makeTween(WIDTH_SCALE_DEFAULT),
+  logoScale: makeTween(LOGO_SCALE_DEFAULT),
+  rows: makeTween(ROWS_DEFAULT),
+  groups: makeTween(DISPLACE_GROUPS_DEFAULT),
+};
+
+// Easing functions (0..1 -> 0..1)
+function easeLinear(t){ return t; }
+function easeSmooth(t){ return t * t * (3 - 2 * t); }
+function easeInOutCubic(t){ return (t < 0.5) ? (4 * t * t * t) : (1 - Math.pow(-2 * t + 2, 3) / 2); }
+function easeElasticOut(t, amp = 1){
+  if (t === 0) return 0;
+  if (t === 1) return 1;
+  const c4 = (2 * Math.PI) / 3;
+  const scale = Math.max(0, amp); // 0 = no overshoot
+  // classic elastic-out, scaled by amplitude
+  return 1 - Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * c4) * scale;
+}
+function applyEase(t){
+  const tt = Math.max(0, Math.min(1, t));
+  switch (EASE_TYPE){
+    case 'linear':    return easeLinear(tt);
+    case 'easeInOut': return easeInOutCubic(tt);
+    case 'elastic':   return easeElasticOut(tt, EASE_AMPLITUDE);
+    case 'smooth':
+    default:          return easeSmooth(tt);
+  }
+}
+
+// Step/restart tween to reach target over EASE_DURATION seconds
+function stepTween(tw, currentVal, targetVal, now){
+  const to = Number(targetVal);
+  if (!Number.isFinite(currentVal)) currentVal = tw.to;
+  // Restart if target changed or inactive
+  if (!tw.active || to !== tw.to){
+    tw.from = Number(currentVal);
+    tw.to = to;
+    tw.start = now;
+    tw.dur = Math.max(0, Number(EASE_DURATION));
+    tw.active = (tw.dur > 0 && Math.abs(tw.to - tw.from) > 1e-6);
+    if (!tw.active){
+      // snap instantly when dur=0 or no change
+      return { value: tw.to, changed: (tw.to !== currentVal), animating: false };
+    }
+  }
+  // Active tween → compute eased value
+  const t = Math.max(0, Math.min(1, (now - tw.start) / Math.max(0.0001, tw.dur)));
+  const k = applyEase(t);
+  const v = tw.from + (tw.to - tw.from) * k;
+  if (t >= 1){
+    tw.active = false;
+    return { value: tw.to, changed: (tw.to !== currentVal), animating: false };
+  }
+  return { value: v, changed: Math.abs(v - currentVal) > 1e-6, animating: true };
+}
 
 let logoScaleMul = LOGO_SCALE_DEFAULT;
+let logoScaleTarget = LOGO_SCALE_DEFAULT;
 let DISPLACE_UNIT_TARGET = DISPLACE_UNIT_DEFAULT;
 let TIP_RATIO_TARGET = TIP_RATIO_DEFAULT;
 let _layoutDirty = false;
@@ -156,9 +237,16 @@ let COLOR_COMBOS = [];
 let activeColorComboIdx = 0;
 
 // ---- Colors ----
+// Target hex colors (selected preset)
+let color1TargetHex = COLOR_BACKGROUND_DEFAULT; // background target
+let color2TargetHex = COLOR_LOGO_DEFAULT;       // logo target
+let color3TargetHex = COLOR_LINES_DEFAULT;      // lines target
+// Animated CSS colors used for drawing (updated each frame)
 let color1 = COLOR_BACKGROUND_DEFAULT;
 let color2 = COLOR_LOGO_DEFAULT;
 let color3 = COLOR_LINES_DEFAULT;
+
+// (Color tween removed — colors update instantly)
 
 // --- Color helpers: auto-combo and black detection ---
 function normHex(hex){ return String(hex || '').trim().toLowerCase(); }
@@ -173,14 +261,54 @@ function nextColorAfter(list, hex){
   if (idx === -1) return list[0];
   return list[(idx + 1) % list.length];
 }
+function hexByte(n){ const x = Math.max(0, Math.min(255, n|0)); return (x < 16 ? '0' : '') + x.toString(16); }
+function rgbToHex(r,g,b){ return '#' + hexByte(r) + hexByte(g) + hexByte(b); }
+function parseCssColorToRgb(str){
+  const s = String(str||'').trim();
+  // #RRGGBB
+  let m = /^#?([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/.exec(s.startsWith('#') ? s : '#' + s);
+  if (m) return { r: parseInt(m[1],16), g: parseInt(m[2],16), b: parseInt(m[3],16) };
+  // #RGB
+  m = /^#?([0-9a-fA-F])([0-9a-fA-F])([0-9a-fA-F])$/.exec(s.startsWith('#') ? s : '#' + s);
+  if (m) return { r: parseInt(m[1]+m[1],16), g: parseInt(m[2]+m[2],16), b: parseInt(m[3]+m[3],16) };
+  // rgb(r,g,b)
+  m = /^rgb\s*\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$/.exec(s.toLowerCase());
+  if (m) return { r: Math.max(0,Math.min(255,parseInt(m[1],10))), g: Math.max(0,Math.min(255,parseInt(m[2],10))), b: Math.max(0,Math.min(255,parseInt(m[3],10))) };
+  // named minimal
+  const sn = s.toLowerCase();
+  if (sn === 'black') return { r:0,g:0,b:0 };
+  if (sn === 'white') return { r:255,g:255,b:255 };
+  return { r:0,g:0,b:0 };
+}
+function setColorTargets(bgHex, logoHex, linesHex, animate=true){
+  // Color tween removed: set targets and active draw colors immediately
+  if (bgHex){
+    color1TargetHex = bgHex;
+    const to = parseCssColorToRgb(bgHex);
+    color1 = rgbToHex(to.r,to.g,to.b);
+  }
+  if (logoHex){
+    color2TargetHex = logoHex;
+    const to = parseCssColorToRgb(logoHex);
+    color2 = rgbToHex(to.r,to.g,to.b);
+  }
+  if (linesHex){
+    color3TargetHex = linesHex;
+    const to = parseCssColorToRgb(linesHex);
+    color3 = rgbToHex(to.r,to.g,to.b);
+  }
+}
 function applyColorComboByIndex(idx){
   if (!Array.isArray(COLOR_COMBOS) || !COLOR_COMBOS.length) return;
   const safeIdx = Math.max(0, Math.min(COLOR_COMBOS.length - 1, idx | 0));
   const combo = COLOR_COMBOS[safeIdx];
   activeColorComboIdx = safeIdx;
-  color1 = combo.background || COLOR_BACKGROUND_DEFAULT;
-  color2 = combo.logo || COLOR_LOGO_DEFAULT;
-  color3 = combo.lines || COLOR_LINES_DEFAULT;
+  setColorTargets(
+    combo.background || COLOR_BACKGROUND_DEFAULT,
+    combo.logo || COLOR_LOGO_DEFAULT,
+    combo.lines || COLOR_LINES_DEFAULT,
+    true
+  );
 }
 
 function sanitizeColor(hex, fallback){
@@ -190,13 +318,14 @@ function sanitizeColor(hex, fallback){
 
 // random animate
 let lastAutoRandomMs = 0;
-const RANDOM_INTERVAL_MS = 1000;
 let autoRandomActive = AUTO_RANDOM_DEFAULT;
+let autoRandomPeriodSec = AUTO_RANDOM_PERIOD_DEFAULT;
 let autoTimer = null;
 function setAuto(on){
   if (autoTimer){ clearInterval(autoTimer); autoTimer = null; }
   if (on){
-    autoTimer = setInterval(()=>{ applyRandomTweaks(); }, RANDOM_INTERVAL_MS);
+    const ms = Math.max(50, Math.round(Math.max(0.05, autoRandomPeriodSec) * 1000));
+    autoTimer = setInterval(()=>{ applyRandomTweaks(); }, ms);
   }
 }
 
@@ -509,6 +638,7 @@ function randFromInputFloat(el, fallbackMin, fallbackMax, fallbackStep){
 }
 
 function smoothToward(current, target, ease = PARAM_EASE_FACTOR){
+  // Legacy exponential smoothing (still used for rows/displace groups)
   if (!Number.isFinite(current)) current = 0;
   if (!Number.isFinite(target)) target = current;
   const diff = target - current;
@@ -524,35 +654,53 @@ function updateAnimatedParameters(){
   let animating = false;
   let layoutNeedsRebuild = false;
 
-  const lineStep = smoothToward(linePx, linePxTarget);
+  const now = performance.now() / 1000;
+
+  // Time-based tweens for slider-driven params
+  const lineStep = stepTween(_paramTweens.linePx, linePx, linePxTarget, now);
   if (lineStep.changed) linePx = lineStep.value;
   if (lineStep.animating) animating = true;
 
-  const gapStep = smoothToward(gapPx, gapPxTarget);
-  if (gapStep.changed){
-    gapPx = gapStep.value;
-    layoutNeedsRebuild = true;
-  }
+  const gapStep = stepTween(_paramTweens.gapPx, gapPx, gapPxTarget, now);
+  if (gapStep.changed){ gapPx = gapStep.value; layoutNeedsRebuild = true; }
   if (gapStep.animating) animating = true;
 
-  const dispStep = smoothToward(DISPLACE_UNIT, DISPLACE_UNIT_TARGET);
-  if (dispStep.changed){
-    DISPLACE_UNIT = dispStep.value;
-    layoutNeedsRebuild = true;
-  }
+  const dispStep = stepTween(_paramTweens.dispUnit, DISPLACE_UNIT, DISPLACE_UNIT_TARGET, now);
+  if (dispStep.changed){ DISPLACE_UNIT = dispStep.value; layoutNeedsRebuild = true; }
   if (dispStep.animating) animating = true;
 
-  const tipStep = smoothToward(TIP_RATIO, TIP_RATIO_TARGET);
+  const tipStep = stepTween(_paramTweens.tipRatio, TIP_RATIO, TIP_RATIO_TARGET, now);
   if (tipStep.changed) TIP_RATIO = tipStep.value;
   if (tipStep.animating) animating = true;
 
-  // Ease the visible repeat extra rows toward the target (Infinity maps to current max)
+  // Visible repeat extra rows — map Infinity to capacity, then tween
   const targetExtraNumeric = Number.isFinite(REPEAT_EXTRA_ROWS)
     ? Math.max(0, REPEAT_EXTRA_ROWS)
     : Math.max(0, _repeatExtraRowsMax);
-  const extraStep = smoothToward(REPEAT_EXTRA_ROWS_ANIM, targetExtraNumeric);
+  const extraStep = stepTween(_paramTweens.extraRows, REPEAT_EXTRA_ROWS_ANIM, targetExtraNumeric, now);
   if (extraStep.changed) REPEAT_EXTRA_ROWS_ANIM = extraStep.value;
   if (extraStep.animating) animating = true;
+
+  // Width scale (percentage control)
+  const widthStep = stepTween(_paramTweens.widthScale, widthScale, widthScaleTarget, now);
+  if (widthStep.changed) widthScale = widthStep.value;
+  if (widthStep.animating) animating = true;
+
+  // Logo scale (overall size)
+  const logoStep = stepTween(_paramTweens.logoScale, logoScaleMul, logoScaleTarget, now);
+  if (logoStep.changed) logoScaleMul = logoStep.value;
+  if (logoStep.animating) animating = true;
+
+  // Rows tween (animate rowsAnim toward rowsTarget)
+  const rowsStep = stepTween(_paramTweens.rows, rowsAnim, rowsTarget, now);
+  if (rowsStep.changed) rowsAnim = rowsStep.value;
+  if (rowsStep.animating) animating = true;
+
+  // Displacement groups (continuous value; actual grouping calc still discrete)
+  const grpStep = stepTween(_paramTweens.groups, displaceGroupsAnim, displaceGroupsTarget, now);
+  if (grpStep.changed) displaceGroupsAnim = grpStep.value;
+  if (grpStep.animating) animating = true;
+  // Colors update instantly via setColorTargets; no per-frame color tweening
 
   if (layoutNeedsRebuild) _layoutDirty = true;
   if (animating) requestRedraw();
@@ -674,6 +822,8 @@ function preload(){
     }];
   }
   applyColorComboByIndex(0);
+  // Snap animated color state to initial targets (avoid first-load pop)
+  setColorTargets(color1TargetHex, color2TargetHex, color3TargetHex, false);
   const uniq = Array.from(new Set(LOGO_TEXT.split('').map(c => c.toUpperCase())));
   uniq.forEach(ch => {
     const p = LETTERS_PATH + ch + '.svg';
@@ -692,7 +842,7 @@ function modeFromIndex(idx){
   }
 }
 function modeToIndex(mode){
-  switch(String(mode||'Rounded').toLowerCase()){
+  switch(String(mode||'Rounded')){
     case 'Rounded':  return 1;
     case 'Straight': return 2;
     case 'Circles':  return 3;
@@ -765,6 +915,8 @@ function setup(){
   elTaper        = byId('taper');
   elDebug        = byId('debug');
   elAuto         = byId('autorand');
+  elAutoDur      = byId('autorandDur');
+  elAutoDurOut   = byId('autorandDurOut');
   elRowsOut      = byId('rowsOut');
   elThicknessOut = byId('thicknessOut');
   elWidthOut     = byId('widthOut');
@@ -781,6 +933,13 @@ function setup(){
   elCustomAR     = byId('customAR');
   const elApplyCustomAR   = byId('applyCustomAR');
   elReset        = byId('resetDefaults');
+
+  // Easing controls
+  elEaseType   = byId('easeType');
+  elEaseDur    = byId('easeDur');
+  elEaseDurOut = byId('easeDurOut');
+  elEaseAmp    = byId('easeAmp');
+  elEaseAmpOut = byId('easeAmpOut');
 
   const elBgLines         = byId('bgLines');
   elRepeatEnabled         = byId('repeatEnabled');
@@ -814,8 +973,8 @@ function setup(){
 
   function updateUIFromState(){
     if (elColorPreset) elColorPreset.value = String(activeColorComboIdx);
-    const widthPct = Math.round(widthScale * 100);
-    const logoPct = Math.round(logoScaleMul * 100);
+    const widthPct = Math.round(widthScaleTarget * 100);
+    const logoPct = Math.round(logoScaleTarget * 100);
 
     const rowsDisplay = Math.max(1, Math.round(rowsTarget));
     setValue(elRows, rowsDisplay);
@@ -858,6 +1017,16 @@ function setup(){
 
     setChecked(elDebug, debugMode);
     setChecked(elAuto, autoRandomActive);
+    if (elAutoDur){
+      elAutoDur.min = '0.5';
+      elAutoDur.max = '5';
+      elAutoDur.step = '0.1';
+      elAutoDur.value = String(autoRandomPeriodSec.toFixed(1));
+      elAutoDur.disabled = !autoRandomActive;
+    }
+    if (elAutoDurOut){
+      elAutoDurOut.textContent = `${autoRandomPeriodSec.toFixed(2)} s`;
+    }
 
     setChecked(elBgLines, BG_LINES);
     setChecked(elRepeatEnabled, REPEAT_ENABLED);
@@ -911,6 +1080,14 @@ function setup(){
     if (powerOut) setText(powerOut, MOUSE_AMPLITUDE.toFixed(2));
     if (animPeriodCtl) setValue(animPeriodCtl, ANIM_PERIOD.toFixed(2));
     if (animPeriodOut) setText(animPeriodOut, ANIM_PERIOD.toFixed(2) + ' s');
+
+    // Easing UI
+    if (elEaseType) elEaseType.value = EASE_TYPE;
+    if (elEaseDur)  elEaseDur.value  = String(EASE_DURATION.toFixed(2));
+    if (elEaseDurOut) elEaseDurOut.textContent = `${EASE_DURATION.toFixed(2)} s`;
+    if (elEaseAmp)  elEaseAmp.value  = String(EASE_AMPLITUDE.toFixed(2));
+    if (elEaseAmpOut) elEaseAmpOut.textContent = `${EASE_AMPLITUDE.toFixed(2)}×`;
+    if (elEaseAmp) elEaseAmp.disabled = (EASE_TYPE !== 'elastic');
 
     if (elPreset) elPreset.value = PRESET_DEFAULT;
     if (elAspectW) elAspectW.value = String(ASPECT_WIDTH_PX_DEFAULT);
@@ -1024,6 +1201,39 @@ function setup(){
   if (btnAnimPulse) btnAnimPulse.addEventListener('click', ()=> setAnim('pulse'));
   if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
 
+  // Easing controls (for slider-driven transitions)
+  function updateEaseAmpState(){ if (elEaseAmp) elEaseAmp.disabled = (EASE_TYPE !== 'elastic'); }
+  updateEaseAmpState();
+  if (elEaseType){
+    elEaseType.addEventListener('change', ()=>{
+      const v = String(elEaseType.value||'smooth');
+      EASE_TYPE = (v === 'linear' || v === 'easeInOut' || v === 'elastic') ? v : 'smooth';
+      updateEaseAmpState();
+      updateUIFromState();
+      requestRedraw();
+    });
+  }
+  if (elEaseDur){
+    elEaseDur.addEventListener('input', ()=>{
+      const v = parseFloat(elEaseDur.value);
+      if (Number.isFinite(v)){
+        EASE_DURATION = Math.max(0, v);
+        if (elEaseDurOut) elEaseDurOut.textContent = `${EASE_DURATION.toFixed(2)} s`;
+        requestRedraw();
+      }
+    });
+  }
+  if (elEaseAmp){
+    elEaseAmp.addEventListener('input', ()=>{
+      const v = parseFloat(elEaseAmp.value);
+      if (Number.isFinite(v)){
+        EASE_AMPLITUDE = Math.max(0, v);
+        if (elEaseAmpOut) elEaseAmpOut.textContent = `${EASE_AMPLITUDE.toFixed(2)}×`;
+        requestRedraw();
+      }
+    });
+  }
+
   // Amplitude slider (controls stretch intensity around the mouse)
   if (powerCtl){
     const updateAmplitude = ()=>{
@@ -1060,7 +1270,7 @@ function setup(){
   if (elTaper) {
     elTaper.value = taperMode;
     elTaper.addEventListener('change', () => {
-      const v = String(elTaper.value || '').toLowerCase();
+      const v = String(elTaper.value || '');
       const valid = (v === 'Rounded' || v === 'Straight' || v === 'Circles' || v === 'Blocks' || v === 'Pluses');
       const next = valid ? v : TAPER_MODE_DEFAULT;
       triggerTaperSwitch(next);
@@ -1082,7 +1292,7 @@ function setup(){
     elLogoScale.step = 1;
     elLogoScale.addEventListener('input', ()=>{
       const perc = Math.max(10, Math.min(200, parseInt(elLogoScale.value, 10) || 100));
-      logoScaleMul = perc / 100;
+      logoScaleTarget = perc / 100;
       updateUIFromState();
       requestRedraw();
     });
@@ -1164,16 +1374,19 @@ function setup(){
     linePx = LINE_HEIGHT;
     linePxTarget = LINE_HEIGHT;
     widthScale = WIDTH_SCALE_DEFAULT;
+    widthScaleTarget = WIDTH_SCALE_DEFAULT;
     gapPx = GAP_PX_DEFAULT;
     gapPxTarget = GAP_PX_DEFAULT;
     displaceGroupsTarget = DISPLACE_GROUPS_DEFAULT;
     displaceGroupsAnim = DISPLACE_GROUPS_DEFAULT;
+    displaceGroupsTarget = DISPLACE_GROUPS_DEFAULT;
     DISPLACE_UNIT = DISPLACE_UNIT_DEFAULT;
     DISPLACE_UNIT_TARGET = DISPLACE_UNIT_DEFAULT;
     TIP_RATIO = TIP_RATIO_DEFAULT;
     TIP_RATIO_TARGET = TIP_RATIO_DEFAULT;
     taperMode = TAPER_MODE_DEFAULT;
     logoScaleMul = LOGO_SCALE_DEFAULT;
+    logoScaleTarget = LOGO_SCALE_DEFAULT;
 
     debugMode = DEBUG_MODE_DEFAULT;
 
@@ -1298,7 +1511,7 @@ function setup(){
   });
 
   elWidth.addEventListener('input', ()=>{
-    widthScale = parseInt(elWidth.value,10) / 100;
+    widthScaleTarget = parseInt(elWidth.value,10) / 100;
     updateUIFromState();
     requestRedraw();
   });
@@ -1321,11 +1534,13 @@ function setup(){
     });
   }
 
-  elDebug.addEventListener('change', ()=>{
-    debugMode = elDebug.checked;
-    updateUIFromState();
-    requestRedraw();
-  });
+  if (elDebug){
+    elDebug.addEventListener('change', ()=>{
+      debugMode = elDebug.checked;
+      updateUIFromState();
+      requestRedraw();
+    });
+  }
 
   elAuto.addEventListener('change', ()=>{
     autoRandomActive = elAuto.checked;
@@ -1333,9 +1548,22 @@ function setup(){
     updateUIFromState();
   });
 
+  if (elAutoDur){
+    elAutoDur.addEventListener('input', ()=>{
+      const v = parseFloat(elAutoDur.value);
+      if (Number.isFinite(v)){
+        autoRandomPeriodSec = Math.max(0.5, Math.min(5, v));
+        if (autoRandomActive) setAuto(true); // restart timer with new interval
+        updateUIFromState();
+      }
+    });
+  }
+
   if (elCustomAR) elCustomAR.style.display = (elPreset && elPreset.value === 'custom') ? 'block' : 'none';
   FIT_MODE = (elPreset && elPreset.value === PRESET_DEFAULT);
   updateUIFromState();
+  // Start auto-randomizer if enabled by default
+  setAuto(autoRandomActive);
   fitViewportToWindow();
   requestRedraw();
   // Do not auto-apply custom aspect on load.
@@ -1465,10 +1693,8 @@ function renderLogo(g){
   }
   const targetRowsInt = Math.max(1, Math.round(rowsTarget));
   if (!Number.isFinite(rowsAnim)) rowsAnim = rows;
-  const rowsEase = 0.2;
-  rowsAnim += (targetRowsInt - rowsAnim) * rowsEase;
   const rowsAnimInt = Math.max(1, Math.round(rowsAnim));
-  const animatingRows = Math.abs(targetRowsInt - rowsAnim) > 0.01;
+  const animatingRows = Math.abs(targetRowsInt - rowsAnim) > 1e-3;
 
   if (rowsAnimInt !== rows){
     rows = rowsAnimInt;
@@ -1489,11 +1715,6 @@ function renderLogo(g){
   const { tEff, rowPitchNow, leftmost, contentW0, contentH0 } = fit;
 
   if (!Number.isFinite(displaceGroupsAnim)) displaceGroupsAnim = displaceGroupsTarget;
-  const dgDiff = displaceGroupsTarget - displaceGroupsAnim;
-  if (Math.abs(dgDiff) > 1e-3){
-    displaceGroupsAnim += dgDiff * 0.18;
-    if (Math.abs(displaceGroupsTarget - displaceGroupsAnim) > 0.015) requestRedraw();
-  }
 
   // Center using the *current* content bounds so it stays centered as width/gap change
   const innerW = Math.max(1, width);
@@ -1561,11 +1782,10 @@ function renderLogo(g){
     if (pitchPx > 0){
       g.push();
       g.noStroke();
-      // If line color is black, use 25% opacity; otherwise full opacity
-      const a = isHexBlack(color3) ? Math.round(255 * 0.25) : 255;
-      const cc = color(color3);
-      cc.setAlpha(a);
-      g.fill(cc);
+      // Use a flat color equal to 25% black on white for black lines
+      // 25% black on white ≈ #BFBFBF (no alpha). Otherwise use the current line color.
+      const fillCol = isHexBlack(color3TargetHex) ? '#BFBFBF' : color3;
+      g.fill(fillCol);
       // Align first line to where row 0 would be after translate/scale
       const y0 = tyAdj; // row 0 at layout y=0 maps to canvas y=tyAdj
       const startY = ((y0 % pitchPx) + pitchPx) % pitchPx; // wrap to [0,pitch)
@@ -1634,7 +1854,7 @@ function renderLogo(g){
           const drawH = Math.max(MIN_DRAW_HEIGHT, linePx * _lineMul * Math.max(0.01, hMul));
           switch (taperMode) {
             case 'Straight':
-              drawStraightTaper(g, rx, y, dashLenClamped, drawH);
+              drawStraightTaper(g, rx, y, dashLenClamped, drawH, TIP_RATIO);
               break;
             case 'Circles':
               drawCircleTaper(g, rx, y, dashLenClamped, drawH, TIP_RATIO);
@@ -1788,15 +2008,64 @@ function drawRoundedTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
   g.endShape(CLOSE);
 }
 
-function drawStraightTaper(g, rightX, cy, len, h){
-  const R = h * 0.5;
+function drawStraightTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
+  // Round the apex with a circular fillet that is tangent to the straight edges
+  const Rfull = Math.max(0.0001, h * 0.5);
+  const rfull = Math.max(0.0, Rfull * Math.max(0, Math.min(1, tipRatio)));
+  const maxRByLen = Math.max(0.0001, len * 0.5);
+  const R = Math.min(Rfull, maxRByLen);
+  const r = Math.min(rfull, R);
   const bigX = rightX - R;
-  const centerSep = Math.max(0, len - R); // r=0 for straight tip
-  const tipX = bigX - centerSep;
 
+  const centerSepTri = Math.max(0, len - R);
+  const tipXTri = bigX - centerSepTri; // original triangular apex at left
+
+  if (r <= 1e-6 || centerSepTri <= 1e-6){
+    // Degenerate → draw the original straight triangle
+    g.beginShape();
+    g.vertex(bigX, cy - R);
+    g.vertex(tipXTri, cy);
+    g.vertex(bigX, cy + R);
+    g.endShape(CLOSE);
+    return;
+  }
+
+  // Geometry for tangent fillet
+  // Unit directions from apex to top/bottom base points
+  const L = Math.hypot(centerSepTri, R);
+  const ux = centerSepTri / L;
+  const uy = R / L;
+  const uTop = { x: ux,  y: -uy };
+  const uBot = { x: ux,  y:  uy };
+
+  // Distance from apex to tangent point along each side: d = r * (centerSepTri / R)
+  const d = r * (centerSepTri / Math.max(1e-6, R));
+  const jTop = { x: tipXTri + uTop.x * d, y: cy + uTop.y * d };
+  const jBot = { x: tipXTri + uBot.x * d, y: cy + uBot.y * d };
+
+  // Circle center along angle bisector (horizontal): s = r * L / R
+  const s = r * (L / Math.max(1e-6, R));
+  const cx = tipXTri + s;
+  const cyC = cy;
+
+  const a1 = Math.atan2(jTop.y - cyC, jTop.x - cx);
+  let a2 = Math.atan2(jBot.y - cyC, jBot.x - cx);
+  // Ensure we sweep from top to bottom along the left side
+  let startA = a1, endA = a2;
+  if (endA <= startA) endA += TWO_PI;
+
+  const steps = 14;
   g.beginShape();
+  // Top straight edge to tangent point
   g.vertex(bigX, cy - R);
-  g.vertex(tipX, cy);
+  g.vertex(jTop.x, jTop.y);
+  // Arc from top tangent to bottom tangent
+  for (let i = 1; i <= steps - 1; i++){
+    const a = startA + (i/steps) * (endA - startA);
+    g.vertex(cx + r * Math.cos(a), cyC + r * Math.sin(a));
+  }
+  // Bottom straight edge back to base
+  g.vertex(jBot.x, jBot.y);
   g.vertex(bigX, cy + R);
   g.endShape(CLOSE);
 }
@@ -2224,4 +2493,3 @@ function fitViewportToWindow(){
 function mouseMoved(){
   requestRedraw(); // KAN WEG?
 }
-  
