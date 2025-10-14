@@ -2009,7 +2009,6 @@ function drawRoundedTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
 }
 
 function drawStraightTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
-  // Keep full length; round only the left tip by radius r
   const Rfull = Math.max(0.0001, h * 0.5);
   const rfull = Math.max(0.0, Rfull * Math.max(0, Math.min(1, tipRatio)));
   const maxRByLen = Math.max(0.0001, len * 0.5);
@@ -2018,9 +2017,8 @@ function drawStraightTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
   const bigX = rightX - R;
 
   if (r <= 1e-6){
-    // Fallback: original straight triangular tip (preserve length)
     const centerSepTri = Math.max(0, len - R);
-    const tipXTri = bigX - centerSepTri; // leftmost = rightX - len
+    const tipXTri = bigX - centerSepTri;
     g.beginShape();
     g.vertex(bigX, cy - R);
     g.vertex(tipXTri, cy);
@@ -2029,22 +2027,26 @@ function drawStraightTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
     return;
   }
 
-  // Position the rounding circle so leftmost x stays at rightX - len
+  // Zorg dat de totale lengte gelijk blijft (linker uiterste blijft rightX - len)
   const centerSep = Math.max(0, len - (R + r));
-  const tipX = bigX - centerSep; // circle center; leftmost = tipX - r = rightX - len
+  const tipX = bigX - centerSep;
 
   const steps = 14;
+
   g.beginShape();
-  // Top straight edge → top of round tip
+  // Start bovenaan de rechte trailing edge
   g.vertex(bigX, cy - R);
-  g.vertex(tipX, cy - r);
-  // Round tip from top to bottom (left-facing semicircle)
-  for (let i = 1; i <= steps - 1; i++){
-    const a = HALF_PI + (i/steps) * PI; // +90° → +270°
-    g.vertex(tipX + r * Math.cos(a), cy + r * Math.sin(a));
+
+  // Sweep de tip als een LINKS-wijzende semicirkel:
+  // t = -90° → +90°, x = tipX - r*cos(t) (min!), y = cy + r*sin(t)
+  for (let i = 0; i <= steps; i++){
+    const t = -Math.PI/2 + (i/steps) * Math.PI; // -90° → +90°
+    const x = tipX - r * Math.cos(t);           // min cos => naar links gericht
+    const y = cy + r * Math.sin(t);
+    g.vertex(x, y);
   }
-  // Bottom straight edge
-  g.vertex(tipX, cy + r);
+
+  // Sluit via onderste trailing edge
   g.vertex(bigX, cy + R);
   g.endShape(CLOSE);
 }
