@@ -5,6 +5,9 @@
     <title>Prototype</title>
     <script src="https://cdn.jsdelivr.net/npm/p5@1.11.10/lib/p5.js"></script>
     <script src="https://unpkg.com/p5.js-svg@1.6.0"></script>
+    <!-- Vector PDF export dependencies (used only for Export actions) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/3.0.2/jspdf.umd.min.js"></script>
+    <script src="https://unpkg.com/svg2pdf.js@2.2.4/dist/svg2pdf.umd.min.js"></script>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
@@ -278,6 +281,10 @@
 
         <section class="control-section">
           <h2 class="control-section-title">Export</h2>
+          <div class="button-group">
+            <button id="exportSvg" type="button">SVG</button>
+            <button id="exportPdf" type="button">PDF</button>
+          </div>
         </section>
 
         <section class="control-section">

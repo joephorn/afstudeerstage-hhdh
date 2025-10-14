@@ -503,7 +503,45 @@ function requestRedraw(){
 }
 
 function exportSVG(cb){
-  // nog toevoegen ; svg canvas maken en exporteren
+  try {
+    const w = Math.max(1, width);
+    const h = Math.max(1, height);
+    const sg = createGraphics(w, h, SVG);
+    // Ensure intrinsic size on the SVG output
+    if (sg && sg.elt && sg.elt.tagName && sg.elt.tagName.toLowerCase() === 'svg'){
+      sg.elt.setAttribute('width', String(w));
+      sg.elt.setAttribute('height', String(h));
+      sg.elt.setAttribute('viewBox', `0 0 ${w} ${h}`);
+      sg.elt.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    }
+    const prev = isExport; isExport = true;
+    // Draw current frame into the SVG graphics
+    renderLogo(sg);
+    isExport = prev;
+
+    // Get SVG element and serialize
+    const svgEl = (sg && sg._renderer && sg._renderer.svg) ? sg._renderer.svg : (sg && sg.elt ? sg.elt : null);
+    if (!svgEl){ throw new Error('SVG renderer not available'); }
+    // Ensure xmlns for standalone file
+    if (!svgEl.getAttribute('xmlns')) svgEl.setAttribute('xmlns','http://www.w3.org/2000/svg');
+    if (!svgEl.getAttribute('xmlns:xlink')) svgEl.setAttribute('xmlns:xlink','http://www.w3.org/1999/xlink');
+    const data = new XMLSerializer().serializeToString(svgEl);
+    if (typeof cb === 'function') cb(data, svgEl);
+    return data;
+  } catch(err){
+    console.error('exportSVG failed:', err);
+    if (typeof cb === 'function') cb(null, null, err);
+    return null;
+  }
+}
+
+function downloadTextAsFile(text, filename, mime = 'image/svg+xml'){
+  const blob = new Blob([text], { type: mime });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  setTimeout(()=> URL.revokeObjectURL(a.href), 500);
 }
 
 function divisorsAsc(n){
@@ -959,6 +997,10 @@ function setup(){
   const animPeriodCtl     = byId('animPeriod');
   const animPeriodOut     = byId('animPeriodOut');
 
+  // Export buttons
+  const btnExportSvg = byId('exportSvg');
+  const btnExportPdf = byId('exportPdf');
+
   elTaperIndex = byId('taperIndex');
   elTaperIndexOut = byId('taperIndexOut');
 
@@ -1167,6 +1209,37 @@ function setup(){
       }
       updateRepeatSlidersRange();
       requestRedraw();
+    });
+  }
+
+  // Export handlers
+  if (btnExportSvg){
+    btnExportSvg.addEventListener('click', ()=>{
+      const data = exportSVG();
+      if (data) downloadTextAsFile(data, 'export.svg', 'image/svg+xml');
+    });
+  }
+  if (btnExportPdf){
+    btnExportPdf.addEventListener('click', async ()=>{
+      try {
+        const data = exportSVG();
+        if (!data){ throw new Error('SVG data unavailable'); }
+        // Parse into a DOM element for svg2pdf
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(data, 'image/svg+xml');
+        const svg = doc.documentElement;
+        const W = Math.max(1, width), H = Math.max(1, height);
+        const jsPDFCtor = window.jspdf && (window.jspdf.jsPDF || window.jspdf.default && window.jspdf.default.jsPDF) || (window.jsPDF || null);
+        if (!jsPDFCtor){ throw new Error('jsPDF not loaded'); }
+        const pdf = new jsPDFCtor({ orientation: (W >= H ? 'landscape' : 'portrait'), unit: 'pt', format: [W, H] });
+        const s2p = (window.svg2pdf && (window.svg2pdf.svg2pdf || window.svg2pdf.default && window.svg2pdf.default.svg2pdf)) || (typeof svg2pdf !== 'undefined' ? (svg2pdf.svg2pdf || svg2pdf.default && svg2pdf.default.svg2pdf || svg2pdf) : null);
+        if (!s2p){ throw new Error('svg2pdf not loaded'); }
+        await s2p(svg, pdf, { x: 0, y: 0, width: W, height: H, useCSS: true });
+        pdf.save('export.pdf');
+      } catch(err){
+        console.error('Export PDF failed:', err);
+        alert('Export PDF failed: ' + err.message);
+      }
     });
   }
 
