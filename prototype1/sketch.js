@@ -513,6 +513,8 @@ function exportSVG(cb){
       sg.elt.setAttribute('height', String(h));
       sg.elt.setAttribute('viewBox', `0 0 ${w} ${h}`);
       sg.elt.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+      // Allow drawing beyond the viewport without clipping (helps PDF export avoid root clipping paths)
+      sg.elt.setAttribute('overflow', 'visible');
     }
     const prev = isExport; isExport = true;
     // Draw current frame into the SVG graphics
@@ -1058,6 +1060,13 @@ function setup(){
     }
 
     setChecked(elDebug, debugMode);
+    // Background + helpers
+    const elBgTransparent = document.getElementById('bgTransparent');
+    if (elBgTransparent) setChecked(elBgTransparent, BG_TRANSPARENT);
+    const elHWaveAmp = document.getElementById('hWaveAmp');
+    const elHWaveAmpOut = document.getElementById('hWaveAmpOut');
+    if (elHWaveAmp){ elHWaveAmp.value = String(H_WAVE_AMP); }
+    if (elHWaveAmpOut){ elHWaveAmpOut.textContent = H_WAVE_AMP.toFixed(2) + '×'; }
     setChecked(elAuto, autoRandomActive);
     if (elAutoDur){
       elAutoDur.min = '0.5';
@@ -1087,6 +1096,23 @@ function setup(){
     }
     if (elRepeatModeUniform) elRepeatModeUniform.checked = (REPEAT_MODE === 'uniform');
     if (elRepeatModeFalloff) elRepeatModeFalloff.checked = (REPEAT_MODE === 'falloff');
+    // Easing UI
+    if (elEaseType){
+      elEaseType.value = String(EASE_TYPE);
+    }
+    if (elEaseDur){
+      elEaseDur.value = String(EASE_DURATION.toFixed(2));
+    }
+    if (elEaseDurOut){
+      elEaseDurOut.textContent = `${EASE_DURATION.toFixed(2)} s`;
+    }
+    if (elEaseAmp){
+      elEaseAmp.value = String(EASE_AMPLITUDE.toFixed(2));
+      elEaseAmp.disabled = (EASE_TYPE !== 'elastic');
+    }
+    if (elEaseAmpOut){
+      elEaseAmpOut.textContent = `${EASE_AMPLITUDE.toFixed(2)}×`;
+    }
   // Repeat falloff + mode listeners (optional)
   if (elRepeatFalloff){
     elRepeatFalloff.addEventListener('input', ()=>{
@@ -1228,13 +1254,23 @@ function setup(){
         const parser = new DOMParser();
         const doc = parser.parseFromString(data, 'image/svg+xml');
         const svg = doc.documentElement;
+        // Avoid root clipping by allowing overflow and targeting content group instead of <svg>
+        svg.setAttribute('overflow', 'visible');
+        let content = null;
+        for (const node of Array.from(svg.children)){
+          const tag = node.tagName && node.tagName.toLowerCase();
+          if (tag && tag !== 'defs' && tag !== 'desc') { content = node; break; }
+        }
+        if (!content) content = svg;
+
         const W = Math.max(1, width), H = Math.max(1, height);
-        const jsPDFCtor = window.jspdf && (window.jspdf.jsPDF || window.jspdf.default && window.jspdf.default.jsPDF) || (window.jsPDF || null);
+        const jsPDFCtor = window.jspdf && (window.jspdf.jsPDF || (window.jspdf.default && window.jspdf.default.jsPDF)) || (window.jsPDF || null);
         if (!jsPDFCtor){ throw new Error('jsPDF not loaded'); }
         const pdf = new jsPDFCtor({ orientation: (W >= H ? 'landscape' : 'portrait'), unit: 'pt', format: [W, H] });
-        const s2p = (window.svg2pdf && (window.svg2pdf.svg2pdf || window.svg2pdf.default && window.svg2pdf.default.svg2pdf)) || (typeof svg2pdf !== 'undefined' ? (svg2pdf.svg2pdf || svg2pdf.default && svg2pdf.default.svg2pdf || svg2pdf) : null);
+        const s2p = (window.svg2pdf && (window.svg2pdf.svg2pdf || (window.svg2pdf.default && window.svg2pdf.default.svg2pdf))) || (typeof svg2pdf !== 'undefined' ? (svg2pdf.svg2pdf || (svg2pdf.default && svg2pdf.default.svg2pdf) || svg2pdf) : null);
         if (!s2p){ throw new Error('svg2pdf not loaded'); }
-        await s2p(svg, pdf, { x: 0, y: 0, width: W, height: H, useCSS: true });
+        // Do not pass width/height to avoid creating a viewport clip; useCSS for styling
+        await s2p(content, pdf, { x: 0, y: 0, useCSS: true });
         pdf.save('export.pdf');
       } catch(err){
         console.error('Export PDF failed:', err);
@@ -1468,14 +1504,16 @@ function setup(){
 
     KEEP_TOTAL_WIDTH = KEEP_TOTAL_WIDTH_DEFAULT;
     BG_LINES = BG_LINES_DEFAULT;
+    BG_TRANSPARENT = false;
+    H_WAVE_AMP = H_WAVE_AMP_DEFAULT;
     REPEAT_ENABLED = REPEAT_ENABLED_DEFAULT;
     REPEAT_MIRROR = REPEAT_MIRROR_DEFAULT;
     REPEAT_EXTRA_ROWS = REPEAT_EXTRA_ROWS_DEFAULT;
     REPEAT_EXTRA_ROWS_ANIM = (Number.isFinite(REPEAT_EXTRA_ROWS_DEFAULT) ? REPEAT_EXTRA_ROWS_DEFAULT : 0);
     REPEAT_EXTRA_ROWS_IS_FULL = !Number.isFinite(REPEAT_EXTRA_ROWS_DEFAULT) && REPEAT_EXTRA_ROWS_DEFAULT > 0;
-    updateRepeatSlidersRange();
     REPEAT_FALLOFF = REPEAT_FALLOFF_DEFAULT;
     REPEAT_MODE    = REPEAT_MODE_DEFAULT;
+    updateRepeatSlidersRange();
 
     PER_LETTER_STRETCH = PER_LETTER_STRETCH_DEFAULT;
     MOUSE_STRETCH_SIGMA_FRAC = MOUSE_STRETCH_SIGMA_FRAC_DEFAULT;
@@ -1487,9 +1525,19 @@ function setup(){
 
     ANIM_MODE = ANIM_MODE_DEFAULT;
     ANIM_PERIOD = ANIM_PERIOD_DEFAULT;
-    animFpsLimit = ANIM_FPS_DEFAULT;
     animTime = 0;
     stopAnimLoop();
+
+    // Easing
+    EASE_TYPE = EASE_TYPE_DEFAULT;
+    EASE_DURATION = EASE_DURATION_DEFAULT;
+    EASE_AMPLITUDE = EASE_AMPLITUDE_DEFAULT;
+
+    // Taper transition state
+    _taperTransActive = false;
+    _taperPhase = 'idle';
+    _taperPendingMode = null;
+    _lineMul = 1.0;
 
     ASPECT_W = ASPECT_W_DEFAULT;
     ASPECT_H = ASPECT_H_DEFAULT;
@@ -1500,6 +1548,7 @@ function setup(){
     if (elPreset) elPreset.value = PRESET_DEFAULT;
     if (elAspectW) elAspectW.value = String(ASPECT_WIDTH_PX_DEFAULT);
     if (elAspectH) elAspectH.value = String(ASPECT_HEIGHT_PX_DEFAULT);
+    FIT_MODE = FIT_MODE_DEFAULT;
     if (elCustomAR) elCustomAR.style.display = FIT_MODE ? 'none' : 'block';
 
     window.MOUSE_AMPLITUDE = MOUSE_AMPLITUDE;
