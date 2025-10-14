@@ -2559,10 +2559,37 @@ function fitViewportToWindow(){
   if (!mainCanvas || !mainCanvas.elt) return;
   const stage = document.getElementById('stage');
   const wrap  = document.getElementById('canvasWrap');
+  const stageStack = document.getElementById('stageStack');
+  const exportBar  = document.getElementById('exportBar');
   if (!stage || !wrap) return;
 
-  const availW = Math.max(100, stage.clientWidth);
-  const availH = Math.max(100, stage.clientHeight);
+  // Compute available width from the main container minus controls + gap,
+  // so content never pushes into the controls column.
+  let availW = Math.max(100, stage.clientWidth);
+  const mainEl = document.querySelector('main');
+  const controlsEl = document.getElementById('controls');
+  if (mainEl && controlsEl){
+    const cs = getComputedStyle(mainEl);
+    const padL = parseFloat(cs.paddingLeft||'0')||0;
+    const padR = parseFloat(cs.paddingRight||'0')||0;
+    const gapX = parseFloat(cs.columnGap || cs.gap || '0') || 0;
+    const total = Math.max(0, mainEl.clientWidth - padL - padR);
+    const candidate = Math.max(0, total - controlsEl.offsetWidth - gapX);
+    availW = Math.max(100, Math.min(availW, candidate));
+  }
+  let availH = Math.max(100, stage.clientHeight);
+  // Reserve space for the export bar inside the stage, including vertical gap
+  if (exportBar){
+    const barH = exportBar.offsetHeight || exportBar.clientHeight || 0;
+    let gapY = 0;
+    if (stageStack){
+      const cs = getComputedStyle(stageStack);
+      const rowGap = parseFloat(cs.rowGap || cs.gap || '0') || 0;
+      gapY = rowGap;
+    }
+    // Ensure total (canvas + bar + gap) fits exactly in stage height
+    availH = Math.max(1, availH - barH - gapY);
+  }
 
   let boxW, boxH;
   if (FIT_MODE) {

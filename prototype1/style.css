@@ -45,13 +45,13 @@ main {
 #stage {
   flex: 1 1 auto;
   min-width: 10px;
-  min-height: 0; /* allow stageStack to shrink without clipping */
+  min-height: 100px;
   display: flex;
   /* Fill available space so export bar can stick to bottom */
   align-items: stretch;
   justify-content: stretch;
   border-radius: var(--radius-stage);
-  overflow: hidden; /* prevent content from visually overlapping controls */
+  overflow: visible; /* prevent content from visually overlapping controls */
 }
 
 /* Stack canvas and export bar vertically using flexbox */
@@ -72,7 +72,7 @@ main {
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
+  overflow: visible;
   background: var(--color-panel-bg);
   margin: auto;                 /* center horizontally + vertically in stage-stack */
   flex: 0 0 auto;               /* height controlled by JS; don't stretch */

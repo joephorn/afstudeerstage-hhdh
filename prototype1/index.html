@@ -13,7 +13,10 @@
   <body>
     <main>
       <div id="stage">
-        <div id="canvasWrap"></div>
+        <div id="stageStack" class="stage-stack">
+          <div id="canvasWrap"></div>
+          <div id="exportBar" class="export-bar"></div>
+        </div>
       </div>
 
       <div id="controls">
@@ -105,7 +108,7 @@
               <span id="taperIndexOut" class="sub">1</span>
             </label>
             <input id="taperIndex" type="range" min="1" max="5" step="1" value="1" />
-            <div class="sub" style="margin-top:4px; opacity:.5; font-size:15.5px;">
+            <div class="sub" style="margin-top:4px; opacity:.5; font-size:12px;">
               Rounded Straight Circles Blocks Pluses
             </div>
           </div>
@@ -195,36 +198,6 @@
         </section>
 
         <section class="control-section">
-          <h2 class="control-section-title">Easing</h2>
-          <div class="control-field">
-            <label class="control-label" for="easeType">
-              <span>Type</span>
-              <span class="sub">for slider transitions</span>
-            </label>
-            <select id="easeType" class="control-select control-select--tight">
-              <option value="smooth" selected>Smoothstep</option>
-              <option value="linear">Linear</option>
-              <option value="easeInOut">Ease In-Out</option>
-              <option value="elastic">Elastic (overshoot)</option>
-            </select>
-          </div>
-          <div class="control-field">
-            <label class="control-label" for="easeDur">
-              <span>Duration</span>
-              <span id="easeDurOut" class="sub">0.25 s</span>
-            </label>
-            <input id="easeDur" type="range" min="0" max="2" step="0.01" value="0.25" />
-          </div>
-          <div class="control-field">
-            <label class="control-label" for="easeAmp">
-              <span>Amplitude</span>
-              <span id="easeAmpOut" class="sub">1.00×</span>
-            </label>
-            <input id="easeAmp" type="range" min="0" max="2" step="0.05" value="1.00" />
-          </div>
-        </section>
-
-        <section class="control-section">
           <h2 class="control-section-title">Repeat</h2>
           <div class="control-row">
             <label class="checkbox-label">
@@ -253,6 +226,36 @@
               <output id="repeatExtraRowsOut" class="sub">0</output>
             </label>
             <input id="repeatExtraRows" type="range" min="0" max="0" step="1" value="0" />
+          </div>
+        </section>
+
+        <section class="control-section">
+          <h2 class="control-section-title">Easing</h2>
+          <div class="control-field">
+            <label class="control-label" for="easeType">
+              <span>Type</span>
+              <span class="sub">for slider transitions</span>
+            </label>
+            <select id="easeType" class="control-select control-select--tight">
+              <option value="smooth" selected>Smoothstep</option>
+              <option value="linear">Linear</option>
+              <option value="easeInOut">Ease In-Out</option>
+              <option value="elastic">Elastic</option>
+            </select>
+          </div>
+          <div class="control-field">
+            <label class="control-label" for="easeDur">
+              <span>Duration</span>
+              <span id="easeDurOut" class="sub">0.25 s</span>
+            </label>
+            <input id="easeDur" type="range" min="0" max="2" step="0.01" value="0.25" />
+          </div>
+          <div class="control-field">
+            <label class="control-label" for="easeAmp">
+              <span>Amplitude</span>
+              <span id="easeAmpOut" class="sub">1.00×</span>
+            </label>
+            <input id="easeAmp" type="range" min="0" max="2" step="0.05" value="1.00" />
           </div>
         </section>
 
