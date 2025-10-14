@@ -2009,7 +2009,7 @@ function drawRoundedTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
 }
 
 function drawStraightTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
-  // Round the apex with a circular fillet that is tangent to the straight edges
+  // Keep full length; round only the left tip by radius r
   const Rfull = Math.max(0.0001, h * 0.5);
   const rfull = Math.max(0.0, Rfull * Math.max(0, Math.min(1, tipRatio)));
   const maxRByLen = Math.max(0.0001, len * 0.5);
@@ -2017,11 +2017,10 @@ function drawStraightTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
   const r = Math.min(rfull, R);
   const bigX = rightX - R;
 
-  const centerSepTri = Math.max(0, len - R);
-  const tipXTri = bigX - centerSepTri; // original triangular apex at left
-
-  if (r <= 1e-6 || centerSepTri <= 1e-6){
-    // Degenerate → draw the original straight triangle
+  if (r <= 1e-6){
+    // Fallback: original straight triangular tip (preserve length)
+    const centerSepTri = Math.max(0, len - R);
+    const tipXTri = bigX - centerSepTri; // leftmost = rightX - len
     g.beginShape();
     g.vertex(bigX, cy - R);
     g.vertex(tipXTri, cy);
@@ -2030,42 +2029,22 @@ function drawStraightTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
     return;
   }
 
-  // Geometry for tangent fillet
-  // Unit directions from apex to top/bottom base points
-  const L = Math.hypot(centerSepTri, R);
-  const ux = centerSepTri / L;
-  const uy = R / L;
-  const uTop = { x: ux,  y: -uy };
-  const uBot = { x: ux,  y:  uy };
-
-  // Distance from apex to tangent point along each side: d = r * (centerSepTri / R)
-  const d = r * (centerSepTri / Math.max(1e-6, R));
-  const jTop = { x: tipXTri + uTop.x * d, y: cy + uTop.y * d };
-  const jBot = { x: tipXTri + uBot.x * d, y: cy + uBot.y * d };
-
-  // Circle center along angle bisector (horizontal): s = r * L / R
-  const s = r * (L / Math.max(1e-6, R));
-  const cx = tipXTri + s;
-  const cyC = cy;
-
-  const a1 = Math.atan2(jTop.y - cyC, jTop.x - cx);
-  let a2 = Math.atan2(jBot.y - cyC, jBot.x - cx);
-  // Ensure we sweep from top to bottom along the left side
-  let startA = a1, endA = a2;
-  if (endA <= startA) endA += TWO_PI;
+  // Position the rounding circle so leftmost x stays at rightX - len
+  const centerSep = Math.max(0, len - (R + r));
+  const tipX = bigX - centerSep; // circle center; leftmost = tipX - r = rightX - len
 
   const steps = 14;
   g.beginShape();
-  // Top straight edge to tangent point
+  // Top straight edge → top of round tip
   g.vertex(bigX, cy - R);
-  g.vertex(jTop.x, jTop.y);
-  // Arc from top tangent to bottom tangent
+  g.vertex(tipX, cy - r);
+  // Round tip from top to bottom (left-facing semicircle)
   for (let i = 1; i <= steps - 1; i++){
-    const a = startA + (i/steps) * (endA - startA);
-    g.vertex(cx + r * Math.cos(a), cyC + r * Math.sin(a));
+    const a = HALF_PI + (i/steps) * PI; // +90° → +270°
+    g.vertex(tipX + r * Math.cos(a), cy + r * Math.sin(a));
   }
-  // Bottom straight edge back to base
-  g.vertex(jBot.x, jBot.y);
+  // Bottom straight edge
+  g.vertex(tipX, cy + r);
   g.vertex(bigX, cy + R);
   g.endShape(CLOSE);
 }
