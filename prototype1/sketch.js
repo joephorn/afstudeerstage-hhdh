@@ -11,6 +11,7 @@ const TAPER_MODE_DEFAULT       = 'Rounded';
 const DEBUG_MODE_DEFAULT       = false;
 const WIDTH_SCALE_DEFAULT      = 1.1;
 const H_WAVE_AMP_DEFAULT       = 0;
+const H_WAVE_PERIOD_DEFAULT    = 3.0; // seconds per cycle for horizontal wave
 const LOGO_SCALE_DEFAULT       = 1.0;
 const ASPECT_W_DEFAULT         = 16;
 const ASPECT_H_DEFAULT         = 9;
@@ -51,9 +52,13 @@ const EASE_DURATION_DEFAULT = 0.25;       // seconds
 const EASE_AMPLITUDE_DEFAULT= 1.0;        // only used for 'elastic' (overshoot)
 
 const ANIM_MODE_DEFAULT   = 'off';
+const ANIM_ENABLED_DEFAULT = false; // master toggle like Repeat (default OFF)
 const ANIM_PERIOD_DEFAULT = 3.0;
 const AUTO_RANDOM_DEFAULT = false; // disabled by default
 const AUTO_RANDOM_PERIOD_DEFAULT = 1.0; // seconds
+
+// Pulse position (0..1) representing the peak location across the content
+const PULSE_PHASE_DEFAULT = 0.0;
 
 let TIP_RATIO        = TIP_RATIO_DEFAULT;
 let DISPLACE_UNIT    = DISPLACE_UNIT_DEFAULT;
@@ -68,6 +73,8 @@ const BLOCK_LEAD_FRAC     = 0.65; // how much of the shortened width shifts left
 const BLOCK_CAP_FRAC      = 0.12; // extra front cap length as fraction of full len
 
 let H_WAVE_AMP = H_WAVE_AMP_DEFAULT;
+let H_WAVE_PERIOD = H_WAVE_PERIOD_DEFAULT;
+let PULSE_PHASE = PULSE_PHASE_DEFAULT; // 0..1
 
 const TAPER_SPACING = 16; // fixed distance between element centers along the line (layout units)
 
@@ -87,6 +94,15 @@ const BUFFER_H          = 420;
 const LETTERS_PATH      = './src/letters/';
 let glyphImgs = {};   // map: char -> p5.Image (SVG rasterized)
 let glyphDims = {};   // map: char -> {w,h}
+
+function setPulsePhase(x){
+  const v = Math.max(0, Math.min(1, Number(x)));
+  PULSE_PHASE = v;
+  if (typeof window !== 'undefined'){
+    if (typeof elPulsePhase !== 'undefined' && elPulsePhase) elPulsePhase.value = v.toFixed(3);
+    if (typeof elPulsePhaseOut !== 'undefined' && elPulsePhaseOut) elPulsePhaseOut.textContent = v.toFixed(2);
+  }
+}
 
 function setValue(el, value){ if (el) el.value = String(value); }
 function setText(el, text){ if (el) el.textContent = text; }
@@ -111,6 +127,8 @@ const TAPER_EXPAND_DUR = 0.1;      // seconds
 const MIN_DRAW_HEIGHT  = 2;    // guard to avoid zero-area issues
 
 let elRows, elThickness, elWidth, elGap, elGroups, elDispUnit, elPreset, elLogoScale, elAspectW, elAspectH, elCustomAR, elReset;
+let elPulsePhase, elPulsePhaseOut, elHWavePeriod, elHWavePeriodOut;
+let elAnimEnabled;
 let elRowsOut, elThicknessOut, elWidthOut, elGapOut, elDispUnitOut, elGroupsOut, elLogoScaleOut;
 let elEaseType, elEaseDur, elEaseDurOut, elEaseAmp, elEaseAmpOut;
 let elTaper, elTaperIndex, elTaperIndexOut, elColorPreset, elColorPresetLabel, elRepeatFalloff, elRepeatFalloffOut, elRepeatUniform, elDebug, elAuto;
@@ -336,7 +354,8 @@ let rowYsSmooth = [];
 let MOUSE_CURVE = MOUSE_CURVE_DEFAULT;   // 'sine' | 'smoothstep'
 let MOUSE_POWER = MOUSE_POWER_DEFAULT;       // t^power sharpening
 
-let ANIM_MODE = ANIM_MODE_DEFAULT;     // 'mouse' | 'pulse' | 'scan' | 'off'
+let ANIM_MODE = ANIM_MODE_DEFAULT;     // 'off' | 'mouse' | 'pulse' | 'scan'
+let ANIM_ENABLED = ANIM_ENABLED_DEFAULT;
 let animTime = 0;            // seconds
 let _animRAF = null;
 let _animStart = 0;
@@ -414,6 +433,14 @@ function startAnimLoop(){
   const step = (t)=>{
     animTime = (t - _animStart) / 1000.0;
 
+    // Update pulse phase (0..1) when in automatic pulse mode
+    if (ANIM_ENABLED && ANIM_MODE === 'pulse'){
+      const period = Math.max(0.05, ANIM_PERIOD);
+      const cyc = (animTime / period) % 1; // 0..1
+      // Ping-pong 0..1..0 using cosine so ends ease naturally
+      setPulsePhase(0.5 - 0.5 * Math.cos(TWO_PI * cyc));
+    }
+
     // taper transition logic
     if (_taperTransActive){
       if (_taperPhase === 'shrink'){
@@ -439,7 +466,7 @@ function startAnimLoop(){
     }
 
     // bij tijdgestuurde animaties altijd redraw
-    const timeDriven = (ANIM_MODE === 'pulse' || ANIM_MODE === 'scan' || H_WAVE_AMP !== 0);
+    const timeDriven = (ANIM_ENABLED && (ANIM_MODE === 'pulse' || ANIM_MODE === 'scan' || H_WAVE_AMP !== 0));
     if (timeDriven) requestRedraw();
 
     if (timeDriven || _taperTransActive){
@@ -452,6 +479,15 @@ function startAnimLoop(){
 }
 function stopAnimLoop(){
   if (_animRAF){ cancelAnimationFrame(_animRAF); _animRAF = null; }
+}
+
+function updateAnimRun(){
+  // PER_LETTER_STRETCH blijft actief; enabled toggelt alleen automatische tijdgestuurde beweging
+  if (ANIM_ENABLED && (ANIM_MODE === 'pulse' || ANIM_MODE === 'scan' || H_WAVE_AMP !== 0)){
+    startAnimLoop();
+  } else {
+    stopAnimLoop();
+  }
 }
 
 function computeProgressiveBandHeights(avail, fillFrac, count){
@@ -588,9 +624,17 @@ function perLetterStretchFactor(localMouseX, baseX, letterScaledW, contentW0){
 }
 
 function activeLocalMouseX(txLike, sLike, leftBound, rightBound){
-  if (ANIM_MODE === 'mouse') return (mouseX - txLike) / Math.max(0.0001, sLike);
-  if (ANIM_MODE === 'off'){
-    const L = leftBound, R = rightBound; return (L + R) * 0.5;
+  // When disabled, keep static at current pulse-phase (no automation)
+  if (!ANIM_ENABLED) {
+    const L = leftBound; const span = Math.max(1, rightBound - leftBound);
+    return L + Math.max(0, Math.min(1, PULSE_PHASE)) * span;
+  }
+  if (ANIM_MODE === 'mouse'){
+    const L = leftBound; const R = rightBound; const span = Math.max(1, R - L);
+    const mx = (mouseX - txLike) / Math.max(0.0001, sLike);
+    const pos = (mx - L) / span;
+    setPulsePhase(Math.max(0, Math.min(1, pos)));
+    return mx;
   }
   const L = leftBound;
   const R = rightBound;
@@ -599,15 +643,18 @@ function activeLocalMouseX(txLike, sLike, leftBound, rightBound){
   const p = (animTime / period) % 1;          // normalized phase [0,1)
 
   if (ANIM_MODE === 'pulse'){
-    const pos = 0.5 + 0.5 * Math.sin(2 * Math.PI * p);
+    const pos = Math.max(0, Math.min(1, PULSE_PHASE));
     return L + pos * span;
   } else if (ANIM_MODE === 'scan'){
     const m = Math.max(0, Math.min(1, SCAN_MARGIN_FRAC));
     const f = -m + (1 + 2 * m) * p; // -m → 1+m, then wraps to -m
+    const posNorm = Math.max(0, Math.min(1, (f + m) / Math.max(0.0001, 1 + 2 * m)));
+    setPulsePhase(posNorm);
     return L + f * span;
   }
 
-  return (mouseX - txLike) / Math.max(0.0001, sLike);
+  // 'off' mode: static at pulse-phase (no automation)
+  return L + Math.max(0, Math.min(1, PULSE_PHASE)) * span;
 }
 
 // Compute per-letter adjusted left positions and visual widths so that the gap between letters stays constant
@@ -913,7 +960,22 @@ function setup(){
         H_WAVE_AMP = v;
         if (elHWaveAmpOut) elHWaveAmpOut.textContent = v.toFixed(2) + '×';
         requestRedraw();
-        startAnimLoop();
+        updateAnimRun();
+      }
+    });
+  }
+  elHWavePeriod = document.getElementById('hWavePeriod');
+  elHWavePeriodOut = document.getElementById('hWavePeriodOut');
+  if (elHWavePeriod){
+    elHWavePeriod.value = String(H_WAVE_PERIOD.toFixed(2));
+    if (elHWavePeriodOut) elHWavePeriodOut.textContent = `${H_WAVE_PERIOD.toFixed(2)} s`;
+    elHWavePeriod.addEventListener('input', ()=>{
+      const v = parseFloat(elHWavePeriod.value);
+      if (Number.isFinite(v)){
+        H_WAVE_PERIOD = Math.max(0.1, v);
+        if (elHWavePeriodOut) elHWavePeriodOut.textContent = `${H_WAVE_PERIOD.toFixed(2)} s`;
+        updateAnimRun();
+        requestRedraw();
       }
     });
   }
@@ -992,12 +1054,14 @@ function setup(){
   const elRepeatModeFalloff = byId('repeatModeFalloff');
   elColorPreset           = byId('colorPreset');
   elColorPresetLabel      = byId('colorPresetLabel');
-  const btnCurveSine      = byId('curveSine');
-  const btnCurveSmooth    = byId('curveSmooth');
+  const optCurveSine      = byId('curveSine');
+  const optCurveSmooth    = byId('curveSmooth');
   const powerCtl          = byId('powerCtl');
   const powerOut          = byId('powerOut');
   const animPeriodCtl     = byId('animPeriod');
   const animPeriodOut     = byId('animPeriodOut');
+  elPulsePhase            = byId('pulsePhase');
+  elPulsePhaseOut         = byId('pulsePhaseOut');
 
   // Export controls (export bar)
   const exportFormatSel = byId('exportFormat');
@@ -1005,6 +1069,7 @@ function setup(){
 
   elTaperIndex = byId('taperIndex');
   elTaperIndexOut = byId('taperIndexOut');
+  elAnimEnabled = byId('animEnabled');
 
   // Transparent background checkbox
   const elBgTransparent = document.getElementById('bgTransparent');
@@ -1049,6 +1114,17 @@ function setup(){
 
     if (elTaper) elTaper.value = taperMode;
 
+    // Pulse phase control (0..1)
+    if (elPulsePhase){
+      elPulsePhase.min = '0';
+      elPulsePhase.max = '1';
+      elPulsePhase.step = '0.001';
+      elPulsePhase.value = PULSE_PHASE.toFixed(3);
+    }
+    if (elPulsePhaseOut){
+      elPulsePhaseOut.textContent = PULSE_PHASE.toFixed(2);
+    }
+
     if (elTaperIndex){
       elTaperIndex.min = '1';
       elTaperIndex.max = '5';
@@ -1060,6 +1136,7 @@ function setup(){
     }
 
     setChecked(elDebug, debugMode);
+    if (elAnimEnabled) setChecked(elAnimEnabled, ANIM_ENABLED);
     // Background + helpers
     const elBgTransparent = document.getElementById('bgTransparent');
     if (elBgTransparent) setChecked(elBgTransparent, BG_TRANSPARENT);
@@ -1067,6 +1144,8 @@ function setup(){
     const elHWaveAmpOut = document.getElementById('hWaveAmpOut');
     if (elHWaveAmp){ elHWaveAmp.value = String(H_WAVE_AMP); }
     if (elHWaveAmpOut){ elHWaveAmpOut.textContent = H_WAVE_AMP.toFixed(2) + '×'; }
+    if (elHWavePeriod){ elHWavePeriod.value = H_WAVE_PERIOD.toFixed(2); }
+    if (elHWavePeriodOut){ elHWavePeriodOut.textContent = `${H_WAVE_PERIOD.toFixed(2)} s`; }
     setChecked(elAuto, autoRandomActive);
     if (elAutoDur){
       elAutoDur.min = '0.5';
@@ -1113,6 +1192,22 @@ function setup(){
     if (elEaseAmpOut){
       elEaseAmpOut.textContent = `${EASE_AMPLITUDE.toFixed(2)}×`;
     }
+
+    // Curve radios
+    const curveSineEl = document.getElementById('curveSine');
+    const curveSmoothEl = document.getElementById('curveSmooth');
+    if (curveSineEl) curveSineEl.checked = (MOUSE_CURVE === 'sine');
+    if (curveSmoothEl) curveSmoothEl.checked = (MOUSE_CURVE !== 'sine');
+
+    // Mode radios
+    const animOffEl = document.getElementById('animOff');
+    const animMouseEl = document.getElementById('animMouse');
+    const animPulseEl = document.getElementById('animPulse');
+    const animScanEl = document.getElementById('animScan');
+    if (animOffEl)   animOffEl.checked   = (ANIM_MODE === 'off');
+    if (animMouseEl) animMouseEl.checked = (ANIM_MODE === 'mouse');
+    if (animPulseEl) animPulseEl.checked = (ANIM_MODE === 'pulse');
+    if (animScanEl)  animScanEl.checked  = (ANIM_MODE === 'scan');
   // Repeat falloff + mode listeners (optional)
   if (elRepeatFalloff){
     elRepeatFalloff.addEventListener('input', ()=>{
@@ -1162,8 +1257,8 @@ function setup(){
     if (elAspectH) elAspectH.value = String(ASPECT_HEIGHT_PX_DEFAULT);
 
     // Curve buttons
-    if (btnCurveSine)   btnCurveSine.addEventListener('click', ()=>{ MOUSE_CURVE='sine'; requestRedraw(); });
-    if (btnCurveSmooth) btnCurveSmooth.addEventListener('click',()=>{ MOUSE_CURVE='smoothstep'; requestRedraw(); });
+    if (optCurveSine)   optCurveSine.addEventListener('change', ()=>{ if (optCurveSine.checked){ MOUSE_CURVE='sine'; requestRedraw(); }});
+    if (optCurveSmooth) optCurveSmooth.addEventListener('change',()=>{ if (optCurveSmooth.checked){ MOUSE_CURVE='smoothstep'; requestRedraw(); }});
 
     if (elBgLines){
       elBgLines.checked = BG_LINES;
@@ -1211,6 +1306,7 @@ function setup(){
   populateColorPresetSelect();
   updateRepeatSlidersRange();
   updateUIFromState();
+  updateAnimRun();
 
   if (elRepeatEnabled){
     elRepeatEnabled.addEventListener('change', ()=>{
@@ -1295,24 +1391,49 @@ function setup(){
     });
   }
 
-  // Animation buttons
-  const btnAnimMouse = document.getElementById('animMouse');
-  const btnAnimOff   = document.getElementById('animOff');
-  const btnAnimPulse = document.getElementById('animPulse');
-  const btnAnimScan  = document.getElementById('animScan');
+  // Animation buttons + enable toggle
+  const optAnimOff   = document.getElementById('animOff');
+  const optAnimMouse = document.getElementById('animMouse');
+  const optAnimPulse = document.getElementById('animPulse');
+  const optAnimScan  = document.getElementById('animScan');
 
   function setAnim(mode){
     ANIM_MODE = mode;
-    // Enable/disable stretch based on mode
-    PER_LETTER_STRETCH = (mode !== 'off');
-    // Start RAF only for time-based modes
-    if (mode === 'pulse' || mode === 'scan') startAnimLoop(); else stopAnimLoop();
+    updateAnimRun();
     requestRedraw();
   }
-  if (btnAnimMouse) btnAnimMouse.addEventListener('click', ()=> setAnim('mouse'));
-  if (btnAnimOff)   btnAnimOff.addEventListener('click',   ()=> setAnim('off'));
-  if (btnAnimPulse) btnAnimPulse.addEventListener('click', ()=> setAnim('pulse'));
-  if (btnAnimScan)  btnAnimScan.addEventListener('click',  ()=> setAnim('scan'));
+  if (optAnimOff)   optAnimOff.addEventListener('change',  ()=>{ if (optAnimOff.checked)   setAnim('off');   });
+  if (optAnimMouse) optAnimMouse.addEventListener('change', ()=>{ if (optAnimMouse.checked) setAnim('mouse'); });
+  if (optAnimPulse) optAnimPulse.addEventListener('change', ()=>{ if (optAnimPulse.checked) setAnim('pulse'); });
+  if (optAnimScan)  optAnimScan.addEventListener('change',  ()=>{ if (optAnimScan.checked)  setAnim('scan');  });
+  if (elAnimEnabled){
+    elAnimEnabled.addEventListener('change', ()=>{
+      ANIM_ENABLED = !!elAnimEnabled.checked;
+      updateAnimRun();
+      updateUIFromState();
+      requestRedraw();
+    });
+  }
+
+  // Pulse phase control (0..1). When in pulse mode, also sync the animation timeline
+  if (elPulsePhase){
+    elPulsePhase.addEventListener('input', ()=>{
+      const v = parseFloat(elPulsePhase.value);
+      if (!Number.isFinite(v)) return;
+      PULSE_PHASE = Math.max(0, Math.min(1, v));
+      if (elPulsePhaseOut) elPulsePhaseOut.textContent = PULSE_PHASE.toFixed(2);
+      if (ANIM_ENABLED && ANIM_MODE === 'pulse'){
+        // Choose timeline so that current cycle maps to this phase (using ping-pong cos mapping)
+        const clamped = Math.max(0, Math.min(1, PULSE_PHASE));
+        const cyc = Math.acos(Math.max(-1, Math.min(1, 1 - 2 * clamped))) / (2 * Math.PI); // 0..0.5
+        const targetTime = cyc * Math.max(0.05, ANIM_PERIOD);
+        const now = performance.now();
+        _animStart = now - targetTime * 1000;
+        updateAnimRun();
+      }
+      requestRedraw();
+    });
+  }
 
   // Easing controls (for slider-driven transitions)
   function updateEaseAmpState(){ if (elEaseAmp) elEaseAmp.disabled = (EASE_TYPE !== 'elastic'); }
@@ -1373,7 +1494,7 @@ function setup(){
       if (Number.isFinite(v)){
         ANIM_PERIOD = Math.max(0.1, v);
         if (animPeriodOut) animPeriodOut.textContent = ANIM_PERIOD.toFixed(2) + ' s';
-        startAnimLoop();
+        updateAnimRun();
         updateUIFromState();
         requestRedraw();
       }
@@ -1512,6 +1633,10 @@ function setup(){
     BG_LINES = BG_LINES_DEFAULT;
     BG_TRANSPARENT = false;
     H_WAVE_AMP = H_WAVE_AMP_DEFAULT;
+    H_WAVE_PERIOD = H_WAVE_PERIOD_DEFAULT;
+    PULSE_PHASE = PULSE_PHASE_DEFAULT;
+    ANIM_ENABLED = ANIM_ENABLED_DEFAULT;
+    ANIM_MODE = ANIM_MODE_DEFAULT;
     REPEAT_ENABLED = REPEAT_ENABLED_DEFAULT;
     REPEAT_MIRROR = REPEAT_MIRROR_DEFAULT;
     REPEAT_EXTRA_ROWS = REPEAT_EXTRA_ROWS_DEFAULT;
@@ -1528,8 +1653,6 @@ function setup(){
     MOUSE_STRETCH_MAX = BASE_STRETCH_MAX;
     MOUSE_CURVE = MOUSE_CURVE_DEFAULT;
     MOUSE_POWER = MOUSE_POWER_DEFAULT;
-
-    ANIM_MODE = ANIM_MODE_DEFAULT;
     ANIM_PERIOD = ANIM_PERIOD_DEFAULT;
     animTime = 0;
     stopAnimLoop();
@@ -1565,6 +1688,7 @@ function setup(){
     rebuildGroupsSelect();
 
     updateUIFromState();
+    updateAnimRun();
 
     if (rows <= 1){
       baseRowPitch = 0;
@@ -1974,9 +2098,10 @@ function renderLogo(g){
           const dashLenClamped = Math.min(baseLen, maxDash);
           const xShift = computeXShift(r, rows, displaceGroupsAnim);
           let rx = rightEdgeX + xShift;
-          if (H_WAVE_AMP !== 0 && rowPitchNow > 0){
+          if (ANIM_ENABLED && H_WAVE_AMP !== 0 && rowPitchNow > 0){
             const ampLayout = rowPitchNow * H_WAVE_AMP;
-            const phase = (r / rows) * TWO_PI - animTime * TWO_PI * 0.35;
+            const periodHW = Math.max(0.1, H_WAVE_PERIOD);
+            const phase = (r / rows) * TWO_PI - animTime * TWO_PI / periodHW;
             rx += Math.sin(phase) * ampLayout;
           }
           const drawH = Math.max(MIN_DRAW_HEIGHT, linePx * _lineMul * Math.max(0.01, hMul));
@@ -2624,5 +2749,5 @@ function fitViewportToWindow(){
 }
 // ====== INPUT ======
 function mouseMoved(){
-  requestRedraw(); // KAN WEG?
+  requestRedraw();
 }
