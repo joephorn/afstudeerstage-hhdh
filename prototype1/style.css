@@ -121,7 +121,8 @@ main {
   width: 320px;
   min-width: 320px;
   flex: 0 0 320px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   scrollbar-gutter: stable both-edges;
   background: var(--color-panel-bg);
   border: 1px solid var(--color-panel-border);
@@ -137,6 +138,7 @@ main {
 #controls .sub {
   font-variant-numeric: tabular-nums;
   opacity: 0.7;
+  font-size: 12px;
 }
 
 .control-section {

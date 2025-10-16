@@ -1071,6 +1071,46 @@ function setup(){
   elTaperIndexOut = byId('taperIndexOut');
   elAnimEnabled = byId('animEnabled');
 
+  // ID controls
+  const elIdCode   = byId('idCode');
+  const elIdGet    = byId('idGet');
+  const elIdSet    = byId('idSet');
+  const elIdCopy   = byId('idCopy');
+  const elIdStatus = byId('idStatus');
+  const setIdStatus = (msg, ok=true)=>{ if (elIdStatus){ elIdStatus.textContent = msg; elIdStatus.style.opacity = ok ? '0.8' : '1'; } };
+  if (elIdGet){
+    elIdGet.addEventListener('click', ()=>{
+      try {
+        const code = (window.getParamCode ? window.getParamCode() : '');
+        if (elIdCode) elIdCode.value = code;
+        setIdStatus('Generated');
+      } catch(err){ setIdStatus('Failed to generate', false); }
+    });
+  }
+  if (elIdCopy){
+    elIdCopy.addEventListener('click', async ()=>{
+      try {
+        const code = elIdCode && elIdCode.value ? elIdCode.value : (window.getParamCode ? window.getParamCode() : '');
+        if (navigator.clipboard && navigator.clipboard.writeText){
+          await navigator.clipboard.writeText(code);
+        } else {
+          const ta = document.createElement('textarea');
+          ta.value = code; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+        }
+        setIdStatus('Copied');
+      } catch(err){ setIdStatus('Copy failed', false); }
+    });
+  }
+  if (elIdSet){
+    elIdSet.addEventListener('click', ()=>{
+      try {
+        const raw = (elIdCode && elIdCode.value) ? elIdCode.value.trim() : '';
+        const ok = window.applyParamCode ? window.applyParamCode(raw) : false;
+        setIdStatus(ok ? 'Applied' : 'Invalid code', !!ok);
+      } catch(err){ setIdStatus('Invalid code', false); }
+    });
+  }
+
   // Transparent background checkbox
   const elBgTransparent = document.getElementById('bgTransparent');
   if (elBgTransparent){
@@ -2750,4 +2790,231 @@ function fitViewportToWindow(){
 // ====== INPUT ======
 function mouseMoved(){
   requestRedraw();
+}
+
+// ====== PARAM SNAPSHOT + CODE ======
+function getParamSnapshot(){
+  const snap = {};
+  snap.scalePct = Math.round(Math.max(10, Math.min(200, (logoScaleTarget * 100))));
+  snap.rows = Math.max(1, Math.round(rowsTarget));
+  snap.linePx = Math.max(1, Math.round(linePxTarget));
+  snap.tipRatio = Number(TIP_RATIO_TARGET.toFixed(2));
+  snap.widthPct = Math.round(Math.max(0, Math.min(500, (widthScaleTarget * 100))));
+  snap.gapPx = Math.round(gapPxTarget);
+  snap.shapeIdx = modeToIndex(taperMode);
+  snap.groups = Math.round(displaceGroupsTarget);
+  snap.dispUnit = Math.round(DISPLACE_UNIT_TARGET);
+  snap.colorPreset = Math.max(0, Math.round(activeColorComboIdx || 0));
+  snap.bgLines = !!BG_LINES;
+  snap.bgTransparent = !!BG_TRANSPARENT;
+  snap.animEnabled = !!ANIM_ENABLED;
+  const animModeMap = { off:0, mouse:1, pulse:2, scan:3 };
+  snap.animMode = animModeMap[String(ANIM_MODE||'off')] ?? 0;
+  const curveMap = { sine:0, smoothstep:1 };
+  snap.curve = curveMap[String(MOUSE_CURVE||'sine')] ?? 0;
+  snap.animPeriod = Number(Math.max(0, ANIM_PERIOD).toFixed(2));
+  snap.wavePower = Number(Math.max(0, MOUSE_AMPLITUDE).toFixed(2));
+  snap.pulsePhase = Number(Math.max(0, Math.min(1, PULSE_PHASE)).toFixed(3));
+  snap.hWaveAmp = Number(Math.max(0, H_WAVE_AMP).toFixed(2));
+  snap.hWavePeriod = Number(Math.max(0.1, H_WAVE_PERIOD).toFixed(2));
+  snap.repeatEnabled = !!REPEAT_ENABLED;
+  const repeatModeMap = { uniform:0, falloff:1 };
+  snap.repeatMode = repeatModeMap[String(REPEAT_MODE||'uniform')] ?? 0;
+  snap.repeatFalloff = Number(Math.max(0.5, Math.min(1, REPEAT_FALLOFF)).toFixed(2));
+  snap.repeatMirror = !!REPEAT_MIRROR;
+  const isAll = !!REPEAT_EXTRA_ROWS_IS_FULL || !Number.isFinite(REPEAT_EXTRA_ROWS);
+  snap.repeatExtraRows = isAll ? 'ALL' : Math.max(0, Math.round(REPEAT_EXTRA_ROWS));
+  const easeTypeMap = { smooth:0, linear:1, easeInOut:2, elastic:3 };
+  snap.easeType = easeTypeMap[String(EASE_TYPE||'smooth')] ?? 0;
+  snap.easeDur = Number(Math.max(0, EASE_DURATION).toFixed(2));
+  snap.easeAmp = Number(Math.max(0, EASE_AMPLITUDE).toFixed(2));
+  return snap;
+}
+
+function buildParamCode(snap){
+  const s = snap || getParamSnapshot();
+  const parts = [];
+  parts.push('s' + s.scalePct);
+  parts.push('r' + s.rows);
+  parts.push('lh' + s.linePx);
+  parts.push('tr' + s.tipRatio.toFixed(2));
+  parts.push('w' + s.widthPct);
+  parts.push('g' + s.gapPx);
+  parts.push('sh' + s.shapeIdx);
+  parts.push('gr' + s.groups);
+  parts.push('du' + s.dispUnit);
+  parts.push('cp' + s.colorPreset);
+  parts.push('bgl' + (s.bgLines ? 1 : 0));
+  parts.push('bgt' + (s.bgTransparent ? 1 : 0));
+  parts.push('an' + (s.animEnabled ? 1 : 0));
+  parts.push('am' + s.animMode);
+  parts.push('cv' + s.curve);
+  parts.push('ad' + Number(s.animPeriod).toFixed(2));
+  parts.push('pw' + Number(s.wavePower).toFixed(2));
+  parts.push('pp' + Number(s.pulsePhase).toFixed(3));
+  parts.push('hwa' + Number(s.hWaveAmp).toFixed(2));
+  parts.push('hwp' + Number(s.hWavePeriod).toFixed(2));
+  parts.push('re' + (s.repeatEnabled ? 1 : 0));
+  parts.push('rm' + s.repeatMode);
+  parts.push('rf' + Number(s.repeatFalloff).toFixed(2));
+  parts.push('rmi' + (s.repeatMirror ? 1 : 0));
+  parts.push('rx' + (s.repeatExtraRows === 'ALL' ? 'A' : s.repeatExtraRows));
+  parts.push('et' + s.easeType);
+  parts.push('ed' + Number(s.easeDur).toFixed(2));
+  parts.push('ea' + Number(s.easeAmp).toFixed(2));
+  return parts.join('');
+}
+
+if (typeof window !== 'undefined'){
+  window.getParamSnapshot = getParamSnapshot;
+  window.getParamCode = function(){ return buildParamCode(getParamSnapshot()); };
+  window.printParamCode = function(){ const snap = getParamSnapshot(); const code = buildParamCode(snap); console.log('Param snapshot:', snap); console.log('Param code:', code); return code; };
+}
+
+// Parse compact code back into a token map
+function parseParamCode(str){
+  if (!str || typeof str !== 'string') return null;
+  const input = str.trim();
+  const tokens = [
+    'hwp','hwa','rmi','bgl','bgt','lh','tr','sh','gr','du','cp','am','cv','ad','pw','pp','rm','rf','rx','et','ed','ea','re','an','s','r','w','g'
+  ].sort((a,b)=> b.length - a.length);
+  const out = {};
+  let i = 0;
+  while (i < input.length){
+    // skip whitespace
+    if (/\s/.test(input[i])){ i++; continue; }
+    const tok = tokens.find(t => input.startsWith(t, i));
+    if (!tok){
+      // unknown char → abort
+      return null;
+    }
+    let j = i + tok.length;
+    // collect until next token or whitespace/end
+    while (j < input.length){
+      if (/\s/.test(input[j])) break;
+      const nextTok = tokens.find(t => input.startsWith(t, j));
+      if (nextTok) break;
+      j++;
+    }
+    const raw = input.slice(i + tok.length, j).trim();
+    out[tok] = raw;
+    i = j;
+  }
+  return out;
+}
+
+// Apply a compact code to the UI/state
+function applyParamCode(code){
+  const map = parseParamCode(String(code||''));
+  if (!map) return false;
+  const byId = (id)=> document.getElementById(id);
+  const setVal = (id, val, type='input')=>{ const el = byId(id); if (!el) return false; el.value = String(val); el.dispatchEvent(new Event(type, { bubbles:true })); return true; };
+  const setChk = (id, on)=>{ const el = byId(id); if (!el) return false; el.checked = !!on; el.dispatchEvent(new Event('change', { bubbles:true })); return true; };
+  const clamp = (v,min,max)=> Math.max(min, Math.min(max, v));
+
+  // Rows first (affects groups options and repeat capacity)
+  if (map.r){
+    const rv = clamp(parseInt(map.r,10)||ROWS_DEFAULT, 1, 512);
+    setVal('rows', rv, 'input');
+  }
+
+  // Scale
+  if (map.s){
+    const sv = clamp(parseInt(map.s,10)||100, 10, 200);
+    setVal('logoScale', sv, 'input');
+  }
+
+  if (map.lh){ setVal('thickness', clamp(parseInt(map.lh,10)||LINE_HEIGHT, 1, 100), 'input'); }
+  if (map.tr){ setVal('tipRatio', clamp(parseFloat(map.tr)||TIP_RATIO_DEFAULT, 0, 1).toFixed(2), 'input'); }
+  if (map.w){  setVal('widthScale', clamp(parseInt(map.w,10)||110, 0, 500), 'input'); }
+  if (map.g){  setVal('gap', parseInt(map.g,10)||0, 'input'); }
+  if (map.du){ setVal('dispUnit', parseInt(map.du,10)||0, 'input'); }
+  if (map.sh){ setVal('taperIndex', clamp(parseInt(map.sh,10)||1, 1, 5), 'input'); }
+
+  // Groups: compute index within signed divisors of current rowsTarget
+  if (map.gr){
+    const gTarget = parseInt(map.gr,10);
+    if (Number.isFinite(gTarget)){
+      const rowsInt = Math.max(1, Math.round(typeof rowsTarget !== 'undefined' ? rowsTarget : rows));
+      const options = divisorsDescSigned(rowsInt);
+      let idx = options.indexOf(gTarget);
+      if (idx < 0){
+        // fallback: find nearest same-sign or closest absolute
+        const sign = Math.sign(gTarget) || 1;
+        const same = options.filter(v => Math.sign(v) === sign);
+        const absTarget = Math.abs(gTarget);
+        let best = same[0] || options[0];
+        let bestDiff = Infinity;
+        for (const v of same){ const d = Math.abs(Math.abs(v) - absTarget); if (d < bestDiff){ best = v; bestDiff = d; } }
+        idx = Math.max(0, options.indexOf(best));
+      }
+      if (idx >= 0){ setVal('groups', idx, 'input'); }
+    }
+  }
+
+  // Colors
+  if (map.cp){ setVal('colorPreset', Math.max(0, parseInt(map.cp,10)||0), 'change'); }
+
+  // Background toggles
+  if (map.bgl){ setChk('bgLines', parseInt(map.bgl,10) === 1); }
+  if (map.bgt){ setChk('bgTransparent', parseInt(map.bgt,10) === 1); }
+
+  // Animation
+  if (map.an){ setChk('animEnabled', parseInt(map.an,10) === 1); }
+  if (map.am){
+    const v = parseInt(map.am,10)||0;
+    const id = v===1 ? 'animMouse' : v===2 ? 'animPulse' : v===3 ? 'animScan' : 'animOff';
+    const el = byId(id); if (el){ el.checked = true; el.dispatchEvent(new Event('change', { bubbles:true })); }
+  }
+  if (map.cv){
+    const id = (parseInt(map.cv,10)||0) === 1 ? 'curveSmooth' : 'curveSine';
+    const el = byId(id); if (el){ el.checked = true; el.dispatchEvent(new Event('change', { bubbles:true })); }
+  }
+  if (map.ad){ setVal('animPeriod', Math.max(0.1, parseFloat(map.ad)||ANIM_PERIOD_DEFAULT).toFixed(2), 'input'); }
+  if (map.pw){ setVal('powerCtl', Math.max(0.1, parseFloat(map.pw)||MOUSE_AMPLITUDE_DEFAULT).toFixed(2), 'input'); }
+  if (map.pp){ setVal('pulsePhase', clamp(parseFloat(map.pp)||0, 0, 1).toFixed(3), 'input'); }
+  if (map.hwa){ setVal('hWaveAmp', Math.max(0, parseFloat(map.hwa)||0).toFixed(2), 'input'); }
+  if (map.hwp){ setVal('hWavePeriod', Math.max(0.1, parseFloat(map.hwp)||H_WAVE_PERIOD_DEFAULT).toFixed(2), 'input'); }
+
+  // Repeat
+  if (map.re){ setChk('repeatEnabled', parseInt(map.re,10) === 1); }
+  if (map.rm){
+    const id = (parseInt(map.rm,10)||0) === 1 ? 'repeatModeFalloff' : 'repeatModeUniform';
+    const el = byId(id); if (el){ el.checked = true; el.dispatchEvent(new Event('change', { bubbles:true })); }
+  }
+  if (map.rf){ setVal('repeatFalloff', clamp(parseFloat(map.rf)||1, 0.5, 1).toFixed(2), 'input'); }
+  if (map.rmi){ setChk('repeatMirror', parseInt(map.rmi,10) === 1); }
+  if (map.rx){
+    const v = String(map.rx).trim();
+    if (v.toUpperCase() === 'A'){
+      REPEAT_EXTRA_ROWS_IS_FULL = true;
+      REPEAT_EXTRA_ROWS = Number.POSITIVE_INFINITY;
+      updateRepeatSlidersRange();
+    } else {
+      const n = Math.max(0, parseInt(v,10)||0);
+      const slider = byId('repeatExtraRows');
+      if (slider){
+        const max = parseInt(slider.max || '0', 10) || 0;
+        slider.value = String(Math.min(n, max));
+        slider.dispatchEvent(new Event('input', { bubbles:true }));
+      }
+    }
+  }
+
+  // Easing
+  if (map.et){
+    const etIdx = parseInt(map.et,10)||0;
+    const etVal = etIdx===1 ? 'linear' : etIdx===2 ? 'easeInOut' : etIdx===3 ? 'elastic' : 'smooth';
+    setVal('easeType', etVal, 'change');
+  }
+  if (map.ed){ setVal('easeDur', Math.max(0, parseFloat(map.ed)||EASE_DURATION_DEFAULT).toFixed(2), 'input'); }
+  if (map.ea){ setVal('easeAmp', Math.max(0, parseFloat(map.ea)||EASE_AMPLITUDE_DEFAULT).toFixed(2), 'input'); }
+
+  requestRedraw();
+  return true;
+}
+
+if (typeof window !== 'undefined'){
+  window.parseParamCode = parseParamCode;
+  window.applyParamCode = applyParamCode;
 }
