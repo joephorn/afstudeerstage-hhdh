@@ -116,6 +116,31 @@ main {
   align-items: center;
 }
 
+/* Keyframes inside export bar */
+.export-bar .keyframe-group {
+  flex: 0 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.export-bar .kf-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.export-bar .kf-chip {
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--color-panel-border);
+  background: #e9e9e9;
+  cursor: pointer;
+  font-size: 12px;
+}
+.export-bar .kf-chip.is-active {
+  background: #d6e9ff;
+  border-color: #8ac1ff;
+}
+
 /* ===== Controls ===== */
 #controls {
   width: 320px;

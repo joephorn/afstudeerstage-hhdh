@@ -11,7 +11,7 @@ const TAPER_MODE_DEFAULT       = 'Rounded';
 const DEBUG_MODE_DEFAULT       = false;
 const WIDTH_SCALE_DEFAULT      = 1.1;
 const H_WAVE_AMP_DEFAULT       = 0;
-const H_WAVE_PERIOD_DEFAULT    = 3.0; // seconds per cycle for horizontal wave
+const H_WAVE_PERIOD_DEFAULT    = 3.0;
 const LOGO_SCALE_DEFAULT       = 1.0;
 const ASPECT_W_DEFAULT         = 16;
 const ASPECT_H_DEFAULT         = 9;
@@ -1111,6 +1111,125 @@ function setup(){
     });
   }
 
+  // ----- Keyframes (store/apply ID codes) -----
+  const elKfList   = byId('kfList');
+  const elKfDur    = byId('kfDur');
+  const elKfAdd    = byId('kfAdd');
+  const elKfDel    = byId('kfDel');
+  const elKfToggle = byId('kfToggle');
+
+  const keyframes = []; // { code: string }
+  let kfIndex = -1;
+  let kfTimer = null;
+  let kfDurationMs = 500;
+
+  function kfGetCode(){ try { return (window.getParamCode ? window.getParamCode() : ''); } catch(e){ return ''; } }
+  function kfApply(code){
+    if (!code) return false;
+    if (window.applyParamCodeFast) return window.applyParamCodeFast(code);
+    if (window.applyParamCode) return window.applyParamCode(code);
+    return false;
+  }
+
+  function kfRebuildList(){
+    if (!elKfList) return;
+    elKfList.innerHTML = '';
+    keyframes.forEach((_, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'kf-chip' + (i === kfIndex ? ' is-active' : '');
+      b.textContent = String(i + 1);
+      b.addEventListener('click', ()=> kfSelect(i));
+      elKfList.appendChild(b);
+    });
+  }
+
+  function kfSelect(idx){
+    const n = keyframes.length;
+    if (n <= 0) return;
+    idx = Math.max(0, Math.min(n - 1, idx|0));
+    // Auto-save current before switching
+    if (kfIndex >= 0 && kfIndex < keyframes.length){
+      keyframes[kfIndex].code = kfGetCode();
+    }
+    kfIndex = idx;
+    const frame = keyframes[kfIndex];
+    if (frame && frame.code){ kfApply(frame.code); }
+    kfRebuildList();
+  }
+
+  function kfAdd(){
+    const code = kfGetCode();
+    keyframes.push({ code });
+    kfSelect(keyframes.length - 1);
+  }
+
+  function kfDel(){
+    if (!keyframes.length) return;
+    keyframes.splice(Math.max(0, kfIndex), 1);
+    if (!keyframes.length){
+      keyframes.push({ code: kfGetCode() });
+      kfIndex = 0;
+    } else {
+      kfIndex = Math.max(0, Math.min(keyframes.length - 1, kfIndex));
+      const f = keyframes[kfIndex];
+      if (f && f.code) kfApply(f.code);
+    }
+    kfRebuildList();
+  }
+
+  function kfIsPlaying(){ return !!kfTimer; }
+  function kfUpdateToggleUI(){ if (elKfToggle){ elKfToggle.textContent = kfIsPlaying() ? '⏸' : '▶'; elKfToggle.title = kfIsPlaying() ? 'Pause' : 'Play'; } }
+  function kfStop(){ if (kfTimer){ clearInterval(kfTimer); kfTimer = null; } kfUpdateToggleUI(); }
+  function kfPlay(){
+    if (!keyframes.length){ return; }
+    kfStop();
+    const dur = Math.max(50, Math.round(kfDurationMs));
+    kfTimer = setInterval(()=>{
+      if (!keyframes.length){ kfStop(); return; }
+      const next = (kfIndex + 1) % keyframes.length;
+      // auto-save current before moving on
+      if (kfIndex >= 0 && kfIndex < keyframes.length){ keyframes[kfIndex].code = kfGetCode(); }
+      kfIndex = next;
+      const f = keyframes[kfIndex];
+      if (f && f.code) kfApply(f.code);
+      kfRebuildList();
+    }, dur);
+    kfUpdateToggleUI();
+  }
+
+  if (elKfDur){
+    elKfDur.addEventListener('input', ()=>{
+      const v = parseInt(elKfDur.value,10);
+      if (Number.isFinite(v)){
+        kfDurationMs = Math.max(50, v);
+        if (kfIsPlaying()){ kfPlay(); } // restart with new duration
+      }
+    });
+  }
+  function kfToggle(){ if (kfIsPlaying()) kfStop(); else kfPlay(); }
+  if (elKfAdd)    elKfAdd.addEventListener('click', kfAdd);
+  if (elKfDel)    elKfDel.addEventListener('click', kfDel);
+  if (elKfToggle) elKfToggle.addEventListener('click', kfToggle);
+  window.addEventListener('keydown', (e)=>{
+    const isSpace = (e.code === 'Space' || e.key === ' ' || e.key === 'Spacebar');
+    if (!isSpace) return;
+    const el = document.activeElement;
+    const tag = el && el.tagName ? el.tagName.toLowerCase() : '';
+    const isTyping = (tag === 'input' || tag === 'textarea' || tag === 'select' || (el && el.isContentEditable));
+    if (isTyping) return;
+    e.preventDefault();
+    kfToggle();
+  });
+
+  // Init with a single keyframe reflecting current state
+  if (elKfList){
+    keyframes.push({ code: kfGetCode() });
+    kfIndex = 0;
+    kfRebuildList();
+    kfUpdateToggleUI();
+  }
+
   // Transparent background checkbox
   const elBgTransparent = document.getElementById('bgTransparent');
   if (elBgTransparent){
@@ -1292,9 +1411,7 @@ function setup(){
     if (elEaseAmpOut) elEaseAmpOut.textContent = `${EASE_AMPLITUDE.toFixed(2)}×`;
     if (elEaseAmp) elEaseAmp.disabled = (EASE_TYPE !== 'elastic');
 
-    if (elPreset) elPreset.value = PRESET_DEFAULT;
-    if (elAspectW) elAspectW.value = String(ASPECT_WIDTH_PX_DEFAULT);
-    if (elAspectH) elAspectH.value = String(ASPECT_HEIGHT_PX_DEFAULT);
+    // Do not force preset/custom inputs here; preserve user selection
 
     // Curve buttons
     if (optCurveSine)   optCurveSine.addEventListener('change', ()=>{ if (optCurveSine.checked){ MOUSE_CURVE='sine'; requestRedraw(); }});
@@ -1779,6 +1896,12 @@ function setup(){
     if (elGroupsOut) elGroupsOut.textContent = String(displaceGroupsTarget);
   }
   rebuildGroupsSelect();
+
+  // Expose helpers for batch updates (ID/keyframes)
+  if (typeof window !== 'undefined'){
+    window.__updateUIFromState = updateUIFromState;
+    window.__rebuildGroupsSelect = rebuildGroupsSelect;
+  }
 
   elRows.addEventListener('input', ()=>{
     const val = parseInt(elRows.value,10);
@@ -3017,4 +3140,94 @@ function applyParamCode(code){
 if (typeof window !== 'undefined'){
   window.parseParamCode = parseParamCode;
   window.applyParamCode = applyParamCode;
+}
+
+// Fast, DOM-light application of a param code (avoids event dispatch thrash)
+function applyParamCodeFast(codeOrMap){
+  const map = (typeof codeOrMap === 'string') ? parseParamCode(codeOrMap) : codeOrMap;
+  if (!map) return false;
+  const clamp = (v,min,max)=> Math.max(min, Math.min(max, v));
+
+  // Rows first
+  if (map.r){
+    const rv = clamp(parseInt(map.r,10)||ROWS_DEFAULT, 1, 512);
+    rowsTarget = rv; // let rows animate via tween
+    _layoutDirty = true;
+  }
+  if (map.s){ logoScaleTarget = clamp(parseInt(map.s,10)||100, 10, 200) / 100; }
+  if (map.lh){ linePxTarget = clamp(parseInt(map.lh,10)||LINE_HEIGHT, 1, 200); }
+  if (map.tr){ TIP_RATIO_TARGET = clamp(parseFloat(map.tr)||TIP_RATIO_DEFAULT, 0, 1); }
+  if (map.w){  widthScaleTarget = clamp(parseInt(map.w,10)||110, 0, 500)/100; _layoutDirty = true; }
+  if (map.g){  gapPxTarget = parseInt(map.g,10)||0; _layoutDirty = true; }
+  if (map.du){ DISPLACE_UNIT_TARGET = parseInt(map.du,10)||0; }
+  if (map.sh){ const next = modeFromIndex(clamp(parseInt(map.sh,10)||1, 1, 5)); triggerTaperSwitch(next); }
+  if (map.gr){
+    const gTarget = parseInt(map.gr,10);
+    if (Number.isFinite(gTarget)){
+      const rowsInt = Math.max(1, Math.round(rowsTarget||rows));
+      const options = divisorsDescSigned(rowsInt);
+      let v = gTarget;
+      if (!options.includes(v)){
+        const sign = Math.sign(v) || 1;
+        const same = options.filter(x => Math.sign(x) === sign);
+        const absTarget = Math.abs(v);
+        v = same.reduce((best, cur)=> Math.abs(Math.abs(cur)-absTarget) < Math.abs(Math.abs(best)-absTarget) ? cur : best, same[0] || options[0]);
+      }
+      displaceGroupsTarget = v; // tween handles anim for groups
+    }
+  }
+  if (map.cp){
+    const idx = Math.max(0, parseInt(map.cp,10)||0);
+    applyColorComboByIndex(idx);
+  }
+  if (map.bgl){ BG_LINES = (parseInt(map.bgl,10) === 1); }
+  if (map.bgt){ BG_TRANSPARENT = (parseInt(map.bgt,10) === 1); }
+
+  if (map.an){ ANIM_ENABLED = (parseInt(map.an,10) === 1); }
+  if (map.am){ const v=parseInt(map.am,10)||0; ANIM_MODE = (v===1?'mouse':v===2?'pulse':v===3?'scan':'off'); }
+  if (map.cv){ MOUSE_CURVE = ((parseInt(map.cv,10)||0)===1)?'smoothstep':'sine'; }
+  if (map.ad){ ANIM_PERIOD = Math.max(0.1, parseFloat(map.ad)||ANIM_PERIOD_DEFAULT); }
+  if (map.pw){
+    MOUSE_AMPLITUDE = Math.max(0.1, parseFloat(map.pw)||MOUSE_AMPLITUDE_DEFAULT);
+    const stretchAbove = (BASE_STRETCH_MAX - 1) * MOUSE_AMPLITUDE;
+    const stretchBelow = (1 - BASE_STRETCH_MIN) * MOUSE_AMPLITUDE;
+    MOUSE_STRETCH_MAX = 1 + stretchAbove;
+    MOUSE_STRETCH_MIN = Math.max(0.05, 1 - stretchBelow);
+  }
+  if (map.pp){ setPulsePhase(clamp(parseFloat(map.pp)||0, 0, 1)); }
+  if (map.hwa){ H_WAVE_AMP = Math.max(0, parseFloat(map.hwa)||0); }
+  if (map.hwp){ H_WAVE_PERIOD = Math.max(0.1, parseFloat(map.hwp)||H_WAVE_PERIOD_DEFAULT); }
+
+  if (map.re){ REPEAT_ENABLED = (parseInt(map.re,10) === 1); }
+  if (map.rm){ REPEAT_MODE = ((parseInt(map.rm,10)||0)===1)?'falloff':'uniform'; }
+  if (map.rf){ REPEAT_FALLOFF = clamp(parseFloat(map.rf)||1, 0.5, 1); }
+  if (map.rmi){ REPEAT_MIRROR = (parseInt(map.rmi,10) === 1); }
+  if (map.rx){
+    const v = String(map.rx).trim();
+    if (v.toUpperCase() === 'A'){
+      REPEAT_EXTRA_ROWS_IS_FULL = true;
+      REPEAT_EXTRA_ROWS = Number.POSITIVE_INFINITY;
+    } else {
+      REPEAT_EXTRA_ROWS_IS_FULL = false;
+      REPEAT_EXTRA_ROWS = Math.max(0, parseInt(v,10)||0);
+    }
+    // tween for extra rows anim handles the visual interpolation
+  }
+
+  if (map.et){ const etIdx = parseInt(map.et,10)||0; EASE_TYPE = etIdx===1?'linear':etIdx===2?'easeInOut':etIdx===3?'elastic':'smooth'; }
+  if (map.ed){ EASE_DURATION = Math.max(0, parseFloat(map.ed)||EASE_DURATION_DEFAULT); }
+  if (map.ea){ EASE_AMPLITUDE = Math.max(0, parseFloat(map.ea)||EASE_AMPLITUDE_DEFAULT); }
+
+  if (typeof window !== 'undefined'){
+    if (window.__rebuildGroupsSelect) window.__rebuildGroupsSelect();
+    updateRepeatSlidersRange();
+    if (window.__updateUIFromState) window.__updateUIFromState();
+    updateAnimRun();
+  }
+  requestRedraw();
+  return true;
+}
+
+if (typeof window !== 'undefined'){
+  window.applyParamCodeFast = applyParamCodeFast;
 }
