@@ -15,48 +15,64 @@
       <div id="stage">
         <div id="stageStack" class="stage-stack">
           <div id="canvasWrap"></div>
-          <div id="exportBar" class="export-bar"></div>
+          <div id="exportBar" class="export-bar">
+            <div class="bar-inner">
+              <!-- Size group: preset + custom resolution -->
+              <div class="size-group">
+                <label class="control-label control-label--inline" for="preset">
+                  <span>Size</span>
+                </label>
+                <select id="preset" class="control-select control-select--tight">
+                  <option value="fit" selected>Fit — fill screen</option>
+                  <option value="ar1" data-aw="16" data-ah="9" data-w="1920" data-h="1080">16:9 — 1920 × 1080 (Full HD)</option>
+                  <option value="ar2" data-aw="16" data-ah="9" data-w="1280" data-h="720">16:9 — 1280 × 720 (HD)</option>
+                  <option value="ar3" data-aw="16" data-ah="9" data-w="3840" data-h="2160">16:9 — 3840 × 2160 (4K)</option>
+                  <option value="ar4" data-aw="9" data-ah="16" data-w="1080" data-h="1920">9:16 — 1080 × 1920 (Vertical Full HD)</option>
+                  <option value="ar5" data-aw="9" data-ah="16" data-w="720" data-h="1280">9:16 — 720 × 1280</option>
+                  <option value="ar6" data-aw="1" data-ah="1" data-w="1080" data-h="1080">1:1 — 1080 × 1080</option>
+                  <option value="ar7" data-aw="4" data-ah="5" data-w="1080" data-h="1350">4:5 — 1080 × 1350</option>
+                  <option value="ar8" data-aw="3" data-ah="2" data-w="1620" data-h="1080">3:2 — 1620 × 1080</option>
+                  <option value="ar9" data-aw="4" data-ah="3" data-w="1024" data-h="768">4:3 — 1024 × 768</option>
+                  <option value="ar10" data-aw="4" data-ah="3" data-w="2048" data-h="1536">4:3 — 2048 × 1536</option>
+                  <option value="ar11" data-aw="21" data-ah="9" data-w="2560" data-h="1080">21:9 — 2560 × 1080 (Ultrawide)</option>
+                  <option value="ar12" data-aw="21" data-ah="9" data-w="3440" data-h="1440">21:9 — 3440 × 1440 (Ultrawide)</option>
+                  <option value="custom" data-aw="" data-ah="" data-w="" data-h="">Custom…</option>
+                </select>
+                <div id="customAR" class="custom-resolution">
+                  <label class="control-label inline-label">
+                    <span>Custom resolution</span>
+                    <span class="sub">pixels</span>
+                  </label>
+                  <div class="field-row">
+                    <input id="aspectW" class="input-fluid" type="number" min="1" step="1" value="1920" placeholder="Width (px)" />
+                    <input id="aspectH" class="input-fluid" type="number" min="1" step="1" value="1080" placeholder="Height (px)" />
+                  </div>
+                  <div class="field-row" style="align-items:center; gap:8px; margin-top:6px;">
+                    <button id="applyCustomAR" type="button">Apply</button>
+                  </div>
+                </div>
+              </div>
+              <!-- Format group -->
+              <div class="format-group">
+                <label class="control-label control-label--inline" for="exportFormat">
+                  <span>Format</span>
+                </label>
+                <select id="exportFormat" class="control-select control-select--tight">
+                  <option value="svg">SVG</option>
+                  <option value="pdf">PDF</option>
+                </select>
+              </div>
+              <!-- Actions -->
+              <div class="actions">
+                <button id="exportGo" type="button">Export</button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
       <div id="controls">
-        <section class="control-section">
-          <h2 class="control-section-title">Canvas</h2>
-          <div class="control-field">
-            <label class="control-label control-label--compact" for="preset">
-              <span>Aspect &amp; Resolution</span>
-            </label>
-            <select id="preset" class="control-select control-select--loose">
-              <option value="fit" selected>Fit — fill screen</option>
-              <option value="ar1" data-aw="16" data-ah="9" data-w="1920" data-h="1080">16:9 — 1920 × 1080 (Full HD)</option>
-              <option value="ar2" data-aw="16" data-ah="9" data-w="1280" data-h="720">16:9 — 1280 × 720 (HD)</option>
-              <option value="ar3" data-aw="16" data-ah="9" data-w="3840" data-h="2160">16:9 — 3840 × 2160 (4K)</option>
-              <option value="ar4" data-aw="9" data-ah="16" data-w="1080" data-h="1920">9:16 — 1080 × 1920 (Vertical Full HD)</option>
-              <option value="ar5" data-aw="9" data-ah="16" data-w="720" data-h="1280">9:16 — 720 × 1280</option>
-              <option value="ar6" data-aw="1" data-ah="1" data-w="1080" data-h="1080">1:1 — 1080 × 1080</option>
-              <option value="ar7" data-aw="4" data-ah="5" data-w="1080" data-h="1350">4:5 — 1080 × 1350</option>
-              <option value="ar8" data-aw="3" data-ah="2" data-w="1620" data-h="1080">3:2 — 1620 × 1080</option>
-              <option value="ar9" data-aw="4" data-ah="3" data-w="1024" data-h="768">4:3 — 1024 × 768</option>
-              <option value="ar10" data-aw="4" data-ah="3" data-w="2048" data-h="1536">4:3 — 2048 × 1536</option>
-              <option value="ar11" data-aw="21" data-ah="9" data-w="2560" data-h="1080">21:9 — 2560 × 1080 (Ultrawide)</option>
-              <option value="ar12" data-aw="21" data-ah="9" data-w="3440" data-h="1440">21:9 — 3440 × 1440 (Ultrawide)</option>
-              <option value="custom" data-aw="" data-ah="" data-w="" data-h="">Custom…</option>
-            </select>
-          </div>
-          <div id="customAR" class="custom-resolution">
-            <label class="control-label inline-label">
-              <span>Custom resolution</span>
-              <span class="sub">pixels</span>
-            </label>
-            <div class="field-row">
-              <input id="aspectW" class="input-fluid" type="number" min="1" step="1" value="1920" placeholder="Width (px)" />
-              <input id="aspectH" class="input-fluid" type="number" min="1" step="1" value="1080" placeholder="Height (px)" />
-            </div>
-            <div class="field-row" style="align-items:center; gap:8px; margin-top:6px;">
-              <button id="applyCustomAR" type="button">Apply</button>
-            </div>
-          </div>
-        </section>
+        
 
         <section class="control-section">
           <h2 class="control-section-title">General</h2>
@@ -282,13 +298,7 @@
           -->
         </section>
 
-        <section class="control-section">
-          <h2 class="control-section-title">Export</h2>
-          <div class="button-group">
-            <!-- <button id="exportSvg" type="button">SVG</button> -->
-            <button id="exportPdf" type="button">PDF</button>
-          </div>
-        </section>
+        
 
         <section class="control-section">
           <div class="button-group">

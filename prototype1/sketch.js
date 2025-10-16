@@ -999,9 +999,9 @@ function setup(){
   const animPeriodCtl     = byId('animPeriod');
   const animPeriodOut     = byId('animPeriodOut');
 
-  // Export buttons
-  const btnExportSvg = byId('exportSvg');
-  const btnExportPdf = byId('exportPdf');
+  // Export controls (export bar)
+  const exportFormatSel = byId('exportFormat');
+  const btnExportGo = byId('exportGo');
 
   elTaperIndex = byId('taperIndex');
   elTaperIndexOut = byId('taperIndexOut');
@@ -1238,44 +1238,48 @@ function setup(){
     });
   }
 
-  // Export handlers
-  if (btnExportSvg){
-    btnExportSvg.addEventListener('click', ()=>{
-      const data = exportSVG();
-      if (data) downloadTextAsFile(data, 'export.svg', 'image/svg+xml');
-    });
-  }
-  if (btnExportPdf){
-    btnExportPdf.addEventListener('click', async ()=>{
-      try {
+  // Unified Export handler
+  if (btnExportGo){
+    btnExportGo.addEventListener('click', async ()=>{
+      const fmt = (exportFormatSel && String(exportFormatSel.value || 'svg').toLowerCase()) || 'svg';
+      if (fmt === 'svg'){
         const data = exportSVG();
-        if (!data){ throw new Error('SVG data unavailable'); }
-        // Parse into a DOM element for svg2pdf
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(data, 'image/svg+xml');
-        const svg = doc.documentElement;
-        // Avoid root clipping by allowing overflow and targeting content group instead of <svg>
-        svg.setAttribute('overflow', 'visible');
-        let content = null;
-        for (const node of Array.from(svg.children)){
-          const tag = node.tagName && node.tagName.toLowerCase();
-          if (tag && tag !== 'defs' && tag !== 'desc') { content = node; break; }
-        }
-        if (!content) content = svg;
-
-        const W = Math.max(1, width), H = Math.max(1, height);
-        const jsPDFCtor = window.jspdf && (window.jspdf.jsPDF || (window.jspdf.default && window.jspdf.default.jsPDF)) || (window.jsPDF || null);
-        if (!jsPDFCtor){ throw new Error('jsPDF not loaded'); }
-        const pdf = new jsPDFCtor({ orientation: (W >= H ? 'landscape' : 'portrait'), unit: 'pt', format: [W, H] });
-        const s2p = (window.svg2pdf && (window.svg2pdf.svg2pdf || (window.svg2pdf.default && window.svg2pdf.default.svg2pdf))) || (typeof svg2pdf !== 'undefined' ? (svg2pdf.svg2pdf || (svg2pdf.default && svg2pdf.default.svg2pdf) || svg2pdf) : null);
-        if (!s2p){ throw new Error('svg2pdf not loaded'); }
-        // Do not pass width/height to avoid creating a viewport clip; useCSS for styling
-        await s2p(content, pdf, { x: 0, y: 0, useCSS: true });
-        pdf.save('export.pdf');
-      } catch(err){
-        console.error('Export PDF failed:', err);
-        alert('Export PDF failed: ' + err.message);
+        if (data) downloadTextAsFile(data, 'export.svg', 'image/svg+xml');
+        return;
       }
+      if (fmt === 'pdf'){
+        try {
+          const data = exportSVG();
+          if (!data){ throw new Error('SVG data unavailable'); }
+          // Parse into a DOM element for svg2pdf
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(data, 'image/svg+xml');
+          const svg = doc.documentElement;
+          // Avoid root clipping by allowing overflow and targeting content group instead of <svg>
+          svg.setAttribute('overflow', 'visible');
+          let content = null;
+          for (const node of Array.from(svg.children)){
+            const tag = node.tagName && node.tagName.toLowerCase();
+            if (tag && tag !== 'defs' && tag !== 'desc') { content = node; break; }
+          }
+          if (!content) content = svg;
+
+          const W = Math.max(1, width), H = Math.max(1, height);
+          const jsPDFCtor = window.jspdf && (window.jspdf.jsPDF || (window.jspdf.default && window.jspdf.default.jsPDF)) || (window.jsPDF || null);
+          if (!jsPDFCtor){ throw new Error('jsPDF not loaded'); }
+          const pdf = new jsPDFCtor({ orientation: (W >= H ? 'landscape' : 'portrait'), unit: 'pt', format: [W, H] });
+          const s2p = (window.svg2pdf && (window.svg2pdf.svg2pdf || (window.svg2pdf.default && window.svg2pdf.default.svg2pdf))) || (typeof svg2pdf !== 'undefined' ? (svg2pdf.svg2pdf || (svg2pdf.default && svg2pdf.default.svg2pdf) || svg2pdf) : null);
+          if (!s2p){ throw new Error('svg2pdf not loaded'); }
+          // Do not pass width/height to avoid creating a viewport clip; useCSS for styling
+          await s2p(content, pdf, { x: 0, y: 0, useCSS: true });
+          pdf.save('export.pdf');
+        } catch(err){
+          console.error('Export PDF failed:', err);
+          alert('Export PDF failed: ' + err.message);
+        }
+        return;
+      }
+      alert('Unknown export format: ' + fmt);
     });
   }
 
@@ -1422,6 +1426,8 @@ function setup(){
 
       if (val === 'custom') {
         if (elCustomAR) elCustomAR.style.display = 'block';
+        // Export bar height may change; refit viewport
+        fitViewportToWindow();
       } else {
         if (elCustomAR) elCustomAR.style.display = 'none';
         EXPORT_W = null; EXPORT_H = null;

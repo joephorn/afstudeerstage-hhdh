@@ -83,16 +83,44 @@ main {
   display: block;
 }
 
-/* Export bar under canvas — fixed (adjustable) height */
+/* Export bar under canvas — content-driven height */
 .export-bar {
-  height: var(--export-bar-h, 100px);
-  flex: 0 0 var(--export-bar-h, 100px);
   width: 100%; /* fill entire stage width */
   border: 1px solid var(--color-panel-border);
   border-radius: var(--radius-panel);
   background: var(--color-panel-bg);
   box-shadow: var(--shadow-panel);
   box-sizing: border-box;
+  padding: 12px;
+}
+
+.export-bar .bar-inner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gap-control-wide);
+  width: 100%;
+  flex-wrap: wrap; /* allow custom size UI to wrap under */
+}
+
+.export-bar .size-group {
+  flex: 0 0 auto; /* do not consume all space */
+  display: flex;
+  flex-direction: column;
+}
+
+/* In export bar, selects should size to content, not stretch */
+.export-bar .control-select {
+  box-sizing: border-box;
+  width: 140px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.export-bar .actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
 }
 
 /* ===== Controls ===== */
