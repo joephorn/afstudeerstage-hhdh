@@ -8,7 +8,7 @@
   --color-divider: #ececec;
   --color-heading: #3b3b3b;
   --shadow-panel: 0 4px 18px rgba(0, 0, 0, 0.06);
-  --radius-stage: 0px;
+  --radius-block-left: 0px;
   --radius-panel: 0px;
   --space-page: 16px;
   --space-panel: 12px;
@@ -42,26 +42,20 @@ main {
   min-height: 0;
 }
 
-#stage {
+#blockLeft {
   flex: 1 1 auto;
   min-width: 10px;
   min-height: 100px;
   display: flex;
-  /* Fill available space so export bar can stick to bottom */
-  align-items: stretch;
-  justify-content: stretch;
-  border-radius: var(--radius-stage);
-  overflow: visible; /* prevent content from visually overlapping controls */
-}
-
-/* Stack canvas and export bar vertically using flexbox */
-.stage-stack {
-  display: flex;
-  flex-direction: column;       /* canvas area + export bar */
+  flex-direction: column;
   gap: 12px;
   width: 100%;
   height: 100%;
-  min-height: 0;                /* allow shrinking inside stage */
+  min-height: 0;
+  align-items: stretch;
+  justify-content: stretch;
+  border-radius: var(--radius-block-left);
+  overflow: visible;
 }
 
 #canvasWrap {
@@ -74,18 +68,18 @@ main {
   justify-content: center;
   overflow: visible;
   background: var(--color-panel-bg);
-  margin: auto;                 /* center horizontally + vertically in stage-stack */
-  flex: 0 0 auto;               /* height controlled by JS; don't stretch */
-  min-height: 0;                /* allow inner canvas to shrink */
+  margin: auto;
+  flex: 0 0 auto;
+  min-height: 0;
 }
 
 #canvasWrap canvas {
   display: block;
 }
 
-/* Export bar under canvas — content-driven height */
+/* Export bar */
 .export-bar {
-  width: 100%; /* fill entire stage width */
+  width: 100%;
   border: 1px solid var(--color-panel-border);
   border-radius: var(--radius-panel);
   background: var(--color-panel-bg);
@@ -99,16 +93,15 @@ main {
   align-items: flex-start;
   gap: var(--gap-control-wide);
   width: 100%;
-  flex-wrap: wrap; /* allow custom size UI to wrap under */
+  flex-wrap: wrap;
 }
 
 .export-bar .size-group {
-  flex: 0 0 auto; /* do not consume all space */
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
 }
 
-/* In export bar, selects should size to content, not stretch */
 .export-bar .control-select {
   box-sizing: border-box;
   width: 140px;
@@ -127,9 +120,9 @@ main {
 #controls {
   width: 320px;
   min-width: 320px;
-  flex: 0 0 320px;              /* fixed width column */
+  flex: 0 0 320px;
   overflow: auto;
-  scrollbar-gutter: stable both-edges; /* prevent width changes when scrollbar appears */
+  scrollbar-gutter: stable both-edges;
   background: var(--color-panel-bg);
   border: 1px solid var(--color-panel-border);
   border-radius: var(--radius-panel);
