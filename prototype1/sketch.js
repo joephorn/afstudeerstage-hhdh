@@ -1105,14 +1105,10 @@ function setup(){
     elIdSet.addEventListener('click', ()=>{
       try {
         const raw = (elIdCode && elIdCode.value) ? elIdCode.value.trim() : '';
-<<<<<<< ours
         const ok = window.applyParamCodeFast ? window.applyParamCodeFast(raw)
                   : (window.applyParamCode ? window.applyParamCode(raw) : false);
         // Persist this applied ID into the active keyframe
         try { kfAutosaveCurrent(); } catch(e){}
-=======
-        const ok = window.applyParamCode ? window.applyParamCode(raw) : false;
->>>>>>> theirs
         setIdStatus(ok ? 'Applied' : 'Invalid code', !!ok);
       } catch(err){ setIdStatus('Invalid code', false); }
     });
@@ -1125,15 +1121,13 @@ function setup(){
   const elKfDel    = byId('kfDel');
   const elKfToggle = byId('kfToggle');
 
-  const keyframes = []; // { code: string }
+  const keyframes = []; // { code: string, map?: object }
   let kfIndex = -1;
   let kfTimer = null;
   let kfDurationMs = 500;
 
   function kfGetCode(){ try { return (window.getParamCode ? window.getParamCode() : ''); } catch(e){ return ''; } }
-<<<<<<< ours
   function kfParse(code){ try { return (window.parseParamCode ? window.parseParamCode(code) : null); } catch(e){ return null; } }
-<<<<<<< ours
   function kfAutosaveCurrent(){
     // Persist current UI state into the active keyframe (no-op during playback)
     if (!keyframes.length || kfTimer) return;
@@ -1143,15 +1137,23 @@ function setup(){
     keyframes[kfIndex].map = kfParse(code);
     if (elIdCode) elIdCode.value = code;
   }
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
   function kfApply(code){
     if (!code) return false;
     if (window.applyParamCodeFast) return window.applyParamCodeFast(code);
     if (window.applyParamCode) return window.applyParamCode(code);
     return false;
+  }
+
+  // Light-weight active indicator update (avoids rebuilding the list each tick)
+  function kfHighlightActive(){
+    if (!elKfList) return;
+    const kids = elKfList.children;
+    for (let i = 0; i < kids.length; i++){
+      const btn = kids[i];
+      if (!btn || !btn.classList) continue;
+      if (i === kfIndex) btn.classList.add('is-active');
+      else btn.classList.remove('is-active');
+    }
   }
 
   function kfRebuildList(){
@@ -1173,21 +1175,35 @@ function setup(){
     idx = Math.max(0, Math.min(n - 1, idx|0));
     // Auto-save current before switching
     if (kfIndex >= 0 && kfIndex < keyframes.length){
-      keyframes[kfIndex].code = kfGetCode();
+      // Prefer explicit ID field content if present; fallback to current state snapshot
+      let updated = '';
+      try {
+        if (elIdCode && elIdCode.value && String(elIdCode.value).trim()){
+          updated = String(elIdCode.value).trim();
+        }
+      } catch(e){}
+      if (!updated) updated = kfGetCode();
+      keyframes[kfIndex].code = updated;
+      keyframes[kfIndex].map = kfParse(updated);
     }
     kfIndex = idx;
     const frame = keyframes[kfIndex];
     if (frame && frame.code){ kfApply(frame.code); }
-<<<<<<< ours
     if (elIdCode && frame && frame.code){ elIdCode.value = frame.code; }
-=======
->>>>>>> theirs
     kfRebuildList();
   }
 
   function kfAdd(){
-    const code = kfGetCode();
-    keyframes.push({ code });
+    // Use ID field when present, else current state snapshot
+    let code = '';
+    try {
+      if (elIdCode && elIdCode.value && String(elIdCode.value).trim()){
+        code = String(elIdCode.value).trim();
+      }
+    } catch(e){}
+    if (!code) code = kfGetCode();
+    const map = kfParse(code);
+    keyframes.push({ code, map });
     kfSelect(keyframes.length - 1);
   }
 
@@ -1195,12 +1211,13 @@ function setup(){
     if (!keyframes.length) return;
     keyframes.splice(Math.max(0, kfIndex), 1);
     if (!keyframes.length){
-      keyframes.push({ code: kfGetCode() });
+      const code = kfGetCode();
+      keyframes.push({ code, map: kfParse(code) });
       kfIndex = 0;
     } else {
       kfIndex = Math.max(0, Math.min(keyframes.length - 1, kfIndex));
       const f = keyframes[kfIndex];
-      if (f && f.code) kfApply(f.code);
+      if (f){ kfApply(f.map || f.code); }
     }
     kfRebuildList();
   }
@@ -1215,12 +1232,10 @@ function setup(){
     kfTimer = setInterval(()=>{
       if (!keyframes.length){ kfStop(); return; }
       const next = (kfIndex + 1) % keyframes.length;
-      // auto-save current before moving on
-      if (kfIndex >= 0 && kfIndex < keyframes.length){ keyframes[kfIndex].code = kfGetCode(); }
       kfIndex = next;
       const f = keyframes[kfIndex];
-      if (f && f.code) kfApply(f.code);
-      kfRebuildList();
+      if (f){ kfApply(f.map || f.code); }
+      kfHighlightActive();
     }, dur);
     kfUpdateToggleUI();
   }
@@ -1251,13 +1266,13 @@ function setup(){
 
   // Init with a single keyframe reflecting current state
   if (elKfList){
-    keyframes.push({ code: kfGetCode() });
+    const code0 = kfGetCode();
+    keyframes.push({ code: code0, map: kfParse(code0) });
     kfIndex = 0;
     kfRebuildList();
     kfUpdateToggleUI();
   }
 
-<<<<<<< ours
   // Autosave on UI edits (after handlers update state)
   const controlsPanel = document.getElementById('controls');
   if (controlsPanel){
@@ -1266,8 +1281,6 @@ function setup(){
     controlsPanel.addEventListener('change', defer);
   }
 
-=======
->>>>>>> theirs
   // Transparent background checkbox
   const elBgTransparent = document.getElementById('bgTransparent');
   if (elBgTransparent){
@@ -2964,7 +2977,18 @@ function getParamSnapshot(){
   snap.tipRatio = Number(TIP_RATIO_TARGET.toFixed(2));
   snap.widthPct = Math.round(Math.max(0, Math.min(500, (widthScaleTarget * 100))));
   snap.gapPx = Math.round(gapPxTarget);
-  snap.shapeIdx = modeToIndex(taperMode);
+  // Prefer the UI slider value for shape if available to avoid animation-timing issues
+  try {
+    const el = (typeof document !== 'undefined') ? document.getElementById('taperIndex') : null;
+    if (el && el.value != null){
+      const v = Math.max(1, Math.min(5, parseInt(el.value, 10) || modeToIndex(taperMode)));
+      snap.shapeIdx = v;
+    } else {
+      snap.shapeIdx = modeToIndex(taperMode);
+    }
+  } catch(e){
+    snap.shapeIdx = modeToIndex(taperMode);
+  }
   snap.groups = Math.round(displaceGroupsTarget);
   snap.dispUnit = Math.round(DISPLACE_UNIT_TARGET);
   snap.colorPreset = Math.max(0, Math.round(activeColorComboIdx || 0));
