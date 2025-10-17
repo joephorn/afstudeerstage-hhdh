@@ -1105,7 +1105,14 @@ function setup(){
     elIdSet.addEventListener('click', ()=>{
       try {
         const raw = (elIdCode && elIdCode.value) ? elIdCode.value.trim() : '';
+<<<<<<< ours
+        const ok = window.applyParamCodeFast ? window.applyParamCodeFast(raw)
+                  : (window.applyParamCode ? window.applyParamCode(raw) : false);
+        // Persist this applied ID into the active keyframe
+        try { kfAutosaveCurrent(); } catch(e){}
+=======
         const ok = window.applyParamCode ? window.applyParamCode(raw) : false;
+>>>>>>> theirs
         setIdStatus(ok ? 'Applied' : 'Invalid code', !!ok);
       } catch(err){ setIdStatus('Invalid code', false); }
     });
@@ -1124,6 +1131,22 @@ function setup(){
   let kfDurationMs = 500;
 
   function kfGetCode(){ try { return (window.getParamCode ? window.getParamCode() : ''); } catch(e){ return ''; } }
+<<<<<<< ours
+  function kfParse(code){ try { return (window.parseParamCode ? window.parseParamCode(code) : null); } catch(e){ return null; } }
+<<<<<<< ours
+  function kfAutosaveCurrent(){
+    // Persist current UI state into the active keyframe (no-op during playback)
+    if (!keyframes.length || kfTimer) return;
+    if (kfIndex < 0 || kfIndex >= keyframes.length) return;
+    const code = kfGetCode();
+    keyframes[kfIndex].code = code;
+    keyframes[kfIndex].map = kfParse(code);
+    if (elIdCode) elIdCode.value = code;
+  }
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
   function kfApply(code){
     if (!code) return false;
     if (window.applyParamCodeFast) return window.applyParamCodeFast(code);
@@ -1155,6 +1178,10 @@ function setup(){
     kfIndex = idx;
     const frame = keyframes[kfIndex];
     if (frame && frame.code){ kfApply(frame.code); }
+<<<<<<< ours
+    if (elIdCode && frame && frame.code){ elIdCode.value = frame.code; }
+=======
+>>>>>>> theirs
     kfRebuildList();
   }
 
@@ -1230,6 +1257,17 @@ function setup(){
     kfUpdateToggleUI();
   }
 
+<<<<<<< ours
+  // Autosave on UI edits (after handlers update state)
+  const controlsPanel = document.getElementById('controls');
+  if (controlsPanel){
+    const defer = ()=> setTimeout(()=> kfAutosaveCurrent(), 0);
+    controlsPanel.addEventListener('input', defer);
+    controlsPanel.addEventListener('change', defer);
+  }
+
+=======
+>>>>>>> theirs
   // Transparent background checkbox
   const elBgTransparent = document.getElementById('bgTransparent');
   if (elBgTransparent){
@@ -1901,6 +1939,8 @@ function setup(){
   if (typeof window !== 'undefined'){
     window.__updateUIFromState = updateUIFromState;
     window.__rebuildGroupsSelect = rebuildGroupsSelect;
+    // Allow programmatic applies (ID/Keyframes) to persist to the active keyframe
+    window.__kfAutosaveActive = (typeof kfAutosaveCurrent === 'function') ? kfAutosaveCurrent : null;
   }
 
   elRows.addEventListener('input', ()=>{
@@ -3133,6 +3173,9 @@ function applyParamCode(code){
   if (map.ed){ setVal('easeDur', Math.max(0, parseFloat(map.ed)||EASE_DURATION_DEFAULT).toFixed(2), 'input'); }
   if (map.ea){ setVal('easeAmp', Math.max(0, parseFloat(map.ea)||EASE_AMPLITUDE_DEFAULT).toFixed(2), 'input'); }
 
+  // Autosave active keyframe after event-driven apply
+  try { if (typeof window !== 'undefined' && window.__kfAutosaveActive) window.__kfAutosaveActive(); } catch(e){}
+
   requestRedraw();
   return true;
 }
@@ -3223,6 +3266,8 @@ function applyParamCodeFast(codeOrMap){
     updateRepeatSlidersRange();
     if (window.__updateUIFromState) window.__updateUIFromState();
     updateAnimRun();
+    // Autosave active keyframe after programmatic apply
+    try { if (window.__kfAutosaveActive) window.__kfAutosaveActive(); } catch(e){}
   }
   requestRedraw();
   return true;
