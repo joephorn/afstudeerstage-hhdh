@@ -16,6 +16,8 @@
           <div id="canvasWrap"></div>
           <div id="exportBar" class="export-bar">
             <div class="bar-inner">
+              <!-- Left column: Size + Format stacked -->
+              <div class="export-left">
               <!-- Size group: preset + custom resolution -->
               <div class="size-group">
                 <label class="control-label control-label--inline" for="preset">
@@ -59,7 +61,9 @@
                 <select id="exportFormat" class="control-select control-select--tight">
                   <option value="svg">SVG</option>
                   <option value="pdf">PDF</option>
+                  <option value="mp4">MP4 (screen capture)</option>
                 </select>
+              </div>
               </div>
               <!-- Keyframes -->
               <div class="keyframe-group">
@@ -72,19 +76,22 @@
                   <button id="kfDel" type="button" title="Remove keyframe">– Remove</button>
                   <button id="kfToggle" type="button" title="Play/Pause">▶</button>
                 </div>
-                <div class="field-row" style="align-items:center; gap:8px; margin-top:6px;">
-                  <label class="control-label control-label--inline" for="kfTime">
+                <div class="control-field">
+                  <label class="control-label" for="kfTime">
                     <span>Duration</span>
                     <span id="kfTimeOut" class="sub">0.50 s</span>
                   </label>
-                  <input id="kfTime" type="range" min="0.05" max="5" step="0.05" value="0.50" style="width:240px" />
+                  <input id="kfTime" type="range" min="0.05" max="5" step="0.05" value="0.50" />
                 </div>
-                <div class="field-row" style="align-items:center; gap:8px; margin-top:2px;">
-                  <label class="control-label control-label--inline" for="kfSpeed">
+                <div class="control-field">
+                  <label class="control-label" for="kfSpeed">
                     <span>Time multiplier</span>
-                    <span id="kfSpeedOut" class="sub">1.00×</span>
+                    <span>
+                      <span id="kfSpeedOut" class="sub">1.00×</span>
+                      <span id="kfTotalOut" class="sub" style="margin-left:8px;">Total: 0.50 s</span>
+                    </span>
                   </label>
-                  <input id="kfSpeed" type="range" min="0.25" max="3" step="0.05" value="1.00" style="width:240px" />
+                  <input id="kfSpeed" type="range" min="0.25" max="3" step="0.05" value="1.00" />
                 </div>
               </div>
 
@@ -306,11 +313,11 @@
             </select>
           </div>
           <div class="control-field">
-            <label class="control-label" for="easeDur">
-              <span>Duration</span>
-            <span id="easeDurOut" class="sub">0.50 s</span>
-          </label>
-          <input id="easeDur" type="range" min="0" max="5" step="0.01" value="0.50" />
+            <label class="control-label" for="easeDurPct">
+              <span>Duration %</span>
+              <span id="easeDurPctOut" class="sub">100 %</span>
+            </label>
+            <input id="easeDurPct" type="range" min="0" max="200" step="1" value="100" />
           </div>
           <div class="control-field">
             <label class="control-label" for="easeAmp">

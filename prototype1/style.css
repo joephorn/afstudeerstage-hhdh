@@ -99,8 +99,15 @@ main {
   flex-wrap: wrap;
 }
 
-.export-bar .size-group {
+.export-bar .export-left {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-control);
   flex: 0 0 auto;
+}
+
+.export-bar .size-group,
+.export-bar .format-group {
   display: flex;
   flex-direction: column;
 }
@@ -113,6 +120,14 @@ main {
   text-overflow: ellipsis;
 }
 
+/* Make sliders + labels inside export bar look like the side panel */
+.export-bar .control-field {
+  margin-top: 6px;
+}
+.export-bar .control-label {
+  margin: 4px 0;
+}
+
 .export-bar .actions {
   margin-left: auto;
   display: flex;
@@ -121,7 +136,7 @@ main {
 
 /* Keyframes inside export bar */
 .export-bar .keyframe-group {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   gap: 6px;

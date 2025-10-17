@@ -59,7 +59,8 @@ const PARAM_EASE_FACTOR        = 0.1; // legacy smoothing factor (kept for rows/
 
 // Global easing for slider-driven transitions (gap, line height, etc.)
 const EASE_TYPE_DEFAULT     = 'smooth';   // 'linear' | 'smooth' | 'easeInOut' | 'elastic'
-const EASE_DURATION_DEFAULT = 0.25;       // seconds
+const EASE_DURATION_DEFAULT = 0.25;       // seconds (legacy; derived from keyframe × %)
+const EASE_DURATION_PCT_DEFAULT = 100;    // percentage of keyframe duration
 const EASE_AMPLITUDE_DEFAULT= 1.0;        // only used for 'elastic' (overshoot)
 
 const ANIM_MODE_DEFAULT   = 'off';
@@ -183,7 +184,7 @@ let elAnimEnabled;
 // Keyframe timing UI
 let elKfTime, elKfTimeOut, elKfSpeed, elKfSpeedOut;
 let elRowsOut, elThicknessOut, elWidthOut, elGapOut, elDispUnitOut, elGroupsOut, elLogoScaleOut;
-let elEaseType, elEaseDur, elEaseDurOut, elEaseAmp, elEaseAmpOut;
+let elEaseType, elEaseDurPct, elEaseDurPctOut, elEaseAmp, elEaseAmpOut;
 let elTaper, elTaperIndex, elTaperIndexOut, elColorPreset, elColorPresetLabel, elRepeatFalloff, elRepeatFalloffOut, elRepeatUniform, elDebug, elAuto;
 let elAutoDur, elAutoDurOut;
 let elRepeatEnabled, elRepeatExtraRows, elRepeatExtraRowsOut;
@@ -200,6 +201,7 @@ let widthScaleTarget = WIDTH_SCALE_DEFAULT;
 // Global easing state
 let EASE_TYPE = EASE_TYPE_DEFAULT;
 let EASE_DURATION = EASE_DURATION_DEFAULT;
+let EASE_DURATION_PCT = EASE_DURATION_PCT_DEFAULT;
 let EASE_AMPLITUDE = EASE_AMPLITUDE_DEFAULT;
 
 // Per-parameter tween states for time-based easings
@@ -639,6 +641,64 @@ function exportSVG(cb){
   }
 }
 
+async function exportMP4(){
+  if (typeof MediaRecorder === 'undefined'){
+    throw new Error('MediaRecorder not supported in this browser');
+  }
+  const canvasEl = (mainCanvas && mainCanvas.elt) ? mainCanvas.elt : null;
+  if (!canvasEl || !canvasEl.captureStream){
+    throw new Error('Canvas captureStream not available');
+  }
+  const fps = 60;
+  const stream = canvasEl.captureStream(fps);
+  // Pick best supported mime
+  const candidates = [
+    'video/mp4;codecs=avc1.42E01E',
+    'video/mp4',
+    'video/webm;codecs=vp9',
+    'video/webm;codecs=vp8',
+    'video/webm'
+  ];
+  let mime = '';
+  for (const m of candidates){ if (MediaRecorder.isTypeSupported(m)){ mime = m; break; } }
+  if (!mime){ throw new Error('No supported recording mimeType'); }
+
+  const chunks = [];
+  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 6_000_000 });
+  rec.ondataavailable = (e)=>{ if (e && e.data && e.data.size > 0) chunks.push(e.data); };
+
+  // Determine duration: one full keyframe cycle if available; else 3s
+  const kfList = (function(){ try { return (typeof window !== 'undefined' && window.__keyframesRef) ? window.__keyframesRef : []; } catch(e){ return []; }})();
+  let totalSec = 3.0;
+  try {
+    if (Array.isArray(kfList) && kfList.length){
+      const sum = kfList.reduce((s,k)=> s + Math.max(0.05, (k && k.timeSec) ? k.timeSec : KF_TIME_DEFAULT), 0);
+      totalSec = Math.max(0.2, sum * Math.max(0.1, KF_SPEED_MUL));
+    }
+  } catch(e){}
+
+  // Ensure playback during capture: start if not playing; restore afterwards
+  const wasPlaying = !!KF_PLAYING;
+  if (!wasPlaying){ try { if (typeof window !== 'undefined' && window.__kfPlay) window.__kfPlay(); } catch(e){} }
+
+  const stopped = new Promise((resolve)=>{
+    rec.onstop = ()=> resolve();
+  });
+  rec.start();
+  await new Promise(res=> setTimeout(res, Math.round(totalSec * 1000)));
+  rec.stop();
+  await stopped;
+
+  if (!wasPlaying){ try { if (typeof window !== 'undefined' && window.__kfStop) window.__kfStop(); } catch(e){} }
+
+  const blob = new Blob(chunks, { type: mime });
+  const ext = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
+  if (!mime.startsWith('video/mp4')){
+    alert('MP4 not supported by this browser — exported WebM instead.');
+  }
+  downloadBlob(blob, `export.${ext}`);
+}
+
 function downloadTextAsFile(text, filename, mime = 'image/svg+xml'){
   const blob = new Blob([text], { type: mime });
   const a = document.createElement('a');
@@ -646,6 +706,40 @@ function downloadTextAsFile(text, filename, mime = 'image/svg+xml'){
   a.download = filename;
   a.click();
   setTimeout(()=> URL.revokeObjectURL(a.href), 500);
+}
+
+function downloadBlob(blob, filename){
+  try {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    setTimeout(()=> URL.revokeObjectURL(a.href), 500);
+  } catch(e){ console.error('downloadBlob failed', e); }
+}
+
+// === UI helpers: keyframe total + easing duration coupling ===
+function updateKfTotalOut(){
+  try {
+    const el = (typeof document !== 'undefined') ? document.getElementById('kfTotalOut') : null;
+    if (!el) return;
+    const list = (typeof window !== 'undefined' && Array.isArray(window.__keyframesRef)) ? window.__keyframesRef : [];
+    if (!list.length){ el.textContent = 'Total: 0.00 s'; return; }
+    const sum = list.reduce((s, k) => s + Math.max(0.05, (k && k.timeSec) ? k.timeSec : KF_TIME_DEFAULT), 0);
+    const total = Math.max(0.05, sum * Math.max(0.1, KF_SPEED_MUL));
+    el.textContent = `Total: ${total.toFixed(2)} s`;
+  } catch(e){}
+}
+
+function updateEaseDurationFromKf(){
+  // Derive easing duration from current keyframe duration using percentage
+  const pct = Math.max(0, Number(EASE_DURATION_PCT) || 0);
+  const base = Math.max(0.05, Number(KF_TIME_CUR) || KF_TIME_DEFAULT);
+  EASE_DURATION = Math.max(0, base * (pct / 100));
+  try {
+    const out = (typeof document !== 'undefined') ? document.getElementById('easeDurPctOut') : null;
+    if (out) out.textContent = `${Math.round(pct)} %`;
+  } catch(e){}
 }
 
 function divisorsAsc(n){
@@ -1124,11 +1218,11 @@ function setup(){
   elReset        = byId('resetDefaults');
 
   // Easing controls
-  elEaseType   = byId('easeType');
-  elEaseDur    = byId('easeDur');
-  elEaseDurOut = byId('easeDurOut');
-  elEaseAmp    = byId('easeAmp');
-  elEaseAmpOut = byId('easeAmpOut');
+  elEaseType     = byId('easeType');
+  elEaseDurPct   = byId('easeDurPct');
+  elEaseDurPctOut= byId('easeDurPctOut');
+  elEaseAmp      = byId('easeAmp');
+  elEaseAmpOut   = byId('easeAmpOut');
 
   const elBgLines         = byId('bgLines');
   elRepeatEnabled         = byId('repeatEnabled');
@@ -1380,6 +1474,8 @@ function setup(){
     KF_TIME_CUR = Math.max(0.05, tt);
     if (elKfTime) elKfTime.value = KF_TIME_CUR.toFixed(2);
     if (elKfTimeOut) elKfTimeOut.textContent = `${KF_TIME_CUR.toFixed(2)} s`;
+    updateEaseDurationFromKf();
+    updateKfTotalOut();
     kfRebuildList();
   }
 
@@ -1425,6 +1521,7 @@ function setup(){
       if (f){ kfApply(f.code); }
     }
     kfRebuildList();
+    updateKfTotalOut();
   }
 
   function kfIsPlaying(){ return !!kfTimer; }
@@ -1462,6 +1559,8 @@ function setup(){
         KF_TIME_CUR = Math.max(0.05, v);
         if (elKfTimeOut) elKfTimeOut.textContent = `${KF_TIME_CUR.toFixed(2)} s`;
         if (kfIndex >= 0 && kfIndex < keyframes.length){ keyframes[kfIndex].timeSec = KF_TIME_CUR; kfAutosaveCurrent(); }
+        updateEaseDurationFromKf();
+        updateKfTotalOut();
         if (kfIsPlaying()){ kfPlay(); }
       }
     });
@@ -1475,6 +1574,7 @@ function setup(){
       if (Number.isFinite(v)){
         KF_SPEED_MUL = Math.max(0.1, v);
         if (elKfSpeedOut) elKfSpeedOut.textContent = `${KF_SPEED_MUL.toFixed(2)}×`;
+        updateKfTotalOut();
         if (kfIsPlaying()){ kfPlay(); }
       }
     });
@@ -1503,6 +1603,15 @@ function setup(){
     kfIndex = 0;
     kfRebuildList();
     kfUpdateToggleUI();
+    updateKfTotalOut();
+    updateEaseDurationFromKf();
+  }
+
+  // Expose keyframe playback + list for MP4 export helper
+  if (typeof window !== 'undefined'){
+    window.__kfPlay = kfPlay;
+    window.__kfStop = kfStop;
+    window.__keyframesRef = keyframes;
   }
 
   // Autosave on UI edits (after handlers update state)
@@ -1631,11 +1740,11 @@ function setup(){
     if (elEaseType){
       elEaseType.value = String(EASE_TYPE);
     }
-    if (elEaseDur){
-      elEaseDur.value = String(EASE_DURATION.toFixed(2));
+    if (elEaseDurPct){
+      elEaseDurPct.value = String(Math.round(EASE_DURATION_PCT));
     }
-    if (elEaseDurOut){
-      elEaseDurOut.textContent = `${EASE_DURATION.toFixed(2)} s`;
+    if (elEaseDurPctOut){
+      elEaseDurPctOut.textContent = `${Math.round(EASE_DURATION_PCT)} %`;
     }
     if (elEaseAmp){
       elEaseAmp.value = String(EASE_AMPLITUDE.toFixed(2));
@@ -1675,8 +1784,8 @@ function setup(){
 
     // Easing UI
     if (elEaseType) elEaseType.value = EASE_TYPE;
-    if (elEaseDur)  elEaseDur.value  = String(EASE_DURATION.toFixed(2));
-    if (elEaseDurOut) elEaseDurOut.textContent = `${EASE_DURATION.toFixed(2)} s`;
+    if (elEaseDurPct)  elEaseDurPct.value  = String(Math.round(EASE_DURATION_PCT));
+    if (elEaseDurPctOut) elEaseDurPctOut.textContent = `${Math.round(EASE_DURATION_PCT)} %`;
     if (elEaseAmp)  elEaseAmp.value  = String(EASE_AMPLITUDE.toFixed(2));
     if (elEaseAmpOut) elEaseAmpOut.textContent = `${EASE_AMPLITUDE.toFixed(2)}×`;
     if (elEaseAmp) elEaseAmp.disabled = (EASE_TYPE !== 'elastic');
@@ -1838,6 +1947,15 @@ function setup(){
         }
         return;
       }
+      if (fmt === 'mp4'){
+        try {
+          await exportMP4();
+        } catch(err){
+          console.error('Export MP4 failed:', err);
+          alert('Export MP4 failed: ' + (err && err.message ? err.message : err));
+        }
+        return;
+      }
       alert('Unknown export format: ' + fmt);
     });
   }
@@ -1901,6 +2019,15 @@ function setup(){
   // Easing controls (for slider-driven transitions)
   function updateEaseAmpState(){ if (elEaseAmp) elEaseAmp.disabled = (EASE_TYPE !== 'elastic'); }
   updateEaseAmpState();
+  // Initialize duration % control
+  if (elEaseDurPct){
+    elEaseDurPct.min = '0';
+    elEaseDurPct.max = '200';
+    elEaseDurPct.step = '1';
+    elEaseDurPct.value = String(Math.round(EASE_DURATION_PCT));
+  }
+  if (elEaseDurPctOut){ elEaseDurPctOut.textContent = `${Math.round(EASE_DURATION_PCT)} %`; }
+  updateEaseDurationFromKf();
   if (elEaseType){
     elEaseType.addEventListener('change', ()=>{
       const v = String(elEaseType.value||'smooth');
@@ -1910,12 +2037,13 @@ function setup(){
       requestRedraw();
     });
   }
-  if (elEaseDur){
-    elEaseDur.addEventListener('input', ()=>{
-      const v = parseFloat(elEaseDur.value);
+  if (elEaseDurPct){
+    elEaseDurPct.addEventListener('input', ()=>{
+      const v = parseFloat(elEaseDurPct.value);
       if (Number.isFinite(v)){
-        EASE_DURATION = Math.max(0, v);
-        if (elEaseDurOut) elEaseDurOut.textContent = `${EASE_DURATION.toFixed(2)} s`;
+        EASE_DURATION_PCT = Math.max(0, v);
+        if (elEaseDurPctOut) elEaseDurPctOut.textContent = `${Math.round(EASE_DURATION_PCT)} %`;
+        updateEaseDurationFromKf();
         requestRedraw();
       }
     });
@@ -3392,7 +3520,6 @@ function getParamSnapshot(){
   snap.repeatExtraRows = isAll ? 'ALL' : Math.max(0, Math.round(REPEAT_EXTRA_ROWS));
   const easeTypeMap = { smooth:0, linear:1, easeInOut:2, elastic:3 };
   snap.easeType = easeTypeMap[String(EASE_TYPE||'smooth')] ?? 0;
-  snap.easeDur = Number(Math.max(0, EASE_DURATION).toFixed(2));
   snap.easeAmp = Number(Math.max(0, EASE_AMPLITUDE).toFixed(2));
   return snap;
 }
@@ -3430,7 +3557,6 @@ function buildParamCode(snap){
   parts.push('rmi' + (s.repeatMirror ? 1 : 0));
   parts.push('rx' + (s.repeatExtraRows === 'ALL' ? 'A' : s.repeatExtraRows));
   parts.push('et' + s.easeType);
-  parts.push('ed' + Number(s.easeDur).toFixed(2));
   parts.push('ea' + Number(s.easeAmp).toFixed(2));
   return parts.join('');
 }
@@ -3589,7 +3715,12 @@ function applyParamCode(code){
     const etVal = etIdx===1 ? 'linear' : etIdx===2 ? 'easeInOut' : etIdx===3 ? 'elastic' : 'smooth';
     setVal('easeType', etVal, 'change');
   }
-  if (map.ed){ setVal('easeDur', Math.max(0, parseFloat(map.ed)||EASE_DURATION_DEFAULT).toFixed(2), 'input'); }
+  if (map.ed){
+    const ed = Math.max(0, parseFloat(map.ed)||EASE_DURATION_DEFAULT);
+    const base = Math.max(0.05, parseFloat(map.kt)||KF_TIME_DEFAULT);
+    const pct = Math.max(0, Math.round((ed / base) * 100));
+    setVal('easeDurPct', pct, 'input');
+  }
   if (map.ea){ setVal('easeAmp', Math.max(0, parseFloat(map.ea)||EASE_AMPLITUDE_DEFAULT).toFixed(2), 'input'); }
 
   // Autosave active keyframe after event-driven apply
@@ -3669,6 +3800,12 @@ function applyParamCodeFast(codeOrMap){
   if (map.hwp){ H_WAVE_PERIOD = Math.max(0.1, parseFloat(map.hwp)||H_WAVE_PERIOD_DEFAULT); }
   if (map.kt){ KF_TIME_CUR = Math.max(0.05, parseFloat(map.kt)||KF_TIME_DEFAULT); }
   if (map.km){ KF_SPEED_MUL = Math.max(0.1, parseFloat(map.km)||KF_SPEED_DEFAULT); }
+  if (map.ed){
+    const ed = Math.max(0, parseFloat(map.ed)||EASE_DURATION_DEFAULT);
+    const base = Math.max(0.05, parseFloat(map.kt)||KF_TIME_DEFAULT);
+    EASE_DURATION_PCT = Math.max(0, (ed / base) * 100);
+    updateEaseDurationFromKf();
+  }
 
   if (map.re){ REPEAT_ENABLED = (parseInt(map.re,10) === 1); }
   if (map.rm){ REPEAT_MODE = ((parseInt(map.rm,10)||0)===1)?'falloff':'uniform'; }
