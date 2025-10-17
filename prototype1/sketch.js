@@ -67,6 +67,8 @@ const ANIM_ENABLED_DEFAULT = false; // master toggle like Repeat (default OFF)
 const ANIM_PERIOD_DEFAULT = 3.0;
 const AUTO_RANDOM_DEFAULT = false; // disabled by default
 const AUTO_RANDOM_PERIOD_DEFAULT = 1.0; // seconds
+const KF_TIME_DEFAULT = 0.5; // seconds per keyframe
+const KF_SPEED_DEFAULT = 1.0; // global time multiplier
 
 // Pulse position (0..1) representing the peak location across the content
 const PULSE_PHASE_DEFAULT = 0.0;
@@ -178,6 +180,8 @@ const MIN_DRAW_HEIGHT  = 2;    // guard to avoid zero-area issues
 let elRows, elThickness, elWidth, elGap, elGroups, elDispUnit, elPreset, elLogoScale, elAspectW, elAspectH, elCustomAR, elReset, elLogoText;
 let elPulsePhase, elPulsePhaseOut, elHWavePeriod, elHWavePeriodOut;
 let elAnimEnabled;
+// Keyframe timing UI
+let elKfTime, elKfTimeOut, elKfSpeed, elKfSpeedOut;
 let elRowsOut, elThicknessOut, elWidthOut, elGapOut, elDispUnitOut, elGroupsOut, elLogoScaleOut;
 let elEaseType, elEaseDur, elEaseDurOut, elEaseAmp, elEaseAmpOut;
 let elTaper, elTaperIndex, elTaperIndexOut, elColorPreset, elColorPresetLabel, elRepeatFalloff, elRepeatFalloffOut, elRepeatUniform, elDebug, elAuto;
@@ -291,6 +295,8 @@ let BG_LINES = BG_LINES_DEFAULT;        // toggle via HTML checkbox
 let BG_LINES_ALPHA = 255;
 let PERF_MODE = PERF_MODE_DEFAULT;
 let KF_PLAYING = false; // set during keyframe playback
+let KF_SPEED_MUL = KF_SPEED_DEFAULT; // global multiplier for keyframe durations
+let KF_TIME_CUR = KF_TIME_DEFAULT;   // current keyframe's duration (seconds)
 // Cached background-lines buffer for main canvas
 let _bgLinesCache = null;
 let _bgLinesCacheKey = '';
@@ -1216,15 +1222,18 @@ function setup(){
 
   // ----- Keyframes (store/apply ID codes) -----
   const elKfList   = byId('kfList');
-  const elKfDur    = byId('kfDur');
+  // New timing controls (export bar)
+  elKfTime = byId('kfTime');
+  elKfTimeOut = byId('kfTimeOut');
+  elKfSpeed = byId('kfSpeed');
+  elKfSpeedOut = byId('kfSpeedOut');
   const elKfAdd    = byId('kfAdd');
   const elKfDel    = byId('kfDel');
   const elKfToggle = byId('kfToggle');
 
   const keyframes = []; // { code: string, map?: object }
   let kfIndex = -1;
-  let kfTimer = null;
-  let kfDurationMs = 500;
+  let kfTimer = null; // timeout handle for variable-step playback
 
   function extractShapeIndexFromCode(code){
     if (!code || typeof code !== 'string') return null;
@@ -1253,7 +1262,9 @@ function setup(){
   }
   function kfGetCode(){
     try {
-      const raw = (window.getParamCode ? window.getParamCode() : '') || '';
+      let raw = (window.getParamCode ? window.getParamCode() : '') || '';
+      // Global time multiplier is not stored per keyframe → strip 'km'
+      raw = raw.replace(/km-?\d+(?:\.\d+)?/ig, '');
       return ensureShapeInCode(raw, Math.max(1, Math.min(5, modeToIndex(effectiveTaperMode()))));
     } catch(e){ return ''; }
   }
@@ -1288,10 +1299,11 @@ function setup(){
       if (sh != null){ desiredMode = modeFromIndex(sh); }
     }
 
-    // 2) Eerst numerieke params toepassen
+    // 2) Eerst numerieke params toepassen (strip globale multiplier 'km' — die is niet per keyframe)
+    let codeToApply = code.replace(/km-?\d+(?:\.\d+)?/ig, '');
     let ok = false;
-    if (window.applyParamCodeFast) ok = !!window.applyParamCodeFast(code);
-    else if (window.applyParamCode) ok = !!window.applyParamCode(code);
+    if (window.applyParamCodeFast) ok = !!window.applyParamCodeFast(codeToApply);
+    else if (window.applyParamCode) ok = !!window.applyParamCode(codeToApply);
 
     // 3) Dan visuele taper-switch
     if (desiredMode && desiredMode !== taperMode){
@@ -1348,14 +1360,26 @@ function setup(){
       } catch(e){}
       if (!updated) updated = kfGetCode();
       const shIdxNow = Math.max(1, Math.min(5, modeToIndex(effectiveTaperMode())));
-      const updatedWithShape = ensureShapeInCode(updated, shIdxNow);
+      let updatedWithShape = ensureShapeInCode(updated, shIdxNow);
+      // Strip global multiplier from per-keyframe code
+      updatedWithShape = updatedWithShape.replace(/km-?\d+(?:\.\d+)?/ig, '');
       keyframes[kfIndex].code = updatedWithShape;
       keyframes[kfIndex].map = kfParse(updatedWithShape);
     }
     kfIndex = idx;
     const frame = keyframes[kfIndex];
     if (frame && frame.code){ kfApply(frame.code); }
+    // Ensure frame.timeSec is synced from code if present
+    try {
+      const m = kfParse(frame && frame.code);
+      if (m && m.kt){ const t = parseFloat(m.kt); if (Number.isFinite(t)) frame.timeSec = Math.max(0.05, t); }
+    } catch(e){}
     if (elIdCode && frame && frame.code){ elIdCode.value = frame.code; }
+    // Update current keyframe duration UI
+    const tt = (frame && Number.isFinite(frame.timeSec)) ? frame.timeSec : KF_TIME_DEFAULT;
+    KF_TIME_CUR = Math.max(0.05, tt);
+    if (elKfTime) elKfTime.value = KF_TIME_CUR.toFixed(2);
+    if (elKfTimeOut) elKfTimeOut.textContent = `${KF_TIME_CUR.toFixed(2)} s`;
     kfRebuildList();
   }
 
@@ -1368,11 +1392,19 @@ function setup(){
       }
     } catch(e){}
     if (!code) code = kfGetCode();
+    // Strip global multiplier if provided in the input field
+    code = code.replace(/km-?\d+(?:\.\d+)?/ig, '');
     const map = kfParse(code);
     const shapeMode = String(effectiveTaperMode());
     const shapeIndex = Math.max(1, Math.min(5, modeToIndex(effectiveTaperMode())));
     const codeWithShape = ensureShapeInCode(code, shapeIndex);
-    keyframes.push({ code: codeWithShape, map, shapeMode, shapeIndex });
+    // Determine per-keyframe duration
+    let timeSec = KF_TIME_DEFAULT;
+    try {
+      if (map && map.kt){ const t = parseFloat(map.kt); if (Number.isFinite(t) && t > 0) timeSec = t; }
+      else if (typeof KF_TIME_CUR === 'number' && KF_TIME_CUR > 0) timeSec = KF_TIME_CUR;
+    } catch(e){}
+    keyframes.push({ code: codeWithShape, map, shapeMode, shapeIndex, timeSec });
     kfSelect(keyframes.length - 1);
   }
 
@@ -1383,7 +1415,9 @@ function setup(){
       const code = kfGetCode();
       const shapeIdx = Math.max(1, Math.min(5, modeToIndex(effectiveTaperMode())));
       const codeWithShape = ensureShapeInCode(code, shapeIdx);
-      keyframes.push({ code: codeWithShape, map: kfParse(codeWithShape), shapeMode: String(taperMode), shapeIndex: shapeIdx });
+      const map = kfParse(codeWithShape);
+      const t0 = (map && parseFloat(map.kt)) || KF_TIME_DEFAULT;
+      keyframes.push({ code: codeWithShape, map, shapeMode: String(taperMode), shapeIndex: shapeIdx, timeSec: Math.max(0.05, t0) });
       kfIndex = 0;
     } else {
       kfIndex = Math.max(0, Math.min(keyframes.length - 1, kfIndex));
@@ -1395,13 +1429,12 @@ function setup(){
 
   function kfIsPlaying(){ return !!kfTimer; }
   function kfUpdateToggleUI(){ if (elKfToggle){ elKfToggle.textContent = kfIsPlaying() ? '⏸' : '▶'; elKfToggle.title = kfIsPlaying() ? 'Pause' : 'Play'; } }
-  function kfStop(){ if (kfTimer){ clearInterval(kfTimer); kfTimer = null; } KF_PLAYING = false; kfUpdateToggleUI(); }
+  function kfStop(){ if (kfTimer){ clearTimeout(kfTimer); kfTimer = null; } KF_PLAYING = false; kfUpdateToggleUI(); }
   function kfPlay(){
     if (!keyframes.length){ return; }
     kfStop();
-    const dur = Math.max(50, Math.round(kfDurationMs));
     KF_PLAYING = true;
-    kfTimer = setInterval(()=>{
+    const tick = ()=>{
       if (!keyframes.length){ kfStop(); return; }
       const next = (kfIndex + 1) % keyframes.length;
       kfIndex = next;
@@ -1409,16 +1442,40 @@ function setup(){
       if (f){ kfApply(f.code); }
       kfHighlightActive();
       if (elIdCode && f && f.code){ elIdCode.value = f.code; }
-    }, dur);
+      const tSec = Math.max(0.05, (f && f.timeSec) ? f.timeSec : KF_TIME_DEFAULT);
+      const delayMs = Math.max(50, Math.round(tSec * Math.max(0.1, KF_SPEED_MUL) * 1000));
+      kfTimer = setTimeout(tick, delayMs);
+    };
+    // Advance immediately so the initially selected frame is deselected
+    tick();
     kfUpdateToggleUI();
   }
 
-  if (elKfDur){
-    elKfDur.addEventListener('input', ()=>{
-      const v = parseInt(elKfDur.value,10);
+  // Keyframe timing controls (seconds per keyframe + global multiplier)
+  if (elKfTime){
+    const init = (Number.isFinite(KF_TIME_CUR) ? KF_TIME_CUR : KF_TIME_DEFAULT);
+    elKfTime.value = init.toFixed(2);
+    if (elKfTimeOut) elKfTimeOut.textContent = `${init.toFixed(2)} s`;
+    elKfTime.addEventListener('input', ()=>{
+      const v = parseFloat(elKfTime.value);
       if (Number.isFinite(v)){
-        kfDurationMs = Math.max(50, v);
-        if (kfIsPlaying()){ kfPlay(); } // restart with new duration
+        KF_TIME_CUR = Math.max(0.05, v);
+        if (elKfTimeOut) elKfTimeOut.textContent = `${KF_TIME_CUR.toFixed(2)} s`;
+        if (kfIndex >= 0 && kfIndex < keyframes.length){ keyframes[kfIndex].timeSec = KF_TIME_CUR; kfAutosaveCurrent(); }
+        if (kfIsPlaying()){ kfPlay(); }
+      }
+    });
+  }
+  if (elKfSpeed){
+    const initS = (Number.isFinite(KF_SPEED_MUL) ? KF_SPEED_MUL : KF_SPEED_DEFAULT);
+    elKfSpeed.value = initS.toFixed(2);
+    if (elKfSpeedOut) elKfSpeedOut.textContent = `${initS.toFixed(2)}×`;
+    elKfSpeed.addEventListener('input', ()=>{
+      const v = parseFloat(elKfSpeed.value);
+      if (Number.isFinite(v)){
+        KF_SPEED_MUL = Math.max(0.1, v);
+        if (elKfSpeedOut) elKfSpeedOut.textContent = `${KF_SPEED_MUL.toFixed(2)}×`;
+        if (kfIsPlaying()){ kfPlay(); }
       }
     });
   }
@@ -1440,7 +1497,9 @@ function setup(){
   // Init with a single keyframe reflecting current state
   if (elKfList){
     const code0 = kfGetCode();
-    keyframes.push({ code: code0, map: kfParse(code0) });
+    const map0 = kfParse(code0);
+    const t0 = (map0 && parseFloat(map0.kt)) || KF_TIME_DEFAULT;
+    keyframes.push({ code: code0, map: map0, timeSec: Math.max(0.05, t0) });
     kfIndex = 0;
     kfRebuildList();
     kfUpdateToggleUI();
@@ -1556,7 +1615,7 @@ function setup(){
     setChecked(elRepeatMirror, REPEAT_MIRROR);
 
     updateRepeatSlidersRange();
-    // Repeat falloff + mode (optional controls)
+    // Repeat falloff + mode (optional controls) — set values only (listeners bound once in setup)
     if (elRepeatFalloff){
       elRepeatFalloff.min = '0.5';
       elRepeatFalloff.max = '1';
@@ -1586,6 +1645,12 @@ function setup(){
       elEaseAmpOut.textContent = `${EASE_AMPLITUDE.toFixed(2)}×`;
     }
 
+    // Keyframe timing UI
+    if (elKfTime){ elKfTime.value = Math.max(0.05, KF_TIME_CUR).toFixed(2); }
+    if (elKfTimeOut){ elKfTimeOut.textContent = `${Math.max(0.05, KF_TIME_CUR).toFixed(2)} s`; }
+    if (elKfSpeed){ elKfSpeed.value = Math.max(0.1, KF_SPEED_MUL).toFixed(2); }
+    if (elKfSpeedOut){ elKfSpeedOut.textContent = `${Math.max(0.1, KF_SPEED_MUL).toFixed(2)}×`; }
+
     // Curve radios
     const curveSineEl = document.getElementById('curveSine');
     const curveSmoothEl = document.getElementById('curveSmooth');
@@ -1601,35 +1666,6 @@ function setup(){
     if (animMouseEl) animMouseEl.checked = (ANIM_MODE === 'mouse');
     if (animPulseEl) animPulseEl.checked = (ANIM_MODE === 'pulse');
     if (animScanEl)  animScanEl.checked  = (ANIM_MODE === 'scan');
-  // Repeat falloff + mode listeners (optional)
-  if (elRepeatFalloff){
-    elRepeatFalloff.addEventListener('input', ()=>{
-      const v = parseFloat(elRepeatFalloff.value);
-      if (Number.isFinite(v)){
-        REPEAT_FALLOFF = Math.max(0, Math.min(1, v));
-        if (elRepeatFalloffOut) elRepeatFalloffOut.textContent = REPEAT_FALLOFF.toFixed(2);
-        requestRedraw();
-      }
-    });
-  }
-  if (elRepeatModeUniform){
-    elRepeatModeUniform.addEventListener('change', ()=>{
-      if (elRepeatModeUniform.checked){
-        REPEAT_MODE = 'uniform';
-        updateUIFromState();
-        requestRedraw();
-      }
-    });
-  }
-  if (elRepeatModeFalloff){
-    elRepeatModeFalloff.addEventListener('change', ()=>{
-      if (elRepeatModeFalloff.checked){
-        REPEAT_MODE = 'falloff';
-        updateUIFromState();
-        requestRedraw();
-      }
-    });
-  }
 
     // Power (amplitude) + Anim period outputs
     if (powerCtl) setValue(powerCtl, MOUSE_AMPLITUDE.toFixed(2));
@@ -1647,27 +1683,9 @@ function setup(){
 
     // Do not force preset/custom inputs here; preserve user selection
 
-    // Curve buttons
-    if (optCurveSine)   optCurveSine.addEventListener('change', ()=>{ if (optCurveSine.checked){ MOUSE_CURVE='sine'; requestRedraw(); }});
-    if (optCurveSmooth) optCurveSmooth.addEventListener('change',()=>{ if (optCurveSmooth.checked){ MOUSE_CURVE='smoothstep'; requestRedraw(); }});
-
-  if (elBgLines){
-    elBgLines.checked = BG_LINES;
-    elBgLines.addEventListener('change', ()=>{
-      BG_LINES = !!elBgLines.checked;
-      updateUIFromState();
-      requestRedraw();
-    });
-  }
-
-    if (elRepeatMirror){
-      elRepeatMirror.checked = REPEAT_MIRROR;
-      elRepeatMirror.addEventListener('change', ()=>{
-        REPEAT_MIRROR = !!elRepeatMirror.checked;
-        updateUIFromState();
-        requestRedraw();
-      });
-    }
+    // Set state for background controls; handlers are bound once in setup
+    if (elBgLines) elBgLines.checked = BG_LINES;
+    if (elRepeatMirror) elRepeatMirror.checked = REPEAT_MIRROR;
   }
 
   function updateColorPresetLabel(idx){
@@ -1698,6 +1716,60 @@ function setup(){
   updateRepeatSlidersRange();
   updateUIFromState();
   updateAnimRun();
+
+  // One-time bindings moved out of updateUIFromState to avoid duplicate listeners
+  if (optCurveSine){
+    optCurveSine.addEventListener('change', ()=>{
+      if (optCurveSine.checked){ MOUSE_CURVE='sine'; requestRedraw(); }
+    });
+  }
+  if (optCurveSmooth){
+    optCurveSmooth.addEventListener('change', ()=>{
+      if (optCurveSmooth.checked){ MOUSE_CURVE='smoothstep'; requestRedraw(); }
+    });
+  }
+  if (elRepeatFalloff){
+    elRepeatFalloff.addEventListener('input', ()=>{
+      const v = parseFloat(elRepeatFalloff.value);
+      if (Number.isFinite(v)){
+        REPEAT_FALLOFF = Math.max(0.5, Math.min(1, v));
+        if (elRepeatFalloffOut) elRepeatFalloffOut.textContent = REPEAT_FALLOFF.toFixed(2);
+        requestRedraw();
+      }
+    });
+  }
+  if (elRepeatModeUniform){
+    elRepeatModeUniform.addEventListener('change', ()=>{
+      if (elRepeatModeUniform.checked){
+        REPEAT_MODE = 'uniform';
+        updateUIFromState();
+        requestRedraw();
+      }
+    });
+  }
+  if (elRepeatModeFalloff){
+    elRepeatModeFalloff.addEventListener('change', ()=>{
+      if (elRepeatModeFalloff.checked){
+        REPEAT_MODE = 'falloff';
+        updateUIFromState();
+        requestRedraw();
+      }
+    });
+  }
+  if (elBgLines){
+    elBgLines.addEventListener('change', ()=>{
+      BG_LINES = !!elBgLines.checked;
+      updateUIFromState();
+      requestRedraw();
+    });
+  }
+  if (elRepeatMirror){
+    elRepeatMirror.addEventListener('change', ()=>{
+      REPEAT_MIRROR = !!elRepeatMirror.checked;
+      updateUIFromState();
+      requestRedraw();
+    });
+  }
 
   if (elRepeatEnabled){
     elRepeatEnabled.addEventListener('change', ()=>{
@@ -3308,6 +3380,9 @@ function getParamSnapshot(){
   snap.pulsePhase = Number(Math.max(0, Math.min(1, PULSE_PHASE)).toFixed(3));
   snap.hWaveAmp = Number(Math.max(0, H_WAVE_AMP).toFixed(2));
   snap.hWavePeriod = Number(Math.max(0.1, H_WAVE_PERIOD).toFixed(2));
+  // Keyframe timing
+  snap.kfTimeSec = Number(Math.max(0.05, KF_TIME_CUR).toFixed(2));
+  snap.kfSpeed = Number(Math.max(0.1, KF_SPEED_MUL).toFixed(2));
   snap.repeatEnabled = !!REPEAT_ENABLED;
   const repeatModeMap = { uniform:0, falloff:1 };
   snap.repeatMode = repeatModeMap[String(REPEAT_MODE||'uniform')] ?? 0;
@@ -3346,6 +3421,9 @@ function buildParamCode(snap){
   parts.push('pp' + Number(s.pulsePhase).toFixed(3));
   parts.push('hwa' + Number(s.hWaveAmp).toFixed(2));
   parts.push('hwp' + Number(s.hWavePeriod).toFixed(2));
+  // Keyframe timing
+  parts.push('kt' + Number(s.kfTimeSec).toFixed(2));
+  parts.push('km' + Number(s.kfSpeed).toFixed(2));
   parts.push('re' + (s.repeatEnabled ? 1 : 0));
   parts.push('rm' + s.repeatMode);
   parts.push('rf' + Number(s.repeatFalloff).toFixed(2));
@@ -3368,7 +3446,7 @@ function parseParamCode(str){
   if (!str || typeof str !== 'string') return null;
   const input = str.trim();
   const tokens = [
-    'hwp','hwa','rmi','bgl','bgt','lh','tr','sh','gr','du','cp','tx','am','cv','ad','pw','pp','rm','rf','rx','et','ed','ea','re','an','s','r','w','g'
+    'hwp','hwa','rmi','bgl','bgt','lh','tr','sh','gr','du','cp','tx','am','cv','ad','pw','pp','kt','km','rm','rf','rx','et','ed','ea','re','an','s','r','w','g'
   ].sort((a,b)=> b.length - a.length);
   const out = {};
   let i = 0;
@@ -3476,6 +3554,9 @@ function applyParamCode(code){
   if (map.pp){ setVal('pulsePhase', clamp(parseFloat(map.pp)||0, 0, 1).toFixed(3), 'input'); }
   if (map.hwa){ setVal('hWaveAmp', Math.max(0, parseFloat(map.hwa)||0).toFixed(2), 'input'); }
   if (map.hwp){ setVal('hWavePeriod', Math.max(0.1, parseFloat(map.hwp)||H_WAVE_PERIOD_DEFAULT).toFixed(2), 'input'); }
+  // Keyframe timing (per-frame seconds + global multiplier)
+  if (map.kt){ setVal('kfTime', Math.max(0.05, parseFloat(map.kt)||KF_TIME_DEFAULT).toFixed(2), 'input'); }
+  if (map.km){ setVal('kfSpeed', Math.max(0.1, parseFloat(map.km)||KF_SPEED_DEFAULT).toFixed(2), 'input'); }
 
   // Repeat
   if (map.re){ setChk('repeatEnabled', parseInt(map.re,10) === 1); }
@@ -3586,6 +3667,8 @@ function applyParamCodeFast(codeOrMap){
   if (map.pp){ setPulsePhase(clamp(parseFloat(map.pp)||0, 0, 1)); }
   if (map.hwa){ H_WAVE_AMP = Math.max(0, parseFloat(map.hwa)||0); }
   if (map.hwp){ H_WAVE_PERIOD = Math.max(0.1, parseFloat(map.hwp)||H_WAVE_PERIOD_DEFAULT); }
+  if (map.kt){ KF_TIME_CUR = Math.max(0.05, parseFloat(map.kt)||KF_TIME_DEFAULT); }
+  if (map.km){ KF_SPEED_MUL = Math.max(0.1, parseFloat(map.km)||KF_SPEED_DEFAULT); }
 
   if (map.re){ REPEAT_ENABLED = (parseInt(map.re,10) === 1); }
   if (map.rm){ REPEAT_MODE = ((parseInt(map.rm,10)||0)===1)?'falloff':'uniform'; }
