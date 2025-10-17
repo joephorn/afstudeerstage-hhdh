@@ -1,5 +1,12 @@
 // ====== CONFIG ======
-const LOGO_TEXT                = "ALBION";
+const LOGO_TEXT_OPTIONS       = ["ALBION", "PUSH   IT", "PUSH"];
+let LOGO_TEXT_INDEX           = 0;
+function currentLogoText(){
+  const n = Array.isArray(LOGO_TEXT_OPTIONS) ? LOGO_TEXT_OPTIONS.length : 0;
+  if (n <= 0) return '';
+  const i = Math.max(0, Math.min(n - 1, LOGO_TEXT_INDEX|0));
+  return String(LOGO_TEXT_OPTIONS[i] ?? '');
+}
 const ROWS_DEFAULT             = 12;
 const LINE_HEIGHT              = 10;
 
@@ -85,7 +92,7 @@ const BAND_MIN_COVER_FRAC = 0.035; // ≥3.5% of word width must be continuous i
 
 // Row sampling kernel (vertical) in the glyph buffer
 const ROW_KERNEL_Y_FRAC = 0.015; // % van bandhoogte → 1–3px meestal
-const MIN_RUN_PX_BUFFER = 0;     // WEGHALEN
+const MIN_RUN_PX_BUFFER = 5;     // WEGHALEN
 
 // Offscreen buffer
 const BUFFER_W          = 1400;
@@ -94,6 +101,44 @@ const BUFFER_H          = 420;
 const LETTERS_PATH      = './src/letters/';
 let glyphImgs = {};   // map: char -> p5.Image (SVG rasterized)
 let glyphDims = {};   // map: char -> {w,h}
+
+// Ensure required glyphs are loaded for a given text
+function ensureGlyphsLoadedFor(text){
+  if (!text) return;
+  const uniq = Array.from(new Set(String(text).toUpperCase().split('')));
+  uniq.forEach(ch => {
+    // Only load A–Z letters; skip spaces or other chars
+    if (!/^[A-Z]$/.test(ch)) return;
+    if (!glyphImgs[ch]){
+      const p = LETTERS_PATH + ch + '.svg';
+      glyphImgs[ch] = loadImage(
+        p,
+        img => { glyphDims[ch] = { w: img.width, h: img.height }; _layoutDirty = true; layout = buildLayout(currentLogoText(), rows); requestRedraw(); },
+        err => console.error('Failed to load', p, err)
+      );
+    }
+  });
+}
+
+function setLogoText(next){
+  const v = String(next || '');
+  const idx = LOGO_TEXT_OPTIONS.findIndex(x => String(x) === v);
+  const newIdx = (idx >= 0 ? idx : 0);
+  if (LOGO_TEXT_INDEX !== newIdx){
+    LOGO_TEXT_INDEX = newIdx;
+    const word = currentLogoText();
+    ensureGlyphsLoadedFor(word);
+    _layoutDirty = true;
+    layout = buildLayout(word, rows);
+    requestRedraw();
+  }
+}
+
+function setLogoTextByIndex(i){
+  const n = LOGO_TEXT_OPTIONS.length;
+  const cl = Math.max(0, Math.min(Math.max(0, n - 1), i|0));
+  setLogoText(LOGO_TEXT_OPTIONS[cl] || LOGO_TEXT_OPTIONS[0]);
+}
 
 function setPulsePhase(x){
   const v = Math.max(0, Math.min(1, Number(x)));
@@ -126,7 +171,7 @@ const TAPER_SHRINK_DUR = 0.05;      // seconds
 const TAPER_EXPAND_DUR = 0.1;      // seconds
 const MIN_DRAW_HEIGHT  = 2;    // guard to avoid zero-area issues
 
-let elRows, elThickness, elWidth, elGap, elGroups, elDispUnit, elPreset, elLogoScale, elAspectW, elAspectH, elCustomAR, elReset;
+let elRows, elThickness, elWidth, elGap, elGroups, elDispUnit, elPreset, elLogoScale, elAspectW, elAspectH, elCustomAR, elReset, elLogoText;
 let elPulsePhase, elPulsePhaseOut, elHWavePeriod, elHWavePeriodOut;
 let elAnimEnabled;
 let elRowsOut, elThicknessOut, elWidthOut, elGapOut, elDispUnitOut, elGroupsOut, elLogoScaleOut;
@@ -911,8 +956,11 @@ function preload(){
   applyColorComboByIndex(0);
   // Snap animated color state to initial targets (avoid first-load pop)
   setColorTargets(color1TargetHex, color2TargetHex, color3TargetHex, false);
-  const uniq = Array.from(new Set(LOGO_TEXT.split('').map(c => c.toUpperCase())));
+  // Preload glyphs for all configured text options
+  const preloadText = LOGO_TEXT_OPTIONS.join('').toUpperCase();
+  const uniq = Array.from(new Set(preloadText.split('')));
   uniq.forEach(ch => {
+    if (!/^[A-Z]$/.test(ch)) return; // skip spaces and non-letters
     const p = LETTERS_PATH + ch + '.svg';
     glyphImgs[ch] = loadImage(p, img => { glyphDims[ch] = { w: img.width, h: img.height }; }, err => console.error('Failed to load', p, err));
   });
@@ -995,7 +1043,7 @@ function setup(){
   baseRowPitch = height / rows;
   // Freeze the visual logo height in pre-scale units; adding rows should not stretch the logo
   targetContentH = (rows <= 1) ? 0 : (rows - 1) * baseRowPitch;
-  layout = buildLayout(LOGO_TEXT);
+  layout = buildLayout(currentLogoText());
   if (targetContentW == null){
     const _ws = widthScale;
     widthScale = 1.0;
@@ -1012,6 +1060,7 @@ function setup(){
   elThickness    = byId('thickness');
   elWidth        = byId('widthScale');
   elGap          = byId('gap');
+  elLogoText     = byId('logoText');
   elGroups       = byId('groups');
   elGroupsOut    = byId('groupsOut');
   elTaper        = byId('taper');
@@ -1070,6 +1119,24 @@ function setup(){
   elTaperIndex = byId('taperIndex');
   elTaperIndexOut = byId('taperIndexOut');
   elAnimEnabled = byId('animEnabled');
+
+  // Logo text dropdown
+  if (elLogoText){
+    // Build options dynamically from config
+    while (elLogoText.firstChild) elLogoText.removeChild(elLogoText.firstChild);
+    LOGO_TEXT_OPTIONS.forEach(txt => {
+      const opt = document.createElement('option');
+      opt.value = txt; opt.textContent = txt;
+      elLogoText.appendChild(opt);
+    });
+    // Initialize UI to current state (preserve original case)
+    elLogoText.value = currentLogoText();
+    // Keep state in sync on change
+    elLogoText.addEventListener('change', ()=>{
+      const v = elLogoText.value || LOGO_TEXT_OPTIONS[0];
+      setLogoText(v);
+    });
+  }
 
   // ID controls
   const elIdCode   = byId('idCode');
@@ -1292,6 +1359,7 @@ function setup(){
 
   function updateUIFromState(){
     if (elColorPreset) elColorPreset.value = String(activeColorComboIdx);
+    if (elLogoText){ elLogoText.value = currentLogoText(); }
     const widthPct = Math.round(widthScaleTarget * 100);
     const logoPct = Math.round(logoScaleTarget * 100);
 
@@ -1812,6 +1880,8 @@ function setup(){
   }
 
   function resetDefaults(){
+    // Reset logo text to first option
+    setLogoText(LOGO_TEXT_OPTIONS[0]);
     rows = ROWS_DEFAULT;
     rowsTarget = ROWS_DEFAULT;
     rowsAnim = ROWS_DEFAULT;
@@ -1907,7 +1977,7 @@ function setup(){
       baseRowPitch = refTargetH / (rows - 1);
     }
     _layoutDirty = true;
-    layout = buildLayout(LOGO_TEXT, rows);
+    layout = buildLayout(currentLogoText(), rows);
 
     fitViewportToWindow();
     requestRedraw();
@@ -2156,7 +2226,7 @@ function computeRepeatRowsSequence(totalExtraRows, rowsPerBlock, falloff){
 function renderLogo(g){
   updateAnimatedParameters();
   if (_layoutDirty){
-    layout = buildLayout(LOGO_TEXT, rows);
+    layout = buildLayout(currentLogoText(), rows);
     _layoutDirty = false;
   }
   const targetRowsInt = Math.max(1, Math.round(rowsTarget));
@@ -2166,7 +2236,7 @@ function renderLogo(g){
 
   if (rowsAnimInt !== rows){
     rows = rowsAnimInt;
-    layout = buildLayout(LOGO_TEXT, rows);
+    layout = buildLayout(currentLogoText(), rows);
   }
   if (animatingRows) requestRedraw();
 
@@ -2957,7 +3027,7 @@ function fitViewportToWindow(){
   // p5-canvas buffer precies even groot maken als de wrapper
   if (width !== boxW || height !== boxH){
     resizeCanvas(boxW, boxH, true);
-    layout = buildLayout(LOGO_TEXT, rows);
+    layout = buildLayout(currentLogoText(), rows);
   }
 
   updateRepeatSlidersRange();
@@ -2994,6 +3064,8 @@ function getParamSnapshot(){
   snap.colorPreset = Math.max(0, Math.round(activeColorComboIdx || 0));
   snap.bgLines = !!BG_LINES;
   snap.bgTransparent = !!BG_TRANSPARENT;
+  // Text selection: index in LOGO_TEXT_OPTIONS
+  snap.text = Math.max(0, Math.min(Math.max(0, LOGO_TEXT_OPTIONS.length - 1), LOGO_TEXT_INDEX|0));
   snap.animEnabled = !!ANIM_ENABLED;
   const animModeMap = { off:0, mouse:1, pulse:2, scan:3 };
   snap.animMode = animModeMap[String(ANIM_MODE||'off')] ?? 0;
@@ -3031,6 +3103,7 @@ function buildParamCode(snap){
   parts.push('gr' + s.groups);
   parts.push('du' + s.dispUnit);
   parts.push('cp' + s.colorPreset);
+  parts.push('tx' + (s.text|0));
   parts.push('bgl' + (s.bgLines ? 1 : 0));
   parts.push('bgt' + (s.bgTransparent ? 1 : 0));
   parts.push('an' + (s.animEnabled ? 1 : 0));
@@ -3063,7 +3136,7 @@ function parseParamCode(str){
   if (!str || typeof str !== 'string') return null;
   const input = str.trim();
   const tokens = [
-    'hwp','hwa','rmi','bgl','bgt','lh','tr','sh','gr','du','cp','am','cv','ad','pw','pp','rm','rf','rx','et','ed','ea','re','an','s','r','w','g'
+    'hwp','hwa','rmi','bgl','bgt','lh','tr','sh','gr','du','cp','tx','am','cv','ad','pw','pp','rm','rf','rx','et','ed','ea','re','an','s','r','w','g'
   ].sort((a,b)=> b.length - a.length);
   const out = {};
   let i = 0;
@@ -3117,6 +3190,15 @@ function applyParamCode(code){
   if (map.g){  setVal('gap', parseInt(map.g,10)||0, 'input'); }
   if (map.du){ setVal('dispUnit', parseInt(map.du,10)||0, 'input'); }
   if (map.sh){ setVal('taperIndex', clamp(parseInt(map.sh,10)||1, 1, 5), 'input'); }
+
+  // Logo text (by index in LOGO_TEXT_OPTIONS)
+  if (map.tx){
+    let v = parseInt(map.tx,10); if (!Number.isFinite(v)) v = 0;
+    const maxIdx = Math.max(0, LOGO_TEXT_OPTIONS.length - 1);
+    v = Math.max(0, Math.min(maxIdx, v));
+    const txt = LOGO_TEXT_OPTIONS[v] || LOGO_TEXT_OPTIONS[0];
+    setVal('logoText', txt, 'change');
+  }
 
   // Groups: compute index within signed divisors of current rowsTarget
   if (map.gr){
@@ -3228,6 +3310,14 @@ function applyParamCodeFast(codeOrMap){
   if (map.g){  gapPxTarget = parseInt(map.g,10)||0; _layoutDirty = true; }
   if (map.du){ DISPLACE_UNIT_TARGET = parseInt(map.du,10)||0; }
   if (map.sh){ const next = modeFromIndex(clamp(parseInt(map.sh,10)||1, 1, 5)); triggerTaperSwitch(next); }
+  // Logo text (fast)
+  if (map.tx){
+    let v = parseInt(map.tx,10); if (!Number.isFinite(v)) v = 0;
+    const maxIdx = Math.max(0, LOGO_TEXT_OPTIONS.length - 1);
+    v = Math.max(0, Math.min(maxIdx, v));
+    const txt = LOGO_TEXT_OPTIONS[v] || LOGO_TEXT_OPTIONS[0];
+    setLogoText(txt);
+  }
   if (map.gr){
     const gTarget = parseInt(map.gr,10);
     if (Number.isFinite(gTarget)){
