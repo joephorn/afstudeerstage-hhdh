@@ -1,5 +1,5 @@
 // ====== CONFIG ======
-const LOGO_TEXT_OPTIONS       = ["ALBION", "PUSH   IT", "PUSH"];
+const LOGO_TEXT_OPTIONS       = ["ALBION", "PUSH IT"];
 let LOGO_TEXT_INDEX           = 0;
 function currentLogoText(){
   const n = Array.isArray(LOGO_TEXT_OPTIONS) ? LOGO_TEXT_OPTIONS.length : 0;
@@ -36,6 +36,7 @@ const MOUSE_POWER_DEFAULT             = 1.0;
 
 const KEEP_TOTAL_WIDTH_DEFAULT = true;
 const BG_LINES_DEFAULT         = false;
+const PERF_MODE_DEFAULT        = false; // reduce detail during playback
 
 // Transparent background toggle
 let BG_TRANSPARENT = false;
@@ -285,6 +286,8 @@ let EXPORT_H = null; // when preset = custom, desired pixel height
 let KEEP_TOTAL_WIDTH = KEEP_TOTAL_WIDTH_DEFAULT;
 let BG_LINES = BG_LINES_DEFAULT;        // toggle via HTML checkbox
 let BG_LINES_ALPHA = 255;
+let PERF_MODE = PERF_MODE_DEFAULT;
+let KF_PLAYING = false; // set during keyframe playback
 
 let REPEAT_ENABLED = REPEAT_ENABLED_DEFAULT;
 let REPEAT_MIRROR = REPEAT_MIRROR_DEFAULT;
@@ -533,6 +536,12 @@ function updateAnimRun(){
   } else {
     stopAnimLoop();
   }
+}
+
+function isPlaybackActive(){
+  if (KF_PLAYING) return true;
+  if (ANIM_ENABLED && (ANIM_MODE === 'pulse' || ANIM_MODE === 'scan' || H_WAVE_AMP !== 0)) return true;
+  return false;
 }
 
 function computeProgressiveBandHeights(avail, fillFrac, count){
@@ -794,11 +803,11 @@ function updateAnimatedParameters(){
   if (lineStep.animating) animating = true;
 
   const gapStep = stepTween(_paramTweens.gapPx, gapPx, gapPxTarget, now);
-  if (gapStep.changed){ gapPx = gapStep.value; layoutNeedsRebuild = true; }
+  if (gapStep.changed){ gapPx = gapStep.value; /* no layout rebuild needed for gap */ }
   if (gapStep.animating) animating = true;
 
   const dispStep = stepTween(_paramTweens.dispUnit, DISPLACE_UNIT, DISPLACE_UNIT_TARGET, now);
-  if (dispStep.changed){ DISPLACE_UNIT = dispStep.value; layoutNeedsRebuild = true; }
+  if (dispStep.changed){ DISPLACE_UNIT = dispStep.value; /* no layout rebuild needed for displacement */ }
   if (dispStep.animating) animating = true;
 
   const tipStep = stepTween(_paramTweens.tipRatio, TIP_RATIO, TIP_RATIO_TARGET, now);
@@ -986,6 +995,10 @@ function modeToIndex(mode){
     default:         return 1;
   }
 }
+// Show pending shape during transition to keep UI consistent
+function effectiveTaperMode(){
+  return _taperPendingMode || taperMode;
+}
 function triggerTaperSwitch(nextMode){
   const target = String(nextMode||'Rounded');
   if (target === taperMode){ return; }
@@ -993,6 +1006,18 @@ function triggerTaperSwitch(nextMode){
   _taperTransActive = true;
   _taperPhase = 'shrink';
   _taperT0 = performance.now();
+  // Reflect target immediately in UI controls so chips/sliders don't look swapped
+  try {
+    if (typeof document !== 'undefined'){
+      const idx = modeToIndex(target);
+      const elIdx = document.getElementById('taperIndex');
+      if (elIdx) elIdx.value = String(idx);
+      const elIdxOut = document.getElementById('taperIndexOut');
+      if (elIdxOut) elIdxOut.textContent = modeFromIndex(idx);
+      const elSel = document.getElementById('taper');
+      if (elSel) elSel.value = target;
+    }
+  } catch(e){}
   startAnimLoop();
 }
 
@@ -1119,6 +1144,7 @@ function setup(){
   elTaperIndex = byId('taperIndex');
   elTaperIndexOut = byId('taperIndexOut');
   elAnimEnabled = byId('animEnabled');
+  const elPerfMode = byId('perfMode');
 
   // Logo text dropdown
   if (elLogoText){
@@ -1193,34 +1219,98 @@ function setup(){
   let kfTimer = null;
   let kfDurationMs = 500;
 
-  function kfGetCode(){ try { return (window.getParamCode ? window.getParamCode() : ''); } catch(e){ return ''; } }
+  function extractShapeIndexFromCode(code){
+    if (!code || typeof code !== 'string') return null;
+    // Accept common separators and optional '=': sh3, sh=3, ,sh=3, &sh=3, :sh3
+    const m = code.match(/(?:^|[,&;:])sh\s*[=:]?\s*(\d)\b/i);
+    if (m){
+      const k = parseInt(m[1], 10);
+      if (Number.isFinite(k) && k >= 1 && k <= 5) return k;
+    }
+    return null;
+  }
+  function ensureShapeInCode(code, idx){
+    if (typeof code !== 'string') code = '';
+    const present = extractShapeIndexFromCode(code);
+    if (present != null){
+      // Upsert: replace existing sh value in-place
+      return code.replace(/((?:^|[,&;:])sh\s*[=:]?\s*)(\d)\b/i, `$1${idx}`);
+    }
+    // Choose a separator based on the existing style
+    if (code.includes('&')) return code + `&sh=${idx}`;
+    if (code.includes(',')) return code + `,sh=${idx}`;
+    if (code.includes(';')) return code + `;sh=${idx}`;
+    if (code.includes(':')) return code + `:sh${idx}`;
+    // Default to comma-separated
+    return code ? (code + `,sh=${idx}`) : `sh=${idx}`;
+  }
+  function kfGetCode(){
+    try {
+      const raw = (window.getParamCode ? window.getParamCode() : '') || '';
+      return ensureShapeInCode(raw, Math.max(1, Math.min(5, modeToIndex(effectiveTaperMode()))));
+    } catch(e){ return ''; }
+  }
   function kfParse(code){ try { return (window.parseParamCode ? window.parseParamCode(code) : null); } catch(e){ return null; } }
   function kfAutosaveCurrent(){
     // Persist current UI state into the active keyframe (no-op during playback)
     if (!keyframes.length || kfTimer) return;
     if (kfIndex < 0 || kfIndex >= keyframes.length) return;
     const code = kfGetCode();
-    keyframes[kfIndex].code = code;
-    keyframes[kfIndex].map = kfParse(code);
-    if (elIdCode) elIdCode.value = code;
+    const shapeIdx = Math.max(1, Math.min(5, modeToIndex(effectiveTaperMode())));
+    const codeWithShape = ensureShapeInCode(code, shapeIdx);
+    keyframes[kfIndex].code = codeWithShape;
+    keyframes[kfIndex].map = kfParse(codeWithShape);
+    if (elIdCode) elIdCode.value = codeWithShape;
   }
   function kfApply(code){
     if (!code) return false;
-    if (window.applyParamCodeFast) return window.applyParamCodeFast(code);
-    if (window.applyParamCode) return window.applyParamCode(code);
-    return false;
+
+    // 1) Probeer shape (mode) uit code te halen
+    let desiredMode = null;
+    let parsed = null;
+    if (window.parseParamCode) {
+      try { parsed = window.parseParamCode(code); } catch(e){}
+    }
+    if (parsed){
+      let m = parsed.taper || parsed.taperMode || parsed.shape || parsed.shapeMode;
+      if (typeof m === 'number') m = modeFromIndex(m);
+      if (typeof m === 'string') desiredMode = m;
+    }
+    if (!desiredMode){
+      const sh = extractShapeIndexFromCode(code); // leest sh=1..5
+      if (sh != null){ desiredMode = modeFromIndex(sh); }
+    }
+
+    // 2) Eerst numerieke params toepassen
+    let ok = false;
+    if (window.applyParamCodeFast) ok = !!window.applyParamCodeFast(code);
+    else if (window.applyParamCode) ok = !!window.applyParamCode(code);
+
+    // 3) Dan visuele taper-switch
+    if (desiredMode && desiredMode !== taperMode){
+      triggerTaperSwitch(desiredMode);
+    }
+
+    if (typeof updateUIFromState === 'function') updateUIFromState();
+    requestRedraw();
+    return ok;
   }
 
   // Light-weight active indicator update (avoids rebuilding the list each tick)
+  let _kfPrevIdx = -1;
   function kfHighlightActive(){
     if (!elKfList) return;
     const kids = elKfList.children;
-    for (let i = 0; i < kids.length; i++){
-      const btn = kids[i];
-      if (!btn || !btn.classList) continue;
-      if (i === kfIndex) btn.classList.add('is-active');
-      else btn.classList.remove('is-active');
+    // Toggle only previous and current to avoid O(n) DOM updates
+    if (_kfPrevIdx >= 0 && _kfPrevIdx < kids.length){
+      const prevBtn = kids[_kfPrevIdx];
+      if (prevBtn && prevBtn.classList) prevBtn.classList.remove('is-active');
     }
+    if (kfIndex >= 0 && kfIndex < kids.length){
+      const curBtn = kids[kfIndex];
+      if (curBtn && curBtn.classList) curBtn.classList.add('is-active');
+    }
+    _kfPrevIdx = kfIndex;
   }
 
   function kfRebuildList(){
@@ -1250,8 +1340,10 @@ function setup(){
         }
       } catch(e){}
       if (!updated) updated = kfGetCode();
-      keyframes[kfIndex].code = updated;
-      keyframes[kfIndex].map = kfParse(updated);
+      const shIdxNow = Math.max(1, Math.min(5, modeToIndex(effectiveTaperMode())));
+      const updatedWithShape = ensureShapeInCode(updated, shIdxNow);
+      keyframes[kfIndex].code = updatedWithShape;
+      keyframes[kfIndex].map = kfParse(updatedWithShape);
     }
     kfIndex = idx;
     const frame = keyframes[kfIndex];
@@ -1270,7 +1362,10 @@ function setup(){
     } catch(e){}
     if (!code) code = kfGetCode();
     const map = kfParse(code);
-    keyframes.push({ code, map });
+    const shapeMode = String(effectiveTaperMode());
+    const shapeIndex = Math.max(1, Math.min(5, modeToIndex(effectiveTaperMode())));
+    const codeWithShape = ensureShapeInCode(code, shapeIndex);
+    keyframes.push({ code: codeWithShape, map, shapeMode, shapeIndex });
     kfSelect(keyframes.length - 1);
   }
 
@@ -1279,30 +1374,34 @@ function setup(){
     keyframes.splice(Math.max(0, kfIndex), 1);
     if (!keyframes.length){
       const code = kfGetCode();
-      keyframes.push({ code, map: kfParse(code) });
+      const shapeIdx = Math.max(1, Math.min(5, modeToIndex(effectiveTaperMode())));
+      const codeWithShape = ensureShapeInCode(code, shapeIdx);
+      keyframes.push({ code: codeWithShape, map: kfParse(codeWithShape), shapeMode: String(taperMode), shapeIndex: shapeIdx });
       kfIndex = 0;
     } else {
       kfIndex = Math.max(0, Math.min(keyframes.length - 1, kfIndex));
       const f = keyframes[kfIndex];
-      if (f){ kfApply(f.map || f.code); }
+      if (f){ kfApply(f.code); }
     }
     kfRebuildList();
   }
 
   function kfIsPlaying(){ return !!kfTimer; }
   function kfUpdateToggleUI(){ if (elKfToggle){ elKfToggle.textContent = kfIsPlaying() ? '⏸' : '▶'; elKfToggle.title = kfIsPlaying() ? 'Pause' : 'Play'; } }
-  function kfStop(){ if (kfTimer){ clearInterval(kfTimer); kfTimer = null; } kfUpdateToggleUI(); }
+  function kfStop(){ if (kfTimer){ clearInterval(kfTimer); kfTimer = null; } KF_PLAYING = false; kfUpdateToggleUI(); }
   function kfPlay(){
     if (!keyframes.length){ return; }
     kfStop();
     const dur = Math.max(50, Math.round(kfDurationMs));
+    KF_PLAYING = true;
     kfTimer = setInterval(()=>{
       if (!keyframes.length){ kfStop(); return; }
       const next = (kfIndex + 1) % keyframes.length;
       kfIndex = next;
       const f = keyframes[kfIndex];
-      if (f){ kfApply(f.map || f.code); }
+      if (f){ kfApply(f.code); }
       kfHighlightActive();
+      if (elIdCode && f && f.code){ elIdCode.value = f.code; }
     }, dur);
     kfUpdateToggleUI();
   }
@@ -1316,7 +1415,7 @@ function setup(){
       }
     });
   }
-  function kfToggle(){ if (kfIsPlaying()) kfStop(); else kfPlay(); }
+  function kfToggle(){ if (kfIsPlaying()){ KF_PLAYING = false; kfStop(); } else kfPlay(); }
   if (elKfAdd)    elKfAdd.addEventListener('click', kfAdd);
   if (elKfDel)    elKfDel.addEventListener('click', kfDel);
   if (elKfToggle) elKfToggle.addEventListener('click', kfToggle);
@@ -1357,8 +1456,17 @@ function setup(){
     });
   }
 
+  // Performance mode
+  if (elPerfMode){
+    elPerfMode.addEventListener('change', ()=>{
+      PERF_MODE = !!elPerfMode.checked;
+      requestRedraw();
+    });
+  }
+
   function updateUIFromState(){
     if (elColorPreset) elColorPreset.value = String(activeColorComboIdx);
+    if (elPerfMode) setChecked(elPerfMode, PERF_MODE);
     if (elLogoText){ elLogoText.value = currentLogoText(); }
     const widthPct = Math.round(widthScaleTarget * 100);
     const logoPct = Math.round(logoScaleTarget * 100);
@@ -1390,7 +1498,7 @@ function setup(){
       : displaceGroupsTarget.toFixed(2);
     setText(elGroupsOut, dgDisplay);
 
-    if (elTaper) elTaper.value = taperMode;
+    if (elTaper) elTaper.value = effectiveTaperMode();
 
     // Pulse phase control (0..1)
     if (elPulsePhase){
@@ -1407,10 +1515,10 @@ function setup(){
       elTaperIndex.min = '1';
       elTaperIndex.max = '5';
       elTaperIndex.step = '1';
-      elTaperIndex.value = String(modeToIndex(taperMode));
+      elTaperIndex.value = String(modeToIndex(effectiveTaperMode()));
     }
     if (elTaperIndexOut){
-      elTaperIndexOut.textContent = modeFromIndex(modeToIndex(taperMode));
+      elTaperIndexOut.textContent = modeFromIndex(modeToIndex(effectiveTaperMode()));
     }
 
     setChecked(elDebug, debugMode);
@@ -2314,7 +2422,7 @@ function renderLogo(g){
   const rowPositions = (rowYsSmooth.length === rowYsCanvas.length) ? rowYsSmooth : rowYsCanvas;
 
   // Backdrop lines across the full canvas (pixel space) aligned to row pitch
-  if (BG_LINES){
+  if (BG_LINES && !(PERF_MODE && isPlaybackActive())){
     const pitchPx = rowPitchNow * s;           // spacing between rows in pixels
     const thickPx = 5;
     if (pitchPx > 0){
@@ -2342,7 +2450,7 @@ function renderLogo(g){
 
   const maxRowIdx = Math.max(0, rows - 1);
 
-  function drawLettersSubset(yOff, mirrored = false, rowStart = 0, rowEnd = maxRowIdx, hMul = 1){
+  function drawLettersSubset(gDest, yOff, mirrored = false, rowStart = 0, rowEnd = maxRowIdx, hMul = 1){
         const start = Math.max(0, Math.min(maxRowIdx, rowStart | 0));
     const end   = Math.max(start, Math.min(maxRowIdx, rowEnd | 0));
 
@@ -2393,20 +2501,20 @@ function renderLogo(g){
           const drawH = Math.max(MIN_DRAW_HEIGHT, linePx * _lineMul * Math.max(0.01, hMul));
           switch (taperMode) {
             case 'Straight':
-              drawStraightTaper(g, rx, y, dashLenClamped, drawH, TIP_RATIO);
+              drawStraightTaper(gDest, rx, y, dashLenClamped, drawH, TIP_RATIO);
               break;
             case 'Circles':
-              drawCircleTaper(g, rx, y, dashLenClamped, drawH, TIP_RATIO);
+              drawCircleTaper(gDest, rx, y, dashLenClamped, drawH, TIP_RATIO);
               break;
             case 'Blocks':
-              drawBlockTaper(g, rx, y, dashLenClamped, drawH, TIP_RATIO);
+              drawBlockTaper(gDest, rx, y, dashLenClamped, drawH, TIP_RATIO);
               break;
             case 'Pluses':
-              drawPlusTaper(g, rx, y, dashLenClamped, drawH, TIP_RATIO);
+              drawPlusTaper(gDest, rx, y, dashLenClamped, drawH, TIP_RATIO);
               break;
             case 'Rounded':
             default:
-              drawRoundedTaper(g, rx, y, dashLenClamped, drawH, TIP_RATIO);
+              drawRoundedTaper(gDest, rx, y, dashLenClamped, drawH, TIP_RATIO);
               break;
           }
         }
@@ -2414,12 +2522,42 @@ function renderLogo(g){
     }
   }
 
-  drawLettersSubset(0, false, 0, maxRowIdx, 1);
+  const HlogoCore   = Math.max(0, (rows - 1) * rowPitchNow); // top row to bottom row distance
+  const HlogoFull   = Math.max(0, rows * rowPitchNow);       // full block including 1-row gap
+
+  // Try fast-path tiling: preview only, uniform repeats, no mirror, no H-wave, no time-driven anims
+  let usedTile = false;
+  let tileGfx = null, tileWpx = 0, tileHpx = 0;
+  const canTile = (!isExport && PERF_MODE && REPEAT_ENABLED && REPEAT_MODE === 'uniform' && !REPEAT_MIRROR && H_WAVE_AMP === 0 && !ANIM_ENABLED);
+  if (canTile){
+    // Build base block tile once in pixel coords
+    tileWpx = Math.max(1, Math.ceil(s * contentWAdj));
+    tileHpx = Math.max(1, Math.ceil(s * HlogoCore));
+    tileGfx = createGraphics(tileWpx, tileHpx);
+    if (tileGfx){
+      try { tileGfx.pixelDensity(1); tileGfx.noSmooth(); } catch(e){}
+      tileGfx.clear(); tileGfx.noStroke(); tileGfx.fill(color2);
+      tileGfx.push();
+      tileGfx.scale(s, s);
+      tileGfx.translate(-leftAdj, 0);
+      drawLettersSubset(tileGfx, 0, false, 0, maxRowIdx, 1);
+      tileGfx.pop();
+      usedTile = true;
+    }
+  }
+
+  if (usedTile){
+    // Draw base block via tile (undo scale to pixel space but keep translate)
+    g.push();
+    g.scale(1/s, 1/s);
+    g.image(tileGfx, 0, 0, tileWpx, tileHpx);
+    g.pop();
+  } else {
+    drawLettersSubset(g, 0, false, 0, maxRowIdx, 1);
+  }
 
   if (REPEAT_ENABLED && rows > 0){
     // All in layout units (multiples of rowPitchNow) for perfect alignment
-    const HlogoCore   = Math.max(0, (rows - 1) * rowPitchNow); // top row to bottom row distance
-    const HlogoFull   = Math.max(0, rows * rowPitchNow);       // full block including 1-row gap
     const stepLayout  = HlogoFull;               // adjacent blocks without extra gap
 
     // Use animated numeric cap; when target is Infinity we smoothly approach the current max
@@ -2433,6 +2571,21 @@ function renderLogo(g){
     if (extraBelowRemaining > 0){
       let yCursorLayout = HlogoCore; // bottom of base block (unscaled base)
       let downIndex = 1; // 1st repeat below = index 1
+      if (usedTile){
+        const fullBlocks = Math.floor(extraBelowRemaining / rows);
+        if (fullBlocks > 0){
+          g.push(); g.scale(1/s,1/s);
+          for (let k = 0; k < fullBlocks; k++){
+            const layoutTranslate = (HlogoCore + rowPitchNow) + k * HlogoFull;
+            const dyPx = s * layoutTranslate;
+            g.image(tileGfx, 0, dyPx, tileWpx, tileHpx);
+          }
+          g.pop();
+          extraBelowRemaining -= fullBlocks * rows;
+          yCursorLayout += fullBlocks * HlogoFull;
+          downIndex += fullBlocks;
+        }
+      }
       while (true){
         if (extraBelowRemaining <= 0) break;
 
@@ -2450,13 +2603,17 @@ function renderLogo(g){
           extraBelowRemaining = 0;
           break;
         }
-        const rowStart = mirrored ? Math.max(0, rows - rowsToDraw) : 0;
-        const rowEnd   = mirrored ? (rows - 1) : (rowsToDraw - 1);
-
-        g.push();
-        g.translate(0, layoutTranslate);
-        drawLettersSubset(0, mirrored, rowStart, rowEnd, hMulDown);
-        g.pop();
+        if (usedTile && rowsToDraw === rows && !mirrored && Math.abs(hMulDown - 1) < 1e-6){
+          // full block fast-path
+          g.push(); g.scale(1/s,1/s);
+          g.image(tileGfx, 0, s * layoutTranslate, tileWpx, tileHpx);
+          g.pop();
+        } else {
+          g.push();
+          g.translate(0, layoutTranslate);
+          drawLettersSubset(g, 0, mirrored, 0, rowsToDraw - 1, hMulDown);
+          g.pop();
+        }
 
         extraBelowRemaining -= rowsToDraw;
         // Advance cursor by scaled block height + one scaled row gap => HlogoFull * hMulDown
@@ -2470,6 +2627,21 @@ function renderLogo(g){
     if (extraAboveRemaining > 0){
       let yCursorLayoutUp = 0; // top of base block (unscaled base)
       let upIndex = 1; // 1st repeat above = index 1
+      if (usedTile){
+        const fullBlocks = Math.floor(extraAboveRemaining / rows);
+        if (fullBlocks > 0){
+          g.push(); g.scale(1/s,1/s);
+          for (let k = 0; k < fullBlocks; k++){
+            const topLayout = -(k + 1) * HlogoFull;
+            const dyPx = s * topLayout;
+            g.image(tileGfx, 0, dyPx, tileWpx, tileHpx);
+          }
+          g.pop();
+          extraAboveRemaining -= fullBlocks * rows;
+          yCursorLayoutUp = -(fullBlocks) * HlogoFull;
+          upIndex += fullBlocks;
+        }
+      }
       while (true){
         if (extraAboveRemaining <= 0) break;
 
@@ -2485,18 +2657,24 @@ function renderLogo(g){
           extraAboveRemaining = 0;
           break;
         }
-        const rowStart = mirrored ? 0 : Math.max(0, rows - rowsToDraw);
-        const rowEnd   = mirrored ? Math.min(rows - 1, rowsToDraw - 1) : (rows - 1);
+        if (usedTile && rowsToDraw === rows && !mirrored && Math.abs(hMulUp - 1) < 1e-6){
+          g.push(); g.scale(1/s,1/s);
+          g.image(tileGfx, 0, s * topLayout, tileWpx, tileHpx);
+          g.pop();
+        } else {
+          const rowStart = mirrored ? 0 : Math.max(0, rows - rowsToDraw);
+          const rowEnd   = mirrored ? Math.min(rows - 1, rowsToDraw - 1) : (rows - 1);
 
-        // Offset so the compressed block's bottom touches the base block's top
-        const tileRows = Math.max(0, rowEnd - rowStart);
-        const tileHWin = tileRows * rowPitchNow;
-        const yOffWin  = Math.max(0, HlogoCore * Math.max(0.01, hMulUp) - tileHWin * Math.max(0.01, hMulUp));
+          // Offset so the compressed block's bottom touches the base block's top
+          const tileRows = Math.max(0, rowEnd - rowStart);
+          const tileHWin = tileRows * rowPitchNow;
+          const yOffWin  = Math.max(0, HlogoCore * Math.max(0.01, hMulUp) - tileHWin * Math.max(0.01, hMulUp));
 
-        g.push();
-        g.translate(0, topLayout);
-        drawLettersSubset(yOffWin, mirrored, rowStart, rowEnd, hMulUp);
-        g.pop();
+          g.push();
+          g.translate(0, topLayout);
+          drawLettersSubset(g, yOffWin, mirrored, rowStart, rowEnd, hMulUp);
+          g.pop();
+        }
 
         extraAboveRemaining -= rowsToDraw;
         yCursorLayoutUp = topLayout; // next anchor is this repeat's top
@@ -2519,6 +2697,15 @@ function draw(){
 }
 
 // ====== DRAWING ======
+function arcStepsFor(h){
+  if (isExport) return 14;
+  if (PERF_MODE && isPlaybackActive()){
+    const base = Math.max(6, Math.min(12, Math.round(h * 0.5)));
+    return base;
+  }
+  return 14;
+}
+
 function drawRoundedTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
   // Base radii from stroke height
   const Rfull = Math.max(0.0001, (h * 0.5));
@@ -2533,7 +2720,7 @@ function drawRoundedTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
   const bigX = rightX - R;           // center of big cap
   const tipX = bigX - centerSep;     // center of small cap
 
-  const steps = 14; // more steps = smoother arc
+  const steps = arcStepsFor(h); // adaptive: fewer steps during playback
 
   g.beginShape();
   for (let i = 0; i <= steps; i++){
@@ -2570,7 +2757,7 @@ function drawStraightTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
   const centerSep = Math.max(0, len - (R + r));
   const tipX = bigX - centerSep;
 
-  const steps = 14;
+  const steps = arcStepsFor(h);
 
   g.beginShape();
   // Start bovenaan de rechte trailing edge
@@ -2605,7 +2792,7 @@ function drawCircleTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
   const xLeftLimit = rightX - Math.max(0, len - r); // do not place centers past leftmost small radius tip
 
   const pathLen = Math.max(0, xRight - xLeftLimit);
-  const step = Math.max(1, TAPER_SPACING);
+  const step = Math.max(1, (PERF_MODE && isPlaybackActive() && !isExport) ? TAPER_SPACING * 1.5 : TAPER_SPACING);
   const n = Math.max(1, Math.floor(pathLen / step) + 1);
 
   g.fill(color2);
@@ -2676,6 +2863,7 @@ function drawBlockTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
 }
 
 function drawPlusTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
+  // Base sizes
   const Hfull  = Math.max(0.0001, h);
   const hTip   = Math.max(0.0001, h * Math.max(0, Math.min(1, tipRatio)));
   const maxHByLen = Math.max(0.0001, len * 0.5);
@@ -2685,23 +2873,29 @@ function drawPlusTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
   const xRight = rightX;            // right edge of the taper
   const xLeft  = rightX - len;      // left edge of the taper
 
-  const step = Math.max(1, TAPER_SPACING);
-  const usableLen = Math.max(0, (xRight - Hbig * 0.5) - (xLeft + Hsmall * 0.5));
+  const step = Math.max(1, (PERF_MODE && isPlaybackActive() && !isExport) ? TAPER_SPACING * 1.5 : TAPER_SPACING);
+  const startCx = xRight - Hbig * 0.5;
+  const minCx   = xLeft + Hsmall * 0.5;
+  const usableLen = Math.max(0, startCx - minCx);
   const n = Math.max(1, Math.floor(usableLen / step) + 1);
 
+  g.push();
+  g.noStroke();
   g.fill(color2);
   for (let i = 0; i < n; i++){
     // Center progresses from near the big end to near the tip at fixed spacing
-    const cx = (xRight - Hbig * 0.5) - i * step;
-    if (cx < (xLeft + Hsmall * 0.5) - 1e-3) break;
-    const t = (usableLen > 0) ? ((xRight - Hbig * 0.5 - cx) / usableLen) : 1; // 0 at big, 1 at tip
-    const size = lerp(Hbig, Hsmall, t);
+    let cx = startCx - i * step;
+    if (cx < minCx) cx = minCx;
+    const t = (usableLen > 1e-6) ? ((startCx - cx) / usableLen) : 1; // 0 at big, 1 at tip
+    const sizeRaw = lerp(Hbig, Hsmall, t);
+    const size = Math.max(1, sizeRaw);
     const half = size * 0.5;
-    const bar  = Math.max(0.5, size * 0.28);
+    const bar  = Math.max(1, size * 0.28);
     // horizontal + vertical bars centered at (cx, cy)
     g.rect(cx - half, cy - bar * 0.5, size, bar);
     g.rect(cx - bar * 0.5, cy - half, bar, size);
   }
+  g.pop();
 }
 
 // ====== SCANNING HELPERS ======
@@ -2879,9 +3073,8 @@ function buildLayout(word, rowsCount = rows){
   return {
     letters: perLetter,
     lettersOrder,
-    letterX: letterX.map((x, i) =>
-      (x - startX) * scale + (i * gapPx * scale)
-    ),
+    // Base X positions without any inter-letter gap; gap is applied at draw time
+    letterX: letterX.map((x) => (x - startX) * scale),
     letterW: letterWidths,
     scale,
     rowPitch,
@@ -3051,13 +3244,13 @@ function getParamSnapshot(){
   try {
     const el = (typeof document !== 'undefined') ? document.getElementById('taperIndex') : null;
     if (el && el.value != null){
-      const v = Math.max(1, Math.min(5, parseInt(el.value, 10) || modeToIndex(taperMode)));
+      const v = Math.max(1, Math.min(5, parseInt(el.value, 10) || modeToIndex(effectiveTaperMode())));
       snap.shapeIdx = v;
     } else {
-      snap.shapeIdx = modeToIndex(taperMode);
+      snap.shapeIdx = modeToIndex(effectiveTaperMode());
     }
   } catch(e){
-    snap.shapeIdx = modeToIndex(taperMode);
+    snap.shapeIdx = modeToIndex(effectiveTaperMode());
   }
   snap.groups = Math.round(displaceGroupsTarget);
   snap.dispUnit = Math.round(DISPLACE_UNIT_TARGET);
@@ -3306,8 +3499,8 @@ function applyParamCodeFast(codeOrMap){
   if (map.s){ logoScaleTarget = clamp(parseInt(map.s,10)||100, 10, 200) / 100; }
   if (map.lh){ linePxTarget = clamp(parseInt(map.lh,10)||LINE_HEIGHT, 1, 200); }
   if (map.tr){ TIP_RATIO_TARGET = clamp(parseFloat(map.tr)||TIP_RATIO_DEFAULT, 0, 1); }
-  if (map.w){  widthScaleTarget = clamp(parseInt(map.w,10)||110, 0, 500)/100; _layoutDirty = true; }
-  if (map.g){  gapPxTarget = parseInt(map.g,10)||0; _layoutDirty = true; }
+  if (map.w){  widthScaleTarget = clamp(parseInt(map.w,10)||110, 0, 500)/100; }
+  if (map.g){  gapPxTarget = parseInt(map.g,10)||0; }
   if (map.du){ DISPLACE_UNIT_TARGET = parseInt(map.du,10)||0; }
   if (map.sh){ const next = modeFromIndex(clamp(parseInt(map.sh,10)||1, 1, 5)); triggerTaperSwitch(next); }
   // Logo text (fast)
@@ -3378,7 +3571,7 @@ function applyParamCodeFast(codeOrMap){
   if (typeof window !== 'undefined'){
     if (window.__rebuildGroupsSelect) window.__rebuildGroupsSelect();
     updateRepeatSlidersRange();
-    if (window.__updateUIFromState) window.__updateUIFromState();
+    if (!KF_PLAYING && window.__updateUIFromState) window.__updateUIFromState();
     updateAnimRun();
     // Autosave active keyframe after programmatic apply
     try { if (window.__kfAutosaveActive) window.__kfAutosaveActive(); } catch(e){}
