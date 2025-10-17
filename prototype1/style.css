@@ -71,11 +71,14 @@ main {
   margin: auto;
   flex: 0 0 auto;
   min-height: 0;
+  position: relative;
 }
 
 #canvasWrap canvas {
   display: block;
 }
+
+/* (Background lines overlay removed; now cached in-canvas for performance) */
 
 /* Export bar */
 .export-bar {

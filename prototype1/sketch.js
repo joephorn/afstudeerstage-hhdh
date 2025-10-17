@@ -36,6 +36,9 @@ const MOUSE_POWER_DEFAULT             = 1.0;
 
 const KEEP_TOTAL_WIDTH_DEFAULT = true;
 const BG_LINES_DEFAULT         = false;
+// Background lines optimization: cache into an offscreen buffer and blit.
+// Exports/offscreen still draw directly to their target.
+const CSS_BG_LINES = false; // legacy flag kept; CSS overlay not used to preserve layering
 const PERF_MODE_DEFAULT        = false; // reduce detail during playback
 
 // Transparent background toggle
@@ -288,6 +291,9 @@ let BG_LINES = BG_LINES_DEFAULT;        // toggle via HTML checkbox
 let BG_LINES_ALPHA = 255;
 let PERF_MODE = PERF_MODE_DEFAULT;
 let KF_PLAYING = false; // set during keyframe playback
+// Cached background-lines buffer for main canvas
+let _bgLinesCache = null;
+let _bgLinesCacheKey = '';
 
 let REPEAT_ENABLED = REPEAT_ENABLED_DEFAULT;
 let REPEAT_MIRROR = REPEAT_MIRROR_DEFAULT;
@@ -1064,6 +1070,7 @@ function setup(){
 // Stop border op canvas; zet canvas in onze wrapper met border
   const wrap = document.getElementById('canvasWrap');
   if (wrap && mainCanvas) mainCanvas.parent('canvasWrap');
+  // Keep a reference to the wrapper for sizing; no overlay used.
   if (LOGO_TARGET_W <= 0) LOGO_TARGET_W = Math.max(1, width);
   baseRowPitch = height / rows;
   // Freeze the visual logo height in pre-scale units; adding rows should not stretch the logo
@@ -1644,14 +1651,14 @@ function setup(){
     if (optCurveSine)   optCurveSine.addEventListener('change', ()=>{ if (optCurveSine.checked){ MOUSE_CURVE='sine'; requestRedraw(); }});
     if (optCurveSmooth) optCurveSmooth.addEventListener('change',()=>{ if (optCurveSmooth.checked){ MOUSE_CURVE='smoothstep'; requestRedraw(); }});
 
-    if (elBgLines){
-      elBgLines.checked = BG_LINES;
-      elBgLines.addEventListener('change', ()=>{
-        BG_LINES = !!elBgLines.checked;
-        updateUIFromState();
-        requestRedraw();
-      });
-    }
+  if (elBgLines){
+    elBgLines.checked = BG_LINES;
+    elBgLines.addEventListener('change', ()=>{
+      BG_LINES = !!elBgLines.checked;
+      updateUIFromState();
+      requestRedraw();
+    });
+  }
 
     if (elRepeatMirror){
       elRepeatMirror.checked = REPEAT_MIRROR;
@@ -2421,24 +2428,56 @@ function renderLogo(g){
   if (rowSmoothDelta > 0.2) requestRedraw();
   const rowPositions = (rowYsSmooth.length === rowYsCanvas.length) ? rowYsSmooth : rowYsCanvas;
 
-  // Backdrop lines across the full canvas (pixel space) aligned to row pitch
-  if (BG_LINES && !(PERF_MODE && isPlaybackActive())){
+  // Background lines: cache into an offscreen buffer and blit (fast on main canvas).
+  // For exports/offscreen, draw directly into target g to keep vector output compatibility.
+  {
+    const showBg = BG_LINES && !(PERF_MODE && isPlaybackActive());
     const pitchPx = rowPitchNow * s;           // spacing between rows in pixels
     const thickPx = 5;
-    if (pitchPx > 0){
-      g.push();
-      g.noStroke();
-      // Use a flat color equal to 25% black on white for black lines
-      // 25% black on white ≈ #BFBFBF (no alpha). Otherwise use the current line color.
-      const fillCol = isHexBlack(color3TargetHex) ? '#BFBFBF' : color3;
-      g.fill(fillCol);
-      // Align first line to where row 0 would be after translate/scale
-      const y0 = tyAdj; // row 0 at layout y=0 maps to canvas y=tyAdj
-      const startY = ((y0 % pitchPx) + pitchPx) % pitchPx; // wrap to [0,pitch)
-      for (let y = startY; y <= height; y += pitchPx){
-        g.rect(0, y - thickPx * 0.5, width, thickPx);
+    const fillCol = isHexBlack(color3TargetHex) ? '#BFBFBF' : color3;
+    // Align first line to where row 0 would be after translate/scale
+    const y0 = tyAdj; // row 0 at layout y=0 maps to canvas y=tyAdj
+    const startY = (pitchPx > 0) ? (((y0 % pitchPx) + pitchPx) % pitchPx) : 0; // [0,pitch)
+
+    const isMainCanvas = (typeof mainCanvas !== 'undefined' && g === mainCanvas);
+    if (showBg && pitchPx > 0){
+      if (isMainCanvas){
+        // Cache stripes aligned at multiples of pitch starting at 0.
+        const key = [Math.round(width), Math.round(height), Math.round(pitchPx*1000)/1000, thickPx, fillCol].join('|');
+        if (key !== _bgLinesCacheKey || !_bgLinesCache){
+          _bgLinesCacheKey = key;
+          if (_bgLinesCache){
+            try { _bgLinesCache.resizeCanvas(Math.max(1,width), Math.max(1,height), true); } catch(e){ _bgLinesCache = null; }
+          }
+          if (!_bgLinesCache){
+            _bgLinesCache = createGraphics(Math.max(1, width), Math.max(1, height));
+            try { _bgLinesCache.pixelDensity(1); _bgLinesCache.noSmooth(); } catch(e){}
+          }
+          _bgLinesCache.clear();
+          _bgLinesCache.noStroke();
+          _bgLinesCache.fill(fillCol);
+          for (let y = 0; y <= height; y += pitchPx){
+            _bgLinesCache.rect(0, y - thickPx * 0.5, width, thickPx);
+          }
+        }
+        if (_bgLinesCache){
+          // Shift the cached pattern by startY without rebuilding: draw twice to cover wraparound
+          const oy = startY % pitchPx;
+          g.push();
+          g.image(_bgLinesCache, 0, oy, width, height);
+          if (oy > 0) g.image(_bgLinesCache, 0, oy - height, width, height);
+          g.pop();
+        }
+      } else {
+        // Export/offscreen: draw directly into g
+        g.push();
+        g.noStroke();
+        g.fill(fillCol);
+        for (let y = startY; y <= height; y += pitchPx){
+          g.rect(0, y - thickPx * 0.5, width, thickPx);
+        }
+        g.pop();
       }
-      g.pop();
     }
   }
 
