@@ -1313,7 +1313,7 @@ function setup(){
     elHWavePeriod.addEventListener('input', ()=>{
       const v = parseFloat(elHWavePeriod.value);
       if (Number.isFinite(v)){
-        H_WAVE_PERIOD = Math.max(0.1, v);
+        H_WAVE_PERIOD = Math.max(0.0, v);
         if (elHWavePeriodOut) elHWavePeriodOut.textContent = `${H_WAVE_PERIOD.toFixed(2)} s`;
         updateAnimRun();
         requestRedraw();
@@ -2397,7 +2397,7 @@ function setup(){
   if (powerCtl){
     const updateAmplitude = ()=>{
       const raw = parseFloat(powerCtl.value);
-      const amp = Number.isFinite(raw) ? Math.max(0.1, raw) : MOUSE_AMPLITUDE;
+      const amp = Number.isFinite(raw) ? Math.max(0, raw) : MOUSE_AMPLITUDE;
       MOUSE_AMPLITUDE = amp; MOUSE_AMPLITUDE_TARGET = amp;
       window.MOUSE_AMPLITUDE = MOUSE_AMPLITUDE;
       window.MOUSE_POWER = MOUSE_POWER;
@@ -4005,7 +4005,11 @@ function applyParamCode(code){
     const el = byId(id); if (el){ el.checked = true; el.dispatchEvent(new Event('change', { bubbles:true })); }
   }
   if (map.ad){ setVal('animPeriod', Math.max(0.1, parseFloat(map.ad)||ANIM_PERIOD_DEFAULT).toFixed(2), 'input'); }
-  if (map.pw){ setVal('powerCtl', Math.max(0.1, parseFloat(map.pw)||MOUSE_AMPLITUDE_DEFAULT).toFixed(2), 'input'); }
+  if (map.pw){
+    const p = parseFloat(map.pw);
+    const v = Number.isFinite(p) ? p : MOUSE_AMPLITUDE_DEFAULT;
+    setVal('powerCtl', Math.max(0, v).toFixed(2), 'input');
+  }
   if (map.pp){ setVal('pulsePhase', clamp(parseFloat(map.pp)||0, 0, 1).toFixed(3), 'input'); }
   if (map.hwa){ setVal('hWaveAmp', Math.max(0, parseFloat(map.hwa)||0).toFixed(2), 'input'); }
   if (map.hwp){ setVal('hWavePeriod', Math.max(0.1, parseFloat(map.hwp)||H_WAVE_PERIOD_DEFAULT).toFixed(2), 'input'); }
@@ -4118,7 +4122,9 @@ function applyParamCodeFast(codeOrMap){
   if (map.cv){ MOUSE_CURVE = ((parseInt(map.cv,10)||0)===1)?'smoothstep':'sine'; }
   if (map.ad){ ANIM_PERIOD = Math.max(0.1, parseFloat(map.ad)||ANIM_PERIOD_DEFAULT); }
   if (map.pw){
-    MOUSE_AMPLITUDE = Math.max(0.1, parseFloat(map.pw)||MOUSE_AMPLITUDE_DEFAULT);
+    const p = parseFloat(map.pw);
+    const v = Number.isFinite(p) ? p : MOUSE_AMPLITUDE_DEFAULT;
+    MOUSE_AMPLITUDE = Math.max(0, v);
     MOUSE_AMPLITUDE_TARGET = MOUSE_AMPLITUDE;
   }
   if (map.pp){ setPulsePhase(clamp(parseFloat(map.pp)||0, 0, 1)); }

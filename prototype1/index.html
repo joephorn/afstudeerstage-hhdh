@@ -64,8 +64,8 @@
                   <option value="mp4">MP4 (screen capture)</option>
                 </select>
                 <div class="field-row" style="align-items:center; gap:8px; margin-top:6px;">
-                  <button id="cfgSave" type="button">Configuratie opslaan</button>
-                  <button id="cfgLoad" type="button">Configuratie laden</button>
+                  <button id="cfgSave" type="button">Scene opslaan</button>
+                  <button id="cfgLoad" type="button">Scene laden</button>
                   <input id="cfgFile" type="file" accept=".json,.txt" style="display:none" />
                 </div>
               </div>
@@ -77,8 +77,8 @@
                 </label>
                 <div id="kfList" class="kf-list"></div>
                 <div class="field-row" style="align-items:center; gap:8px; margin-top:6px;">
-                  <button id="kfAdd" type="button" title="Add keyframe">+ Add</button>
-                  <button id="kfDel" type="button" title="Remove keyframe">– Remove</button>
+                  <button id="kfAdd" type="button" title="Add keyframe">+</button>
+                  <button id="kfDel" type="button" title="Remove keyframe">–</button>
                   <button id="kfToggle" type="button" title="Play/Pause">▶</button>
                 </div>
                 <div class="control-field">
@@ -253,7 +253,7 @@
               <span>Amplitude</span>
               <span id="powerOut" class="sub">1.00×</span>
             </label>
-            <input id="powerCtl" type="range" min="0.25" max="3" step="0.05" value="1" />
+            <input id="powerCtl" type="range" min="0.00" max="3" step="0.05" value="1" />
           </div>
           <div class="control-field">
             <label class="control-label" for="hWaveAmp">
@@ -314,7 +314,8 @@
               <option value="smooth" selected>Smoothstep</option>
               <option value="linear">Linear</option>
               <option value="easeInOut">Ease In-Out</option>
-              <option value="elastic">Elastic</option>
+              <option value="snap">Snap</option>
+              <option value="snapHalf">Snap + Ease</option>
             </select>
           </div>
           <div class="control-field">
