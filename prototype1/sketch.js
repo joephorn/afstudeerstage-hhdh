@@ -1247,6 +1247,9 @@ function setup(){
   // Export controls (export bar)
   const exportFormatSel = byId('exportFormat');
   const btnExportGo = byId('exportGo');
+  const btnCfgSave = byId('cfgSave');
+  const btnCfgLoad = byId('cfgLoad');
+  const elCfgFile  = byId('cfgFile');
 
   elTaperIndex = byId('taperIndex');
   elTaperIndexOut = byId('taperIndexOut');
@@ -1957,6 +1960,155 @@ function setup(){
         return;
       }
       alert('Unknown export format: ' + fmt);
+    });
+  }
+
+  // ---- Config save/load (keyframes, speed, size, format) ----
+  function getCurrentTargetSize(){
+    const out = { preset: 'fit', width: null, height: null };
+    try {
+      const presetVal = elPreset ? String(elPreset.value || 'fit') : 'fit';
+      out.preset = presetVal;
+      if (presetVal === 'custom'){
+        const w = parseInt(elAspectW && elAspectW.value, 10);
+        const h = parseInt(elAspectH && elAspectH.value, 10);
+        if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0){ out.width = w; out.height = h; }
+      } else if (elPreset && elPreset.options && elPreset.selectedIndex >= 0){
+        const opt = elPreset.options[elPreset.selectedIndex];
+        const dw = parseInt(opt && opt.dataset && opt.dataset.w, 10);
+        const dh = parseInt(opt && opt.dataset && opt.dataset.h, 10);
+        if (Number.isFinite(dw) && Number.isFinite(dh) && dw > 0 && dh > 0){ out.width = dw; out.height = dh; }
+      }
+    } catch(e){}
+    return out;
+  }
+
+  function saveConfig(){
+    try {
+      const frames = Array.isArray(keyframes) ? keyframes.map(k => ({
+        code: String(k && k.code ? k.code : ''),
+        timeSec: Number(Math.max(0.05, (k && k.timeSec) ? k.timeSec : KF_TIME_DEFAULT).toFixed(2))
+      })) : [];
+      const size = getCurrentTargetSize();
+      const cfg = {
+        version: 1,
+        exportFormat: (exportFormatSel && exportFormatSel.value) || 'svg',
+        size,
+        speedMul: Number(Math.max(0.1, KF_SPEED_MUL).toFixed(2)),
+        keyframes: frames
+      };
+      const json = JSON.stringify(cfg, null, 2);
+      downloadTextAsFile(json, 'config.json', 'application/json');
+    } catch(err){
+      console.error('Config save failed', err);
+      alert('Configuratie opslaan mislukt: ' + (err && err.message ? err.message : err));
+    }
+  }
+
+  function applyLoadedSize(size){
+    if (!size) return;
+    try {
+      const preset = String(size.preset || 'fit');
+      if (elPreset){
+        elPreset.value = preset;
+        elPreset.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      if (preset === 'custom'){
+        const w = parseInt(size.width, 10);
+        const h = parseInt(size.height, 10);
+        if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0){
+          if (elAspectW) elAspectW.value = String(w);
+          if (elAspectH) elAspectH.value = String(h);
+          const elApply = document.getElementById('applyCustomAR');
+          if (elApply){ elApply.click(); }
+        }
+      }
+    } catch(e){}
+  }
+
+  function loadConfigFromObject(cfg){
+    try {
+      if (!cfg || typeof cfg !== 'object') throw new Error('Ongeldige data');
+
+      // Export format
+      try { if (exportFormatSel && cfg.exportFormat){ exportFormatSel.value = String(cfg.exportFormat); } } catch(e){}
+
+      // Size preset/custom dims
+      try { if (cfg.size) applyLoadedSize(cfg.size); } catch(e){}
+
+      // Speed multiplier
+      try {
+        const s = parseFloat(cfg.speedMul);
+        if (Number.isFinite(s)){
+          const el = document.getElementById('kfSpeed');
+          if (el){ el.value = String(Math.max(0.1, s)); el.dispatchEvent(new Event('input', { bubbles:true })); }
+          else { KF_SPEED_MUL = Math.max(0.1, s); }
+        }
+      } catch(e){}
+
+      // Keyframes
+      try {
+        const list = Array.isArray(cfg.keyframes) ? cfg.keyframes : [];
+        // stop playback and reset
+        if (typeof kfStop === 'function') kfStop();
+        KF_PLAYING = false;
+        try { kfIndex = -1; } catch(e){}
+        // Clear existing and repopulate
+        keyframes.splice(0, keyframes.length);
+        for (const it of list){
+          if (!it) continue;
+          let code = String(it.code || '').trim();
+          if (!code) continue;
+          // Ensure no global multiplier in per-frame code
+          code = code.replace(/km-?\d+(?:\.\d+)?/ig, '');
+          const map = kfParse(code);
+          let tSec = (map && map.kt) ? parseFloat(map.kt) : parseFloat(it.timeSec);
+          if (!Number.isFinite(tSec) || tSec <= 0) tSec = KF_TIME_DEFAULT;
+          keyframes.push({ code, map, timeSec: Math.max(0.05, tSec) });
+        }
+        if (!keyframes.length){
+          const code0 = kfGetCode();
+          const map0 = kfParse(code0);
+          const t0 = (map0 && parseFloat(map0.kt)) || KF_TIME_DEFAULT;
+          keyframes.push({ code: code0, map: map0, timeSec: Math.max(0.05, t0) });
+        }
+        // Select first and rebuild UI
+        if (typeof kfSelect === 'function') kfSelect(0);
+        if (typeof kfRebuildList === 'function') kfRebuildList();
+        updateKfTotalOut();
+      } catch(e){}
+
+      alert('Configuratie geladen.');
+    } catch(err){
+      console.error('Config load failed', err);
+      alert('Configuratie laden mislukt: ' + (err && err.message ? err.message : err));
+    }
+  }
+
+  if (btnCfgSave){ btnCfgSave.addEventListener('click', saveConfig); }
+  if (btnCfgLoad){ btnCfgLoad.addEventListener('click', ()=>{ if (elCfgFile) elCfgFile.click(); }); }
+  if (elCfgFile){
+    elCfgFile.addEventListener('change', ()=>{
+      const f = elCfgFile.files && elCfgFile.files[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = ()=>{
+        try {
+          const text = String(reader.result || '');
+          const obj = JSON.parse(text);
+          loadConfigFromObject(obj);
+        } catch(err){
+          console.error('Failed to parse config', err);
+          alert('Kon configuratie niet lezen (verwacht JSON).');
+        } finally {
+          elCfgFile.value = '';
+        }
+      };
+      reader.onerror = ()=>{
+        alert('Bestand lezen mislukt.');
+        elCfgFile.value = '';
+      };
+      reader.readAsText(f);
     });
   }
 
