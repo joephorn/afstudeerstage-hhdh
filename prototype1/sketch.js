@@ -645,10 +645,54 @@ async function exportMP4(){
   if (typeof MediaRecorder === 'undefined'){
     throw new Error('MediaRecorder not supported in this browser');
   }
+  // Determine desired export resolution from Size preset/custom
+  let targetW = Math.max(1, width), targetH = Math.max(1, height);
+  try {
+    const presetSel = document.getElementById('preset');
+    if (presetSel){
+      const val = String(presetSel.value || 'fit');
+      if (val === 'custom'){
+        // Prefer applied custom px if present
+        let w = (typeof EXPORT_W === 'number') ? EXPORT_W : null;
+        let h = (typeof EXPORT_H === 'number') ? EXPORT_H : null;
+        if (!w || !h){
+          const elW = document.getElementById('aspectW');
+          const elH = document.getElementById('aspectH');
+          const ww = parseInt(elW && elW.value, 10);
+          const hh = parseInt(elH && elH.value, 10);
+          if (Number.isFinite(ww) && Number.isFinite(hh) && ww > 0 && hh > 0){ w = ww; h = hh; }
+        }
+        if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0){ targetW = w; targetH = h; }
+      } else if (val !== 'fit'){
+        const opt = presetSel.options[presetSel.selectedIndex];
+        const dw = parseInt(opt && opt.dataset && opt.dataset.w, 10);
+        const dh = parseInt(opt && opt.dataset && opt.dataset.h, 10);
+        if (Number.isFinite(dw) && Number.isFinite(dh) && dw > 0 && dh > 0){ targetW = dw; targetH = dh; }
+      }
+    }
+  } catch(e){}
+
   const canvasEl = (mainCanvas && mainCanvas.elt) ? mainCanvas.elt : null;
   if (!canvasEl || !canvasEl.captureStream){
     throw new Error('Canvas captureStream not available');
   }
+
+  // Temporarily resize the main canvas to target resolution for crisp capture
+  const prevW = width, prevH = height;
+  let prevPD = null;
+  try {
+    if (width !== targetW || height !== targetH){
+      // Force pixel density = 1 so exported pixels match requested resolution exactly
+      try { prevPD = (typeof pixelDensity === 'function') ? pixelDensity() : null; } catch(e){}
+      try { if (typeof pixelDensity === 'function') pixelDensity(1); } catch(e){}
+      resizeCanvas(Math.max(1, targetW), Math.max(1, targetH), true);
+      layout = buildLayout(currentLogoText(), rows);
+      requestRedraw();
+      // Allow one tick for resize to take effect
+      await new Promise(r => setTimeout(r, 0));
+    }
+  } catch(e){}
+
   const fps = 60;
   const stream = canvasEl.captureStream(fps);
   // Pick best supported mime
@@ -697,6 +741,19 @@ async function exportMP4(){
     alert('MP4 not supported by this browser — exported WebM instead.');
   }
   downloadBlob(blob, `export.${ext}`);
+
+  // Restore original canvas size after capture
+  try {
+    // Restore pixel density first so resize uses the correct backing resolution
+    try { if (prevPD != null && typeof pixelDensity === 'function') pixelDensity(prevPD); } catch(e){}
+    if (prevW !== width || prevH !== height){
+      resizeCanvas(Math.max(1, prevW), Math.max(1, prevH), true);
+      layout = buildLayout(currentLogoText(), rows);
+      requestRedraw();
+    }
+    // Refit wrapper just in case
+    try { if (typeof fitViewportToWindow === 'function') fitViewportToWindow(); } catch(e){}
+  } catch(e){}
 }
 
 function downloadTextAsFile(text, filename, mime = 'image/svg+xml'){
