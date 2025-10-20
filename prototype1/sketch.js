@@ -725,6 +725,13 @@ async function exportMP4(){
   const wasPlaying = !!KF_PLAYING;
   if (!wasPlaying){ try { if (typeof window !== 'undefined' && window.__kfPlay) window.__kfPlay(); } catch(e){} }
 
+  // Warm-up: force at least one painted frame at target size before starting the recorder
+  try {
+    requestRedraw();
+    await new Promise(res => requestAnimationFrame(res));
+    await new Promise(res => requestAnimationFrame(res));
+  } catch(e){}
+
   const stopped = new Promise((resolve)=>{
     rec.onstop = ()=> resolve();
   });
@@ -791,7 +798,8 @@ function updateKfTotalOut(){
 function updateEaseDurationFromKf(){
   // Derive easing duration from current keyframe duration using percentage
   const pct = Math.max(0, Number(EASE_DURATION_PCT) || 0);
-  const base = Math.max(0.05, Number(KF_TIME_CUR) || KF_TIME_DEFAULT);
+  // Use effective playback time (per-frame duration × global speed multiplier)
+  const base = Math.max(0.05, (Number(KF_TIME_CUR) || KF_TIME_DEFAULT) * Math.max(0.1, Number(KF_SPEED_MUL) || KF_SPEED_DEFAULT));
   EASE_DURATION = Math.max(0, base * (pct / 100));
   try {
     const out = (typeof document !== 'undefined') ? document.getElementById('easeDurPctOut') : null;
@@ -957,6 +965,7 @@ function smoothToward(current, target, ease = PARAM_EASE_FACTOR){
 function updateAnimatedParameters(){
   let animating = false;
   let layoutNeedsRebuild = false;
+  let capacityDirty = false;
 
   const now = performance.now() / 1000;
 
@@ -964,6 +973,7 @@ function updateAnimatedParameters(){
   const lineStep = stepTween(_paramTweens.linePx, linePx, linePxTarget, now);
   if (lineStep.changed) linePx = lineStep.value;
   if (lineStep.animating) animating = true;
+  if (lineStep.changed) capacityDirty = true; // row height affects repeat capacity
 
   const gapStep = stepTween(_paramTweens.gapPx, gapPx, gapPxTarget, now);
   if (gapStep.changed){ gapPx = gapStep.value; /* no layout rebuild needed for gap */ }
@@ -989,16 +999,19 @@ function updateAnimatedParameters(){
   const widthStep = stepTween(_paramTweens.widthScale, widthScale, widthScaleTarget, now);
   if (widthStep.changed) widthScale = widthStep.value;
   if (widthStep.animating) animating = true;
+  if (widthStep.changed) capacityDirty = true;
 
   // Logo scale (overall size)
   const logoStep = stepTween(_paramTweens.logoScale, logoScaleMul, logoScaleTarget, now);
   if (logoStep.changed) logoScaleMul = logoStep.value;
   if (logoStep.animating) animating = true;
+  if (logoStep.changed) capacityDirty = true;
 
   // Rows tween (animate rowsAnim toward rowsTarget)
   const rowsStep = stepTween(_paramTweens.rows, rowsAnim, rowsTarget, now);
   if (rowsStep.changed) rowsAnim = rowsStep.value;
   if (rowsStep.animating) animating = true;
+  if (rowsStep.changed) capacityDirty = true;
 
   // Displacement groups (continuous value; actual grouping calc still discrete)
   const grpStep = stepTween(_paramTweens.groups, displaceGroupsAnim, displaceGroupsTarget, now);
@@ -1007,6 +1020,9 @@ function updateAnimatedParameters(){
   // Colors update instantly via setColorTargets; no per-frame color tweening
 
   if (layoutNeedsRebuild) _layoutDirty = true;
+  if (capacityDirty){
+    try { updateRepeatSlidersRange(); } catch(e){}
+  }
   if (animating) requestRedraw();
 }
 
@@ -1464,6 +1480,8 @@ function setup(){
       triggerTaperSwitch(desiredMode);
     }
 
+    // Recompute easing duration based on the possibly-updated KF_TIME_CUR
+    try { updateEaseDurationFromKf(); } catch(e){}
     if (typeof updateUIFromState === 'function') updateUIFromState();
     requestRedraw();
     return ok;
@@ -1560,8 +1578,10 @@ function setup(){
       if (map && map.kt){ const t = parseFloat(map.kt); if (Number.isFinite(t) && t > 0) timeSec = t; }
       else if (typeof KF_TIME_CUR === 'number' && KF_TIME_CUR > 0) timeSec = KF_TIME_CUR;
     } catch(e){}
-    keyframes.push({ code: codeWithShape, map, shapeMode, shapeIndex, timeSec });
-    kfSelect(keyframes.length - 1);
+    // Insert right after the current keyframe (default to end if none selected)
+    const insertAt = (kfIndex >= 0 && kfIndex < keyframes.length) ? (kfIndex + 1) : keyframes.length;
+    keyframes.splice(insertAt, 0, { code: codeWithShape, map, shapeMode, shapeIndex, timeSec });
+    kfSelect(insertAt);
   }
 
   function kfDel(){
@@ -1596,7 +1616,13 @@ function setup(){
       const next = (kfIndex + 1) % keyframes.length;
       kfIndex = next;
       const f = keyframes[kfIndex];
-      if (f){ kfApply(f.code); }
+      if (f){
+        // Sync easing duration to this frame's duration so transitions fit the interval
+        const tSec = Math.max(0.05, (f && f.timeSec) ? f.timeSec : KF_TIME_DEFAULT);
+        KF_TIME_CUR = tSec;
+        updateEaseDurationFromKf();
+        kfApply(f.code);
+      }
       kfHighlightActive();
       if (elIdCode && f && f.code){ elIdCode.value = f.code; }
       const tSec = Math.max(0.05, (f && f.timeSec) ? f.timeSec : KF_TIME_DEFAULT);
@@ -4044,6 +4070,8 @@ function applyParamCodeFast(codeOrMap){
     // Autosave active keyframe after programmatic apply
     try { if (window.__kfAutosaveActive) window.__kfAutosaveActive(); } catch(e){}
   }
+  // Ensure easing duration matches the (possibly new) keyframe duration
+  try { updateEaseDurationFromKf(); } catch(e){}
   requestRedraw();
   return true;
 }
