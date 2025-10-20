@@ -86,9 +86,16 @@ const BLOCK_MIN_LEN_FRAC = 0.55; // leftmost block length as fraction of its seg
 const BLOCK_LEAD_FRAC     = 0.65; // how much of the shortened width shifts left (0..1)
 const BLOCK_CAP_FRAC      = 0.12; // extra front cap length as fraction of full len
 
-let H_WAVE_AMP = H_WAVE_AMP_DEFAULT;
+let H_WAVE_AMP = H_WAVE_AMP_DEFAULT; // target
+let H_WAVE_AMP_TARGET = H_WAVE_AMP_DEFAULT;
+let H_WAVE_AMP_ANIM = H_WAVE_AMP_DEFAULT;
 let H_WAVE_PERIOD = H_WAVE_PERIOD_DEFAULT;
 let PULSE_PHASE = PULSE_PHASE_DEFAULT; // 0..1
+let H_WAVE_T0 = 0; // activation time reference for zero-crossing start
+
+// Fade factor for enabling/disabling animation effects smoothly (0..1)
+let ANIM_FADE = 1.0;
+let ANIM_FADE_TARGET = 1.0;
 
 const TAPER_SPACING = 16; // fixed distance between element centers along the line (layout units)
 
@@ -218,29 +225,44 @@ const _paramTweens = {
   logoScale: makeTween(LOGO_SCALE_DEFAULT),
   rows: makeTween(ROWS_DEFAULT),
   groups: makeTween(DISPLACE_GROUPS_DEFAULT),
+  mouseAmp: makeTween(MOUSE_AMPLITUDE_DEFAULT),
+  hWaveAmp: makeTween(H_WAVE_AMP_DEFAULT),
+  animFade: makeTween(1.0),
 };
 
 // Easing functions (0..1 -> 0..1)
 function easeLinear(t){ return t; }
 function easeSmooth(t){ return t * t * (3 - 2 * t); }
 function easeInOutCubic(t){ return (t < 0.5) ? (4 * t * t * t) : (1 - Math.pow(-2 * t + 2, 3) / 2); }
-function easeElasticOut(t, amp = 1){
-  if (t === 0) return 0;
-  if (t === 1) return 1;
-  const c4 = (2 * Math.PI) / 3;
-  const scale = Math.max(0, amp); // 0 = no overshoot
-  // classic elastic-out, scaled by amplitude
-  return 1 - Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * c4) * scale;
+// (Elastic removed from UI; keep function comment for compatibility if needed)
+// Snap/step easing: hold until a threshold, then jump to 1.
+// We map amplitude (0..2) -> snapPoint in [0..1].
+// amp=0 => snap immediately; amp=1 => snap at 50%; amp=2 => snap at the very end.
+function easeSnap(t, amp = 1){
+  const a = Math.max(0, Math.min(2, Number(amp)));
+  const snapPoint = a / 2; // 0..1
+  return (t < snapPoint) ? 0 : 1;
 }
 function applyEase(t){
   const tt = Math.max(0, Math.min(1, t));
   switch (EASE_TYPE){
     case 'linear':    return easeLinear(tt);
     case 'easeInOut': return easeInOutCubic(tt);
-    case 'elastic':   return easeElasticOut(tt, EASE_AMPLITUDE);
+    case 'snap':      return easeSnap(tt, EASE_AMPLITUDE);
+    case 'snapHalf': {
+      // Snap immediately to 0.5, then ease the remainder to 1 over full duration
+      return Math.min(1, 0.5 + 0.5 * easeSmooth(tt));
+    }
     case 'smooth':
     default:          return easeSmooth(tt);
   }
+}
+
+// Shape a fade (0..1) with an initial hold near zero, then smoothstep.
+const ZERO_HOLD_FRAC = 0.15; // keep first 15% at exactly 0 for cleaner start
+function shapeFade01(x){
+  const z = Math.max(0, Math.min(1, (x - ZERO_HOLD_FRAC) / Math.max(1e-6, 1 - ZERO_HOLD_FRAC)));
+  return easeSmooth(z);
 }
 
 // Step/restart tween to reach target over EASE_DURATION seconds
@@ -283,7 +305,9 @@ const BASE_STRETCH_MAX = 1.5;    // baseline max per-letter factor when amplitud
 let MOUSE_STRETCH_MIN  = BASE_STRETCH_MIN;
 let MOUSE_STRETCH_MAX  = BASE_STRETCH_MAX;
 let MOUSE_STRETCH_SIGMA_FRAC = MOUSE_STRETCH_SIGMA_FRAC_DEFAULT; // Gaussian sigma as fraction of content width
-let MOUSE_AMPLITUDE = MOUSE_AMPLITUDE_DEFAULT;       // multiplies stretch delta relative to baseline
+let MOUSE_AMPLITUDE = MOUSE_AMPLITUDE_DEFAULT;       // multiplies stretch delta relative to baseline (target)
+let MOUSE_AMPLITUDE_TARGET = MOUSE_AMPLITUDE_DEFAULT;
+let MOUSE_AMPLITUDE_ANIM = MOUSE_AMPLITUDE_DEFAULT;
 
 let baseRowPitch;
 let targetContentH = null; // stays constant; rows change will shrink/grow pitch to keep this height
@@ -528,10 +552,15 @@ function startAnimLoop(){
     }
 
     // bij tijdgestuurde animaties altijd redraw
-    const timeDriven = (ANIM_ENABLED && (ANIM_MODE === 'pulse' || ANIM_MODE === 'scan' || H_WAVE_AMP !== 0));
-    if (timeDriven) requestRedraw();
+    const fadeBusy = Math.abs((ANIM_FADE||0) - (ANIM_FADE_TARGET||0)) > 1e-4;
+    const mouseAmpBusy = Math.abs((MOUSE_AMPLITUDE_ANIM||0) - (MOUSE_AMPLITUDE_TARGET||0)) > 1e-4;
+    const hAmpBusy = Math.abs((H_WAVE_AMP_ANIM||0) - (H_WAVE_AMP_TARGET||0)) > 1e-4;
+    const modeActive = (ANIM_ENABLED && (ANIM_MODE === 'pulse' || ANIM_MODE === 'scan'));
+    const waveActive = (ANIM_ENABLED && (H_WAVE_AMP_TARGET||0) !== 0);
+    const frameActive = (modeActive || waveActive || fadeBusy || mouseAmpBusy || hAmpBusy);
+    if (frameActive) requestRedraw();
 
-    if (timeDriven || _taperTransActive){
+    if (frameActive || _taperTransActive){
       _animRAF = requestAnimationFrame(step);
     } else {
       _animRAF = null;
@@ -544,8 +573,12 @@ function stopAnimLoop(){
 }
 
 function updateAnimRun(){
-  // PER_LETTER_STRETCH blijft actief; enabled toggelt alleen automatische tijdgestuurde beweging
-  if (ANIM_ENABLED && (ANIM_MODE === 'pulse' || ANIM_MODE === 'scan' || H_WAVE_AMP !== 0)){
+  const fadeBusy = Math.abs((ANIM_FADE||0) - (ANIM_FADE_TARGET||0)) > 1e-4;
+  const mouseAmpBusy = Math.abs((MOUSE_AMPLITUDE_ANIM||0) - (MOUSE_AMPLITUDE_TARGET||0)) > 1e-4;
+  const hAmpBusy = Math.abs((H_WAVE_AMP_ANIM||0) - (H_WAVE_AMP_TARGET||0)) > 1e-4;
+  const modeActive = (ANIM_ENABLED && (ANIM_MODE === 'pulse' || ANIM_MODE === 'scan'));
+  const waveActive = (ANIM_ENABLED && (H_WAVE_AMP_TARGET||0) !== 0);
+  if (modeActive || waveActive || fadeBusy || mouseAmpBusy || hAmpBusy){
     startAnimLoop();
   } else {
     stopAnimLoop();
@@ -554,8 +587,10 @@ function updateAnimRun(){
 
 function isPlaybackActive(){
   if (KF_PLAYING) return true;
-  if (ANIM_ENABLED && (ANIM_MODE === 'pulse' || ANIM_MODE === 'scan' || H_WAVE_AMP !== 0)) return true;
-  return false;
+  const fadeBusy = Math.abs((ANIM_FADE||0) - (ANIM_FADE_TARGET||0)) > 1e-4;
+  const modeActive = (ANIM_ENABLED && (ANIM_MODE === 'pulse' || ANIM_MODE === 'scan'));
+  const waveActive = (ANIM_ENABLED && (H_WAVE_AMP_TARGET||0) !== 0);
+  return !!(modeActive || waveActive || fadeBusy);
 }
 
 function computeProgressiveBandHeights(avail, fillFrac, count){
@@ -597,6 +632,7 @@ function computeProgressiveBandHeights(avail, fillFrac, count){
 // === Preview vs Export ===
 let isExport = false;
 let _needsRedraw = false;
+let _lastDrawT = 0;
 function requestRedraw(){
   if (_needsRedraw) return;
   _needsRedraw = true;
@@ -680,7 +716,10 @@ async function exportMP4(){
   // Temporarily resize the main canvas to target resolution for crisp capture
   const prevW = width, prevH = height;
   let prevPD = null;
+  const prevPerf = PERF_MODE;
   try {
+    // Force high-quality rendering during capture
+    PERF_MODE = false;
     if (width !== targetW || height !== targetH){
       // Force pixel density = 1 so exported pixels match requested resolution exactly
       try { prevPD = (typeof pixelDensity === 'function') ? pixelDensity() : null; } catch(e){}
@@ -695,10 +734,14 @@ async function exportMP4(){
 
   const fps = 60;
   const stream = canvasEl.captureStream(fps);
-  // Pick best supported mime
+  // Pick best supported mime — prefer MP4 first if the browser supports it
   const candidates = [
+    // MP4/H264 (supported in Safari; some Chrome/Edge builds)
+    'video/mp4;codecs=h264',
+    'video/mp4;codecs=avc1.4D401E',
     'video/mp4;codecs=avc1.42E01E',
     'video/mp4',
+    // WebM fallbacks (widely supported by Chrome/Edge/Firefox)
     'video/webm;codecs=vp9',
     'video/webm;codecs=vp8',
     'video/webm'
@@ -707,8 +750,13 @@ async function exportMP4(){
   for (const m of candidates){ if (MediaRecorder.isTypeSupported(m)){ mime = m; break; } }
   if (!mime){ throw new Error('No supported recording mimeType'); }
 
+  // Compute bitrate based on resolution and fps to avoid muddiness
+  const px = Math.max(1, Math.round(targetW)) * Math.max(1, Math.round(targetH));
+  const bpp = 1; // bits per pixel per frame (tune as needed)
+  const est = Math.round(px * fps * bpp);
+  const vbr = Math.max(4_000_000, Math.min(50_000_000, est));
   const chunks = [];
-  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 6_000_000 });
+  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: vbr });
   rec.ondataavailable = (e)=>{ if (e && e.data && e.data.size > 0) chunks.push(e.data); };
 
   // Determine duration: one full keyframe cycle if available; else 3s
@@ -721,21 +769,43 @@ async function exportMP4(){
     }
   } catch(e){}
 
-  // Ensure playback during capture: start if not playing; restore afterwards
+  // Prepare playback; start after recorder is running
   const wasPlaying = !!KF_PLAYING;
-  if (!wasPlaying){ try { if (typeof window !== 'undefined' && window.__kfPlay) window.__kfPlay(); } catch(e){} }
 
-  // Warm-up: force at least one painted frame at target size before starting the recorder
+  // Warm-up: force a couple of painted frames at target size before starting the recorder
   try {
+    // Ensure glyphs for current text are available
+    try { ensureGlyphsLoadedFor(currentLogoText()); } catch(e){}
+    // Wait briefly for any pending glyph loads (bounded)
+    const chars = Array.from(new Set(String(currentLogoText()||'').toUpperCase().split('').filter(c => /^[A-Z]$/.test(c))));
+    const deadlineAssets = performance.now() + 1000;
+    while (true){
+      const ready = chars.every(ch => glyphImgs[ch] && glyphDims[ch] && glyphDims[ch].w > 0 && glyphDims[ch].h > 0);
+      if (ready || performance.now() > deadlineAssets) break;
+      await new Promise(res => setTimeout(res, 16));
+    }
+    const startMark = performance.now();
     requestRedraw();
     await new Promise(res => requestAnimationFrame(res));
     await new Promise(res => requestAnimationFrame(res));
+    // Wait until draw() has happened after warm-up
+    const t0 = _lastDrawT;
+    const deadline = startMark + 1000;
+    while (_lastDrawT <= t0 && performance.now() < deadline){
+      await new Promise(res => requestAnimationFrame(res));
+    }
   } catch(e){}
 
+  const started = new Promise((resolve)=>{ try { rec.onstart = ()=> resolve(); } catch(e){ resolve(); } });
   const stopped = new Promise((resolve)=>{
     rec.onstop = ()=> resolve();
   });
+  // Hint encoder for detailed content
+  try { const tr = stream.getVideoTracks && stream.getVideoTracks()[0]; if (tr) tr.contentHint = 'detail'; } catch(e){}
   rec.start();
+  // Wait for recorder to be ready, then start autoplay to capture from exact beginning
+  try { await started; } catch(e){}
+  if (!wasPlaying){ try { if (typeof window !== 'undefined' && window.__kfPlay) window.__kfPlay(); } catch(e){} }
   await new Promise(res=> setTimeout(res, Math.round(totalSec * 1000)));
   rec.stop();
   await stopped;
@@ -744,9 +814,6 @@ async function exportMP4(){
 
   const blob = new Blob(chunks, { type: mime });
   const ext = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
-  if (!mime.startsWith('video/mp4')){
-    alert('MP4 not supported by this browser — exported WebM instead.');
-  }
   downloadBlob(blob, `export.${ext}`);
 
   // Restore original canvas size after capture
@@ -758,6 +825,7 @@ async function exportMP4(){
       layout = buildLayout(currentLogoText(), rows);
       requestRedraw();
     }
+    PERF_MODE = prevPerf;
     // Refit wrapper just in case
     try { if (typeof fitViewportToWindow === 'function') fitViewportToWindow(); } catch(e){}
   } catch(e){}
@@ -1019,6 +1087,27 @@ function updateAnimatedParameters(){
   if (grpStep.animating) animating = true;
   // Colors update instantly via setColorTargets; no per-frame color tweening
 
+  // Wave: amplitude tweens + enable/disable fade
+  const ampStep = stepTween(_paramTweens.mouseAmp, MOUSE_AMPLITUDE_ANIM, MOUSE_AMPLITUDE_TARGET, now);
+  if (ampStep.changed) MOUSE_AMPLITUDE_ANIM = ampStep.value;
+  if (ampStep.animating) animating = true;
+
+  const hAmpStep = stepTween(_paramTweens.hWaveAmp, H_WAVE_AMP_ANIM, H_WAVE_AMP_TARGET, now);
+  if (hAmpStep.changed) H_WAVE_AMP_ANIM = hAmpStep.value;
+  if (hAmpStep.animating) animating = true;
+
+  const fadeTarget = Math.max(0, Math.min(1, ANIM_FADE_TARGET));
+  const fadeStep = stepTween(_paramTweens.animFade, ANIM_FADE, fadeTarget, now);
+  if (fadeStep.changed) ANIM_FADE = fadeStep.value;
+  if (fadeStep.animating) animating = true;
+
+  // Recompute per-frame stretch bounds using effective amplitude (amp × shaped fade)
+  const effMouseAmp = Math.max(0, MOUSE_AMPLITUDE_ANIM) * shapeFade01(Math.max(0, ANIM_FADE));
+  const stretchAbove = (BASE_STRETCH_MAX - 1) * effMouseAmp;
+  const stretchBelow = (1 - BASE_STRETCH_MIN) * effMouseAmp;
+  MOUSE_STRETCH_MAX = 1 + stretchAbove;
+  MOUSE_STRETCH_MIN = Math.max(0.05, 1 - stretchBelow);
+
   if (layoutNeedsRebuild) _layoutDirty = true;
   if (capacityDirty){
     try { updateRepeatSlidersRange(); } catch(e){}
@@ -1209,7 +1298,7 @@ function setup(){
     elHWaveAmp.addEventListener('input', ()=>{
       const v = parseFloat(elHWaveAmp.value);
       if (Number.isFinite(v)){
-        H_WAVE_AMP = v;
+        H_WAVE_AMP = v; H_WAVE_AMP_TARGET = v;
         if (elHWaveAmpOut) elHWaveAmpOut.textContent = v.toFixed(2) + '×';
         requestRedraw();
         updateAnimRun();
@@ -1439,9 +1528,9 @@ function setup(){
     } catch(e){ return ''; }
   }
   function kfParse(code){ try { return (window.parseParamCode ? window.parseParamCode(code) : null); } catch(e){ return null; } }
-  function kfAutosaveCurrent(){
-    // Persist current UI state into the active keyframe (no-op during playback)
-    if (!keyframes.length || kfTimer) return;
+  function kfAutosaveCurrent(force=false){
+    // Persist current UI state into the active keyframe
+    if (!keyframes.length || (kfTimer && !force)) return;
     if (kfIndex < 0 || kfIndex >= keyframes.length) return;
     const code = kfGetCode();
     const shapeIdx = Math.max(1, Math.min(5, modeToIndex(effectiveTaperMode())));
@@ -1613,6 +1702,8 @@ function setup(){
     KF_PLAYING = true;
     const tick = ()=>{
       if (!keyframes.length){ kfStop(); return; }
+      // Persist edits on the current frame before advancing
+      try { kfAutosaveCurrent(true); } catch(e){}
       const next = (kfIndex + 1) % keyframes.length;
       kfIndex = next;
       const f = keyframes[kfIndex];
@@ -1834,7 +1925,7 @@ function setup(){
     }
     if (elEaseAmp){
       elEaseAmp.value = String(EASE_AMPLITUDE.toFixed(2));
-      elEaseAmp.disabled = (EASE_TYPE !== 'elastic');
+      elEaseAmp.disabled = !(EASE_TYPE === 'snap');
     }
     if (elEaseAmpOut){
       elEaseAmpOut.textContent = `${EASE_AMPLITUDE.toFixed(2)}×`;
@@ -1863,8 +1954,8 @@ function setup(){
     if (animScanEl)  animScanEl.checked  = (ANIM_MODE === 'scan');
 
     // Power (amplitude) + Anim period outputs
-    if (powerCtl) setValue(powerCtl, MOUSE_AMPLITUDE.toFixed(2));
-    if (powerOut) setText(powerOut, MOUSE_AMPLITUDE.toFixed(2));
+    if (powerCtl) setValue(powerCtl, (MOUSE_AMPLITUDE).toFixed(2));
+    if (powerOut) setText(powerOut, (MOUSE_AMPLITUDE).toFixed(2));
     if (animPeriodCtl) setValue(animPeriodCtl, ANIM_PERIOD.toFixed(2));
     if (animPeriodOut) setText(animPeriodOut, ANIM_PERIOD.toFixed(2) + ' s');
 
@@ -1874,7 +1965,7 @@ function setup(){
     if (elEaseDurPctOut) elEaseDurPctOut.textContent = `${Math.round(EASE_DURATION_PCT)} %`;
     if (elEaseAmp)  elEaseAmp.value  = String(EASE_AMPLITUDE.toFixed(2));
     if (elEaseAmpOut) elEaseAmpOut.textContent = `${EASE_AMPLITUDE.toFixed(2)}×`;
-    if (elEaseAmp) elEaseAmp.disabled = (EASE_TYPE !== 'elastic');
+    if (elEaseAmp) elEaseAmp.disabled = !(EASE_TYPE === 'snap');
 
     // Do not force preset/custom inputs here; preserve user selection
 
@@ -2084,7 +2175,7 @@ function setup(){
       downloadTextAsFile(json, 'config.json', 'application/json');
     } catch(err){
       console.error('Config save failed', err);
-      alert('Configuratie opslaan mislukt: ' + (err && err.message ? err.message : err));
+      // No popup; fail silently in UI
     }
   }
 
@@ -2161,10 +2252,9 @@ function setup(){
         updateKfTotalOut();
       } catch(e){}
 
-      alert('Configuratie geladen.');
+      // No popup; loaded silently
     } catch(err){
       console.error('Config load failed', err);
-      alert('Configuratie laden mislukt: ' + (err && err.message ? err.message : err));
     }
   }
 
@@ -2182,13 +2272,12 @@ function setup(){
           loadConfigFromObject(obj);
         } catch(err){
           console.error('Failed to parse config', err);
-          alert('Kon configuratie niet lezen (verwacht JSON).');
         } finally {
           elCfgFile.value = '';
         }
       };
       reader.onerror = ()=>{
-        alert('Bestand lezen mislukt.');
+        console.error('Bestand lezen mislukt.');
         elCfgFile.value = '';
       };
       reader.readAsText(f);
@@ -2214,7 +2303,12 @@ function setup(){
   const optAnimScan  = document.getElementById('animScan');
 
   function setAnim(mode){
+    const prev = ANIM_MODE;
     ANIM_MODE = mode;
+    // Cross-fade when switching modes while enabled
+    if (ANIM_ENABLED && prev !== mode){
+      ANIM_FADE = 0; ANIM_FADE_TARGET = 1; H_WAVE_T0 = 0;
+    }
     updateAnimRun();
     requestRedraw();
   }
@@ -2224,7 +2318,11 @@ function setup(){
   if (optAnimScan)  optAnimScan.addEventListener('change',  ()=>{ if (optAnimScan.checked)  setAnim('scan');  });
   if (elAnimEnabled){
     elAnimEnabled.addEventListener('change', ()=>{
-      ANIM_ENABLED = !!elAnimEnabled.checked;
+      const enable = !!elAnimEnabled.checked;
+      ANIM_ENABLED = enable;
+      // Smooth fade in/out; when enabling, start from 0
+      if (enable){ ANIM_FADE = 0; ANIM_FADE_TARGET = 1; H_WAVE_T0 = 0; }
+      else { ANIM_FADE_TARGET = 0; }
       updateAnimRun();
       updateUIFromState();
       requestRedraw();
@@ -2252,7 +2350,8 @@ function setup(){
   }
 
   // Easing controls (for slider-driven transitions)
-  function updateEaseAmpState(){ if (elEaseAmp) elEaseAmp.disabled = (EASE_TYPE !== 'elastic'); }
+  // Allow amplitude only for 'snap' (elastic removed)
+  function updateEaseAmpState(){ if (elEaseAmp) elEaseAmp.disabled = !(EASE_TYPE === 'snap'); }
   updateEaseAmpState();
   // Initialize duration % control
   if (elEaseDurPct){
@@ -2266,7 +2365,7 @@ function setup(){
   if (elEaseType){
     elEaseType.addEventListener('change', ()=>{
       const v = String(elEaseType.value||'smooth');
-      EASE_TYPE = (v === 'linear' || v === 'easeInOut' || v === 'elastic') ? v : 'smooth';
+      EASE_TYPE = (v === 'linear' || v === 'easeInOut' || v === 'snap' || v === 'snapHalf') ? v : 'smooth';
       updateEaseAmpState();
       updateUIFromState();
       requestRedraw();
@@ -2299,11 +2398,7 @@ function setup(){
     const updateAmplitude = ()=>{
       const raw = parseFloat(powerCtl.value);
       const amp = Number.isFinite(raw) ? Math.max(0.1, raw) : MOUSE_AMPLITUDE;
-      MOUSE_AMPLITUDE = amp;
-      const stretchAbove = (BASE_STRETCH_MAX - 1) * amp;
-      const stretchBelow = (1 - BASE_STRETCH_MIN) * amp;
-      MOUSE_STRETCH_MAX = 1 + stretchAbove;
-      MOUSE_STRETCH_MIN = Math.max(0.05, 1 - stretchBelow);
+      MOUSE_AMPLITUDE = amp; MOUSE_AMPLITUDE_TARGET = amp;
       window.MOUSE_AMPLITUDE = MOUSE_AMPLITUDE;
       window.MOUSE_POWER = MOUSE_POWER;
       if (powerOut) powerOut.textContent = MOUSE_AMPLITUDE.toFixed(2);
@@ -2460,10 +2555,11 @@ function setup(){
     KEEP_TOTAL_WIDTH = KEEP_TOTAL_WIDTH_DEFAULT;
     BG_LINES = BG_LINES_DEFAULT;
     BG_TRANSPARENT = false;
-    H_WAVE_AMP = H_WAVE_AMP_DEFAULT;
+    H_WAVE_AMP = H_WAVE_AMP_DEFAULT; H_WAVE_AMP_TARGET = H_WAVE_AMP_DEFAULT; H_WAVE_AMP_ANIM = H_WAVE_AMP_DEFAULT;
     H_WAVE_PERIOD = H_WAVE_PERIOD_DEFAULT;
     PULSE_PHASE = PULSE_PHASE_DEFAULT;
     ANIM_ENABLED = ANIM_ENABLED_DEFAULT;
+    ANIM_FADE = 1.0; ANIM_FADE_TARGET = 1.0;
     ANIM_MODE = ANIM_MODE_DEFAULT;
     REPEAT_ENABLED = REPEAT_ENABLED_DEFAULT;
     REPEAT_MIRROR = REPEAT_MIRROR_DEFAULT;
@@ -2476,7 +2572,7 @@ function setup(){
 
     PER_LETTER_STRETCH = PER_LETTER_STRETCH_DEFAULT;
     MOUSE_STRETCH_SIGMA_FRAC = MOUSE_STRETCH_SIGMA_FRAC_DEFAULT;
-    MOUSE_AMPLITUDE = MOUSE_AMPLITUDE_DEFAULT;
+    MOUSE_AMPLITUDE = MOUSE_AMPLITUDE_DEFAULT; MOUSE_AMPLITUDE_TARGET = MOUSE_AMPLITUDE_DEFAULT; MOUSE_AMPLITUDE_ANIM = MOUSE_AMPLITUDE_DEFAULT;
     MOUSE_STRETCH_MIN = BASE_STRETCH_MIN;
     MOUSE_STRETCH_MAX = BASE_STRETCH_MAX;
     MOUSE_CURVE = MOUSE_CURVE_DEFAULT;
@@ -2853,6 +2949,9 @@ function renderLogo(g){
   wUseArr = adj.wUse;
 
   // (keep txAdj/tyAdj for the final transform below)
+  // Effective wave fades
+  const fadeShaped = shapeFade01(Math.max(0, ANIM_FADE||0));
+  const effHWave = (H_WAVE_AMP_ANIM || 0) * fadeShaped;
   if (rows <= 1){
     rowYsCanvas = [0];
   } else {
@@ -2966,10 +3065,13 @@ function renderLogo(g){
           const dashLenClamped = Math.min(baseLen, maxDash);
           const xShift = computeXShift(r, rows, displaceGroupsAnim);
           let rx = rightEdgeX + xShift;
-          if (ANIM_ENABLED && H_WAVE_AMP !== 0 && rowPitchNow > 0){
-            const ampLayout = rowPitchNow * H_WAVE_AMP;
+          if (ANIM_ENABLED && effHWave !== 0 && rowPitchNow > 0){
+            const ampLayout = rowPitchNow * effHWave;
             const periodHW = Math.max(0.1, H_WAVE_PERIOD);
-            const phase = (r / rows) * TWO_PI - animTime * TWO_PI / periodHW;
+            // Blend row-phase in with the fade so we start at a global zero-crossing
+            const rowW = fadeShaped; // 0..1: 0=uniform phase, 1=full per-row phase
+            const tRel = Math.max(0, animTime - (H_WAVE_T0||0));
+            const phase = (rowW * (r / rows) * TWO_PI) - tRel * TWO_PI / periodHW;
             rx += Math.sin(phase) * ampLayout;
           }
           const drawH = Math.max(MIN_DRAW_HEIGHT, linePx * _lineMul * Math.max(0.01, hMul));
@@ -3002,7 +3104,7 @@ function renderLogo(g){
   // Try fast-path tiling: preview only, uniform repeats, no mirror, no H-wave, no time-driven anims
   let usedTile = false;
   let tileGfx = null, tileWpx = 0, tileHpx = 0;
-  const canTile = (!isExport && PERF_MODE && REPEAT_ENABLED && REPEAT_MODE === 'uniform' && !REPEAT_MIRROR && H_WAVE_AMP === 0 && !ANIM_ENABLED);
+  const canTile = (!isExport && PERF_MODE && REPEAT_ENABLED && REPEAT_MODE === 'uniform' && !REPEAT_MIRROR && effHWave === 0 && !ANIM_ENABLED);
   if (canTile){
     // Build base block tile once in pixel coords
     tileWpx = Math.max(1, Math.ceil(s * contentWAdj));
@@ -3168,6 +3270,7 @@ function draw(){
   noStroke();
   renderLogo(this);
   if (debugMode) drawdebugModeOverlay();
+  try { _lastDrawT = performance.now(); } catch(e){}
 }
 
 // ====== DRAWING ======
@@ -3714,18 +3817,8 @@ function getParamSnapshot(){
   snap.tipRatio = Number(TIP_RATIO_TARGET.toFixed(2));
   snap.widthPct = Math.round(Math.max(0, Math.min(500, (widthScaleTarget * 100))));
   snap.gapPx = Math.round(gapPxTarget);
-  // Prefer the UI slider value for shape if available to avoid animation-timing issues
-  try {
-    const el = (typeof document !== 'undefined') ? document.getElementById('taperIndex') : null;
-    if (el && el.value != null){
-      const v = Math.max(1, Math.min(5, parseInt(el.value, 10) || modeToIndex(effectiveTaperMode())));
-      snap.shapeIdx = v;
-    } else {
-      snap.shapeIdx = modeToIndex(effectiveTaperMode());
-    }
-  } catch(e){
-    snap.shapeIdx = modeToIndex(effectiveTaperMode());
-  }
+  // Use the active taper mode for shape; do not read the UI slider to avoid leaking edits between keyframes
+  snap.shapeIdx = modeToIndex(effectiveTaperMode());
   snap.groups = Math.round(displaceGroupsTarget);
   snap.dispUnit = Math.round(DISPLACE_UNIT_TARGET);
   snap.colorPreset = Math.max(0, Math.round(activeColorComboIdx || 0));
@@ -3753,8 +3846,9 @@ function getParamSnapshot(){
   snap.repeatMirror = !!REPEAT_MIRROR;
   const isAll = !!REPEAT_EXTRA_ROWS_IS_FULL || !Number.isFinite(REPEAT_EXTRA_ROWS);
   snap.repeatExtraRows = isAll ? 'ALL' : Math.max(0, Math.round(REPEAT_EXTRA_ROWS));
-  const easeTypeMap = { smooth:0, linear:1, easeInOut:2, elastic:3 };
-  snap.easeType = easeTypeMap[String(EASE_TYPE||'smooth')] ?? 0;
+  const et = String(EASE_TYPE||'smooth');
+  const easeTypeMap = { smooth:0, linear:1, easeInOut:2, snap:4, snapHalf:5 };
+  snap.easeType = easeTypeMap[et] ?? 0;
   snap.easeAmp = Number(Math.max(0, EASE_AMPLITUDE).toFixed(2));
   return snap;
 }
@@ -3947,7 +4041,7 @@ function applyParamCode(code){
   // Easing
   if (map.et){
     const etIdx = parseInt(map.et,10)||0;
-    const etVal = etIdx===1 ? 'linear' : etIdx===2 ? 'easeInOut' : etIdx===3 ? 'elastic' : 'smooth';
+    const etVal = etIdx===1 ? 'linear' : etIdx===2 ? 'easeInOut' : etIdx===4 ? 'snap' : etIdx===5 ? 'snapHalf' : 'smooth';
     setVal('easeType', etVal, 'change');
   }
   if (map.ed){
@@ -4025,13 +4119,10 @@ function applyParamCodeFast(codeOrMap){
   if (map.ad){ ANIM_PERIOD = Math.max(0.1, parseFloat(map.ad)||ANIM_PERIOD_DEFAULT); }
   if (map.pw){
     MOUSE_AMPLITUDE = Math.max(0.1, parseFloat(map.pw)||MOUSE_AMPLITUDE_DEFAULT);
-    const stretchAbove = (BASE_STRETCH_MAX - 1) * MOUSE_AMPLITUDE;
-    const stretchBelow = (1 - BASE_STRETCH_MIN) * MOUSE_AMPLITUDE;
-    MOUSE_STRETCH_MAX = 1 + stretchAbove;
-    MOUSE_STRETCH_MIN = Math.max(0.05, 1 - stretchBelow);
+    MOUSE_AMPLITUDE_TARGET = MOUSE_AMPLITUDE;
   }
   if (map.pp){ setPulsePhase(clamp(parseFloat(map.pp)||0, 0, 1)); }
-  if (map.hwa){ H_WAVE_AMP = Math.max(0, parseFloat(map.hwa)||0); }
+  if (map.hwa){ H_WAVE_AMP = Math.max(0, parseFloat(map.hwa)||0); H_WAVE_AMP_TARGET = H_WAVE_AMP; }
   if (map.hwp){ H_WAVE_PERIOD = Math.max(0.1, parseFloat(map.hwp)||H_WAVE_PERIOD_DEFAULT); }
   if (map.kt){ KF_TIME_CUR = Math.max(0.05, parseFloat(map.kt)||KF_TIME_DEFAULT); }
   if (map.km){ KF_SPEED_MUL = Math.max(0.1, parseFloat(map.km)||KF_SPEED_DEFAULT); }
@@ -4058,7 +4149,7 @@ function applyParamCodeFast(codeOrMap){
     // tween for extra rows anim handles the visual interpolation
   }
 
-  if (map.et){ const etIdx = parseInt(map.et,10)||0; EASE_TYPE = etIdx===1?'linear':etIdx===2?'easeInOut':etIdx===3?'elastic':'smooth'; }
+  if (map.et){ const etIdx = parseInt(map.et,10)||0; EASE_TYPE = etIdx===1?'linear':etIdx===2?'easeInOut':etIdx===4?'snap':etIdx===5?'snapHalf':'smooth'; }
   if (map.ed){ EASE_DURATION = Math.max(0, parseFloat(map.ed)||EASE_DURATION_DEFAULT); }
   if (map.ea){ EASE_AMPLITUDE = Math.max(0, parseFloat(map.ea)||EASE_AMPLITUDE_DEFAULT); }
 
