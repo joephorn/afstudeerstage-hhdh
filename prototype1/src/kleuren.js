@@ -54,5 +54,19 @@ window.COLOR_COMBINATIONS = [
     background: '#FCFA82',
     logo: '#0F2350',
     lines: '#B6D2CD'
-  }
+  },
+  {
+    id: '6',
+    label: '6',
+    background: '#28A596',
+    logo: '#FCFA82',
+    lines: '#B6D2CD'
+  },
+  {
+    id: '7',
+    label: '7',
+    background: '#FFAAC8',
+    logo: '#28A596',
+    lines: '#B6D2CD'
+  },
 ];

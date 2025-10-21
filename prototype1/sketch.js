@@ -274,27 +274,25 @@ function shapeFade01(x){
   return easeSmooth(z);
 }
 
-// Fade-in helpers (line height + optional stagger + opacity)
-const FADEIN_STAGGER_FRAC_DEFAULT = 0.90; // portion of tween spread across rows
+// Fade-in helpers (line height + stagger)
+const FADEIN_STAGGER_FRAC_DEFAULT = 0.5; // portion of tween spread across rows (smaller = faster propagation)
+const FADEIN_HEIGHT_POWER_DEFAULT = 1.3; // >1 makes height fade progress a bit slower
 let FADEIN_STAGGER_FRAC = FADEIN_STAGGER_FRAC_DEFAULT;
+let FADEIN_HEIGHT_POWER = FADEIN_HEIGHT_POWER_DEFAULT;
 let _fadeTNorm = 1.0;         // 0..1 normalized progress of the active line-height tween
-// No opacity changes for fade-in; only height/stagger
 
 function fadeInRowMul(r, rows){
   if (rows <= 1) return Math.max(0, Math.min(1, _fadeTNorm));
   const frac = Math.max(0, Math.min(1, r / Math.max(1, rows - 1)));
   const d = Math.max(0, Math.min(1, FADEIN_STAGGER_FRAC));
   const t = Math.max(0, Math.min(1, ( _fadeTNorm - d * frac) / Math.max(1e-6, 1 - d)));
-  return Math.max(0, Math.min(1, applyEase(t)));
+  const base = Math.max(0, Math.min(1, applyEase(t)));
+  const pow = Math.max(1, Number(FADEIN_HEIGHT_POWER) || FADEIN_HEIGHT_POWER_DEFAULT);
+  return Math.max(0, Math.min(1, Math.pow(base, pow)));
 }
 
 // Global alpha multiplier for fade-in (subtle opacity ramp)
-function fadeInAlphaMul(){
-  if (EASE_TYPE !== 'fadeIn' || _taperTransActive) return 1;
-  const base = Math.max(0, Math.min(1, applyEase(_fadeTNorm)));
-  const minA = 0.5; // start at 20% opacity → 100%
-  return minA + (1 - minA) * base;
-}
+// No global opacity changes for fade-in; keep solid fill
 
 // Step/restart tween to reach target over EASE_DURATION seconds
 function stepTween(tw, currentVal, targetVal, now){
@@ -3259,16 +3257,8 @@ function renderLogo(g){
   } else {
     g.background(color1);
   }
-  // Apply subtle global opacity during fade-in
-  if (EASE_TYPE === 'fadeIn' && !_taperTransActive){
-    try {
-      const cc = color(color2);
-      cc.setAlpha(Math.max(0, Math.min(255, Math.floor(255 * fadeInAlphaMul()))));
-      g.fill(cc);
-    } catch(e){ g.fill(color2); }
-  } else {
-    g.fill(color2);
-  }
+  // Solid fill; no opacity for fade-in
+  g.fill(color2);
   g.noStroke();
 
   const fit = computeLayoutFit();
@@ -3454,8 +3444,14 @@ function renderLogo(g){
             const phase = (rowW * (r / rows) * TWO_PI) - tRel * TWO_PI / periodHW;
             rx += Math.sin(phase) * ampLayout;
           }
-          const heightMul = (EASE_TYPE === 'fadeIn' && !_taperTransActive) ? Math.max(0, Math.min(1, fadeInRowMul(r, rows))) : _lineMul;
-          const drawH = Math.max(MIN_DRAW_HEIGHT, linePx * heightMul * Math.max(0.01, hMul));
+          const heightMul = (EASE_TYPE === 'fadeIn' && !_taperTransActive)
+            ? Math.max(0, Math.min(1, fadeInRowMul(r, rows)))
+            : _lineMul;
+          const isFade = (EASE_TYPE === 'fadeIn' && !_taperTransActive);
+          const rawH = linePx * heightMul * Math.max(0.01, hMul);
+          // During fade-in: allow true 0 height (skip drawing if too small)
+          if (isFade && rawH < 0.5) continue;
+          const drawH = isFade ? rawH : Math.max(MIN_DRAW_HEIGHT, rawH);
           switch (taperMode) {
             case 'Straight':
               drawStraightTaper(gDest, rx, y, dashLenUse, drawH, TIP_RATIO);
@@ -3753,7 +3749,7 @@ function drawCircleTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
   const step = Math.max(1, (PERF_MODE && isPlaybackActive() && !isExport) ? TAPER_SPACING * 1.5 : TAPER_SPACING);
   const n = Math.max(1, Math.floor(pathLen / step) + 1);
 
-  // use current fill (may include global fade alpha)
+  g.fill(color2);
   for (let i = 0; i < n; i++){
     const cx = xRight - i * step;
     if (cx < xLeftLimit - 1e-3) break; // guard
@@ -3793,8 +3789,9 @@ function drawBlockTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
 
   g.push();
   g.noStroke();
+  g.fill(color2);
 
-  // Draw cap on the right (respect global fade alpha)
+  // Draw cap on the right
   g.rect(xCapL, yCap, capLen, capH);
 
   // March leftwards with normalized block widths so total exactly fills `len`
@@ -3806,10 +3803,8 @@ function drawBlockTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
     const yTop = cy - hi * 0.5;
     const xL = rightEdge - w; // touch previous element
 
-    // Optional subtle fade towards the tip
-    const baseAlpha = Math.floor(255 - (255 - 80) * frac);
-    const globalMul = (EASE_TYPE === 'fadeIn' && !_taperTransActive) ? fadeInAlphaMul() : 1;
-    const alpha = Math.max(0, Math.min(255, Math.floor(baseAlpha * globalMul)));
+    // Optional subtle fade towards the tip (independent of fade-in)
+    const alpha = Math.floor(255 - (255 - 80) * frac);
     const cc = color(color2);
     cc.setAlpha(alpha);
     g.fill(cc);
@@ -3840,7 +3835,7 @@ function drawPlusTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
 
   g.push();
   g.noStroke();
-  // use current fill (may include global fade alpha)
+  g.fill(color2);
   for (let i = 0; i < n; i++){
     // Center progresses from near the big end to near the tip at fixed spacing
     let cx = startCx - i * step;
