@@ -1,5 +1,5 @@
 // ====== CONFIG ======
-const LOGO_TEXT_OPTIONS       = ["ALBION", "PUSH IT"];
+const LOGO_TEXT_OPTIONS       = ["ALBION", "PUSH   IT"];
 let LOGO_TEXT_INDEX           = 0;
 function currentLogoText(){
   const n = Array.isArray(LOGO_TEXT_OPTIONS) ? LOGO_TEXT_OPTIONS.length : 0;
@@ -184,8 +184,10 @@ let _taperT0 = 0;                   // phase start timestamp
 const TAPER_SHRINK_DUR = 0.05;      // seconds
 const TAPER_EXPAND_DUR = 0.1;      // seconds
 const MIN_DRAW_HEIGHT  = 2;    // guard to avoid zero-area issues
+// Independent line-length multiplier (affects dash length only)
+const LINE_LEN_MUL_DEFAULT = 1.0;
 
-let elRows, elThickness, elWidth, elGap, elGroups, elDispUnit, elPreset, elLogoScale, elAspectW, elAspectH, elCustomAR, elReset, elLogoText;
+let elRows, elThickness, elWidth, elGap, elGroups, elDispUnit, elPreset, elLogoScale, elAspectW, elAspectH, elCustomAR, elReset, elLogoText, elFillBtn;
 let elPulsePhase, elPulsePhaseOut, elHWavePeriod, elHWavePeriodOut;
 let elAnimEnabled;
 // Keyframe timing UI
@@ -204,6 +206,10 @@ let taperMode = TAPER_MODE_DEFAULT;
 let debugMode = DEBUG_MODE_DEFAULT;
 let widthScale = WIDTH_SCALE_DEFAULT;
 let widthScaleTarget = WIDTH_SCALE_DEFAULT;
+// Dash length multiplier (separate from Width)
+let LINE_LEN_MUL = LINE_LEN_MUL_DEFAULT;
+let LINE_LEN_MUL_TARGET = LINE_LEN_MUL_DEFAULT;
+let LINE_LEN_MUL_ANIM = LINE_LEN_MUL_DEFAULT;
 
 // Global easing state
 let EASE_TYPE = EASE_TYPE_DEFAULT;
@@ -221,6 +227,7 @@ const _paramTweens = {
   dispUnit: makeTween(DISPLACE_UNIT_DEFAULT),
   tipRatio: makeTween(TIP_RATIO_DEFAULT),
   extraRows: makeTween(Number.isFinite(REPEAT_EXTRA_ROWS_DEFAULT) ? REPEAT_EXTRA_ROWS_DEFAULT : 0),
+  repeatFalloff: makeTween(REPEAT_FALLOFF_DEFAULT),
   widthScale: makeTween(WIDTH_SCALE_DEFAULT),
   logoScale: makeTween(LOGO_SCALE_DEFAULT),
   rows: makeTween(ROWS_DEFAULT),
@@ -228,6 +235,7 @@ const _paramTweens = {
   mouseAmp: makeTween(MOUSE_AMPLITUDE_DEFAULT),
   hWaveAmp: makeTween(H_WAVE_AMP_DEFAULT),
   animFade: makeTween(1.0),
+  dashMul: makeTween(LINE_LEN_MUL_DEFAULT),
 };
 
 // Easing functions (0..1 -> 0..1)
@@ -253,6 +261,7 @@ function applyEase(t){
       // Snap immediately to 0.5, then ease the remainder to 1 over full duration
       return Math.min(1, 0.5 + 0.5 * easeSmooth(tt));
     }
+    case 'fadeIn':    return easeSmooth(tt); // base curve; actual line height fades via _lineMul
     case 'smooth':
     default:          return easeSmooth(tt);
   }
@@ -263,6 +272,28 @@ const ZERO_HOLD_FRAC = 0.15; // keep first 15% at exactly 0 for cleaner start
 function shapeFade01(x){
   const z = Math.max(0, Math.min(1, (x - ZERO_HOLD_FRAC) / Math.max(1e-6, 1 - ZERO_HOLD_FRAC)));
   return easeSmooth(z);
+}
+
+// Fade-in helpers (line height + optional stagger + opacity)
+const FADEIN_STAGGER_FRAC_DEFAULT = 0.90; // portion of tween spread across rows
+let FADEIN_STAGGER_FRAC = FADEIN_STAGGER_FRAC_DEFAULT;
+let _fadeTNorm = 1.0;         // 0..1 normalized progress of the active line-height tween
+// No opacity changes for fade-in; only height/stagger
+
+function fadeInRowMul(r, rows){
+  if (rows <= 1) return Math.max(0, Math.min(1, _fadeTNorm));
+  const frac = Math.max(0, Math.min(1, r / Math.max(1, rows - 1)));
+  const d = Math.max(0, Math.min(1, FADEIN_STAGGER_FRAC));
+  const t = Math.max(0, Math.min(1, ( _fadeTNorm - d * frac) / Math.max(1e-6, 1 - d)));
+  return Math.max(0, Math.min(1, applyEase(t)));
+}
+
+// Global alpha multiplier for fade-in (subtle opacity ramp)
+function fadeInAlphaMul(){
+  if (EASE_TYPE !== 'fadeIn' || _taperTransActive) return 1;
+  const base = Math.max(0, Math.min(1, applyEase(_fadeTNorm)));
+  const minA = 0.5; // start at 20% opacity → 100%
+  return minA + (1 - minA) * base;
 }
 
 // Step/restart tween to reach target over EASE_DURATION seconds
@@ -335,7 +366,8 @@ let _repeatExtraRowsMax = Math.max(0, ROWS_DEFAULT - 1);
 let REPEAT_EXTRA_ROWS_IS_FULL = !Number.isFinite(REPEAT_EXTRA_ROWS_DEFAULT) && REPEAT_EXTRA_ROWS_DEFAULT > 0;
 // Animated version of EXTRA_ROWS (for eased transitions)
 let REPEAT_EXTRA_ROWS_ANIM = (Number.isFinite(REPEAT_EXTRA_ROWS_DEFAULT) ? REPEAT_EXTRA_ROWS_DEFAULT : 0);
-let REPEAT_FALLOFF = REPEAT_FALLOFF_DEFAULT;
+let REPEAT_FALLOFF = REPEAT_FALLOFF_DEFAULT;        // current (animated)
+let REPEAT_FALLOFF_TARGET = REPEAT_FALLOFF_DEFAULT; // target for easing
 let REPEAT_MODE    = REPEAT_MODE_DEFAULT;   // 'uniform' or 'falloff'
 let COLOR_COMBOS = [];
 let activeColorComboIdx = 0;
@@ -831,6 +863,277 @@ async function exportMP4(){
   } catch(e){}
 }
 
+// Higher-bitrate MP4 export (less compression)
+async function exportMP4HQ(){
+  if (typeof MediaRecorder === 'undefined'){
+    throw new Error('MediaRecorder not supported in this browser');
+  }
+  // Determine desired export resolution from Size preset/custom
+  let targetW = Math.max(1, width), targetH = Math.max(1, height);
+  try {
+    const presetSel = document.getElementById('preset');
+    if (presetSel){
+      const val = String(presetSel.value || 'fit');
+      if (val === 'custom'){
+        let w = (typeof EXPORT_W === 'number') ? EXPORT_W : null;
+        let h = (typeof EXPORT_H === 'number') ? EXPORT_H : null;
+        if (!w || !h){
+          const elW = document.getElementById('aspectW');
+          const elH = document.getElementById('aspectH');
+          const ww = parseInt(elW && elW.value, 10);
+          const hh = parseInt(elH && elH.value, 10);
+          if (Number.isFinite(ww) && Number.isFinite(hh) && ww > 0 && hh > 0){ w = ww; h = hh; }
+        }
+        if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0){ targetW = w; targetH = h; }
+      } else if (val !== 'fit'){
+        const opt = presetSel.options[presetSel.selectedIndex];
+        const dw = parseInt(opt && opt.dataset && opt.dataset.w, 10);
+        const dh = parseInt(opt && opt.dataset && opt.dataset.h, 10);
+        if (Number.isFinite(dw) && Number.isFinite(dh) && dw > 0 && dh > 0){ targetW = dw; targetH = dh; }
+      }
+    }
+  } catch(e){}
+
+  const canvasEl = (mainCanvas && mainCanvas.elt) ? mainCanvas.elt : null;
+  if (!canvasEl || !canvasEl.captureStream){
+    throw new Error('Canvas captureStream not available');
+  }
+
+  // Temporarily resize the main canvas to target resolution for crisp capture
+  const prevW = width, prevH = height;
+  let prevPD = null;
+  const prevPerf = PERF_MODE;
+  try {
+    PERF_MODE = false;
+    if (width !== targetW || height !== targetH){
+      try { prevPD = (typeof pixelDensity === 'function') ? pixelDensity() : null; } catch(e){}
+      try { if (typeof pixelDensity === 'function') pixelDensity(1); } catch(e){}
+      resizeCanvas(Math.max(1, targetW), Math.max(1, targetH), true);
+      layout = buildLayout(currentLogoText(), rows);
+      requestRedraw();
+      await new Promise(r => setTimeout(r, 0));
+    }
+  } catch(e){}
+
+  const fps = 60;
+  const stream = canvasEl.captureStream(fps);
+  // Restrict to MP4‑compatible mime types; prefer H264
+  const candidates = [
+    'video/mp4;codecs=h264',
+    'video/mp4;codecs=avc1.4D401E',
+    'video/mp4;codecs=avc1.42E01E',
+    'video/mp4'
+  ];
+  let mime = '';
+  for (const m of candidates){ if (MediaRecorder.isTypeSupported(m)){ mime = m; break; } }
+  if (!mime){ throw new Error('No MP4 recording mimeType supported by this browser'); }
+
+  // Higher target bitrate: scale with resolution × fps, use a higher bpp and cap higher
+  const px = Math.max(1, Math.round(targetW)) * Math.max(1, Math.round(targetH));
+  const bppHQ = 2; // bits per pixel per frame (higher than default)
+  const est = Math.round(px * fps * bppHQ);
+  const vbr = Math.max(20_000_000, Math.min(100_000_000, est));
+  const chunks = [];
+  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: vbr });
+  rec.ondataavailable = (e)=>{ if (e && e.data && e.data.size > 0) chunks.push(e.data); };
+
+  // Determine duration: one full keyframe cycle if available; else 3s
+  const kfList = (function(){ try { return (typeof window !== 'undefined' && window.__keyframesRef) ? window.__keyframesRef : []; } catch(e){ return []; }})();
+  let totalSec = 3.0;
+  try {
+    if (Array.isArray(kfList) && kfList.length){
+      const sum = kfList.reduce((s,k)=> s + Math.max(0.05, (k && k.timeSec) ? k.timeSec : KF_TIME_DEFAULT), 0);
+      totalSec = Math.max(0.2, sum * Math.max(0.1, KF_SPEED_MUL));
+    }
+  } catch(e){}
+
+  // Warm-up then record
+  const wasPlaying = !!KF_PLAYING;
+  try {
+    try { ensureGlyphsLoadedFor(currentLogoText()); } catch(e){}
+    const chars = Array.from(new Set(String(currentLogoText()||'').toUpperCase().split('').filter(c => /^[A-Z]$/.test(c))));
+    const deadlineAssets = performance.now() + 1000;
+    while (true){
+      const ready = chars.every(ch => glyphImgs[ch] && glyphDims[ch] && glyphDims[ch].w > 0 && glyphDims[ch].h > 0);
+      if (ready || performance.now() > deadlineAssets) break;
+      await new Promise(res => setTimeout(res, 16));
+    }
+    const startMark = performance.now();
+    requestRedraw();
+    await new Promise(res => requestAnimationFrame(res));
+    await new Promise(res => requestAnimationFrame(res));
+    const t0 = _lastDrawT;
+    const deadline = startMark + 1000;
+    while (_lastDrawT <= t0 && performance.now() < deadline){
+      await new Promise(res => requestAnimationFrame(res));
+    }
+  } catch(e){}
+
+  const started = new Promise((resolve)=>{ try { rec.onstart = ()=> resolve(); } catch(e){ resolve(); } });
+  const stopped = new Promise((resolve)=>{ rec.onstop = ()=> resolve(); });
+  try { const tr = stream.getVideoTracks && stream.getVideoTracks()[0]; if (tr) tr.contentHint = 'detail'; } catch(e){}
+  rec.start();
+  try { await started; } catch(e){}
+  if (!wasPlaying){ try { if (typeof window !== 'undefined' && window.__kfPlay) window.__kfPlay(); } catch(e){} }
+  await new Promise(res=> setTimeout(res, Math.round(totalSec * 1000)));
+  rec.stop();
+  await stopped;
+  if (!wasPlaying){ try { if (typeof window !== 'undefined' && window.__kfStop) window.__kfStop(); } catch(e){} }
+
+  const blob = new Blob(chunks, { type: mime });
+  downloadBlob(blob, 'export-hq.mp4');
+
+  // Restore original canvas size after capture
+  try {
+    try { if (prevPD != null && typeof pixelDensity === 'function') pixelDensity(prevPD); } catch(e){}
+    if (prevW !== width || prevH !== height){
+      resizeCanvas(Math.max(1, prevW), Math.max(1, prevH), true);
+      layout = buildLayout(currentLogoText(), rows);
+      requestRedraw();
+    }
+    PERF_MODE = prevPerf;
+    try { if (typeof fitViewportToWindow === 'function') fitViewportToWindow(); } catch(e){}
+  } catch(e){}
+}
+
+async function exportWebM(){
+  if (typeof MediaRecorder === 'undefined'){
+    throw new Error('MediaRecorder not supported in this browser');
+  }
+  // Determine desired export resolution from Size preset/custom
+  let targetW = Math.max(1, width), targetH = Math.max(1, height);
+  try {
+    const presetSel = document.getElementById('preset');
+    if (presetSel){
+      const val = String(presetSel.value || 'fit');
+      if (val === 'custom'){
+        let w = (typeof EXPORT_W === 'number') ? EXPORT_W : null;
+        let h = (typeof EXPORT_H === 'number') ? EXPORT_H : null;
+        if (!w || !h){
+          const elW = document.getElementById('aspectW');
+          const elH = document.getElementById('aspectH');
+          const ww = parseInt(elW && elW.value, 10);
+          const hh = parseInt(elH && elH.value, 10);
+          if (Number.isFinite(ww) && Number.isFinite(hh) && ww > 0 && hh > 0){ w = ww; h = hh; }
+        }
+        if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0){ targetW = w; targetH = h; }
+      } else if (val !== 'fit'){
+        const opt = presetSel.options[presetSel.selectedIndex];
+        const dw = parseInt(opt && opt.dataset && opt.dataset.w, 10);
+        const dh = parseInt(opt && opt.dataset && opt.dataset.h, 10);
+        if (Number.isFinite(dw) && Number.isFinite(dh) && dw > 0 && dh > 0){ targetW = dw; targetH = dh; }
+      }
+    }
+  } catch(e){}
+
+  const canvasEl = (mainCanvas && mainCanvas.elt) ? mainCanvas.elt : null;
+  if (!canvasEl || !canvasEl.captureStream){
+    throw new Error('Canvas captureStream not available');
+  }
+
+  // Temporarily resize the main canvas to target resolution for crisp capture
+  const prevW = width, prevH = height;
+  let prevPD = null;
+  const prevPerf = PERF_MODE;
+  try {
+    // Force high-quality rendering during capture
+    PERF_MODE = false;
+    if (width !== targetW || height !== targetH){
+      try { prevPD = (typeof pixelDensity === 'function') ? pixelDensity() : null; } catch(e){}
+      try { if (typeof pixelDensity === 'function') pixelDensity(1); } catch(e){}
+      resizeCanvas(Math.max(1, targetW), Math.max(1, targetH), true);
+      layout = buildLayout(currentLogoText(), rows);
+      requestRedraw();
+      await new Promise(r => setTimeout(r, 0));
+    }
+  } catch(e){}
+
+  const fps = 60;
+  const stream = canvasEl.captureStream(fps);
+  // Prefer WebM codecs first
+  const candidates = [
+    'video/webm;codecs=vp9',
+    'video/webm;codecs=vp8',
+    'video/webm',
+    // Fallbacks (in case browser only supports mp4)
+    'video/mp4;codecs=h264',
+    'video/mp4;codecs=avc1.4D401E',
+    'video/mp4;codecs=avc1.42E01E',
+    'video/mp4'
+  ];
+  let mime = '';
+  for (const m of candidates){ if (MediaRecorder.isTypeSupported(m)){ mime = m; break; } }
+  if (!mime){ throw new Error('No supported recording mimeType'); }
+
+  // Bitrate based on resolution and fps
+  const px = Math.max(1, Math.round(targetW)) * Math.max(1, Math.round(targetH));
+  const bpp = 1; // bits per pixel per frame
+  const est = Math.round(px * fps * bpp);
+  const vbr = Math.max(4_000_000, Math.min(50_000_000, est));
+  const chunks = [];
+  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: vbr });
+  rec.ondataavailable = (e)=>{ if (e && e.data && e.data.size > 0) chunks.push(e.data); };
+
+  // Duration: full keyframe cycle if present; else 3s
+  const kfList = (function(){ try { return (typeof window !== 'undefined' && window.__keyframesRef) ? window.__keyframesRef : []; } catch(e){ return []; }})();
+  let totalSec = 3.0;
+  try {
+    if (Array.isArray(kfList) && kfList.length){
+      const sum = kfList.reduce((s,k)=> s + Math.max(0.05, (k && k.timeSec) ? k.timeSec : KF_TIME_DEFAULT), 0);
+      totalSec = Math.max(0.2, sum * Math.max(0.1, KF_SPEED_MUL));
+    }
+  } catch(e){}
+
+  // Warm-up and start
+  const wasPlaying = !!KF_PLAYING;
+  try {
+    try { ensureGlyphsLoadedFor(currentLogoText()); } catch(e){}
+    const chars = Array.from(new Set(String(currentLogoText()||'').toUpperCase().split('').filter(c => /^[A-Z]$/.test(c))));
+    const deadlineAssets = performance.now() + 1000;
+    while (true){
+      const ready = chars.every(ch => glyphImgs[ch] && glyphDims[ch] && glyphDims[ch].w > 0 && glyphDims[ch].h > 0);
+      if (ready || performance.now() > deadlineAssets) break;
+      await new Promise(res => setTimeout(res, 16));
+    }
+    const startMark = performance.now();
+    requestRedraw();
+    await new Promise(res => requestAnimationFrame(res));
+    await new Promise(res => requestAnimationFrame(res));
+    const t0 = _lastDrawT;
+    const deadline = startMark + 1000;
+    while (_lastDrawT <= t0 && performance.now() < deadline){
+      await new Promise(res => requestAnimationFrame(res));
+    }
+  } catch(e){}
+
+  const started = new Promise((resolve)=>{ try { rec.onstart = ()=> resolve(); } catch(e){ resolve(); } });
+  const stopped = new Promise((resolve)=>{ rec.onstop = ()=> resolve(); });
+  try { const tr = stream.getVideoTracks && stream.getVideoTracks()[0]; if (tr) tr.contentHint = 'detail'; } catch(e){}
+  rec.start();
+  try { await started; } catch(e){}
+  if (!wasPlaying){ try { if (typeof window !== 'undefined' && window.__kfPlay) window.__kfPlay(); } catch(e){} }
+  await new Promise(res=> setTimeout(res, Math.round(totalSec * 1000)));
+  rec.stop();
+  await stopped;
+  if (!wasPlaying){ try { if (typeof window !== 'undefined' && window.__kfStop) window.__kfStop(); } catch(e){} }
+
+  const blob = new Blob(chunks, { type: mime });
+  const ext = mime.includes('webm') ? 'webm' : (mime.includes('mp4') ? 'mp4' : 'webm');
+  downloadBlob(blob, `export.${ext}`);
+
+  // Restore canvas
+  try {
+    try { if (prevPD != null && typeof pixelDensity === 'function') pixelDensity(prevPD); } catch(e){}
+    if (prevW !== width || prevH !== height){
+      resizeCanvas(Math.max(1, prevW), Math.max(1, prevH), true);
+      layout = buildLayout(currentLogoText(), rows);
+      requestRedraw();
+    }
+    PERF_MODE = prevPerf;
+    try { if (typeof fitViewportToWindow === 'function') fitViewportToWindow(); } catch(e){}
+  } catch(e){}
+}
+
 function downloadTextAsFile(text, filename, mime = 'image/svg+xml'){
   const blob = new Blob([text], { type: mime });
   const a = document.createElement('a');
@@ -1043,6 +1346,24 @@ function updateAnimatedParameters(){
   if (lineStep.animating) animating = true;
   if (lineStep.changed) capacityDirty = true; // row height affects repeat capacity
 
+  // Special handling for 'fadeIn': per-row stagger for height (no opacity)
+  if (!_taperTransActive){
+    if (EASE_TYPE === 'fadeIn'){
+      const tw = _paramTweens.linePx;
+      if (tw && tw.active){
+        _fadeTNorm = Math.max(0, Math.min(1, (now - tw.start) / Math.max(0.0001, tw.dur)));
+        // Height uses per-row stagger; base mul stays 1 here.
+        _lineMul = 1.0;
+      } else {
+        _fadeTNorm = 1.0;
+        _lineMul = 1.0;
+      }
+    } else {
+      _fadeTNorm = 1.0;
+      // keep _lineMul unchanged
+    }
+  }
+
   const gapStep = stepTween(_paramTweens.gapPx, gapPx, gapPxTarget, now);
   if (gapStep.changed){ gapPx = gapStep.value; /* no layout rebuild needed for gap */ }
   if (gapStep.animating) animating = true;
@@ -1062,6 +1383,11 @@ function updateAnimatedParameters(){
   const extraStep = stepTween(_paramTweens.extraRows, REPEAT_EXTRA_ROWS_ANIM, targetExtraNumeric, now);
   if (extraStep.changed) REPEAT_EXTRA_ROWS_ANIM = extraStep.value;
   if (extraStep.animating) animating = true;
+
+  // Repeat falloff easing (0.5..1 → 1 = uniform)
+  const rfStep = stepTween(_paramTweens.repeatFalloff, REPEAT_FALLOFF, REPEAT_FALLOFF_TARGET, now);
+  if (rfStep.changed) REPEAT_FALLOFF = rfStep.value;
+  if (rfStep.animating) animating = true;
 
   // Width scale (percentage control)
   const widthStep = stepTween(_paramTweens.widthScale, widthScale, widthScaleTarget, now);
@@ -1086,6 +1412,11 @@ function updateAnimatedParameters(){
   if (grpStep.changed) displaceGroupsAnim = grpStep.value;
   if (grpStep.animating) animating = true;
   // Colors update instantly via setColorTargets; no per-frame color tweening
+
+  // Dash length multiplier tween (independent fill)
+  const dlStep = stepTween(_paramTweens.dashMul, LINE_LEN_MUL_ANIM, LINE_LEN_MUL_TARGET, now);
+  if (dlStep.changed) LINE_LEN_MUL_ANIM = dlStep.value;
+  if (dlStep.animating) animating = true;
 
   // Wave: amplitude tweens + enable/disable fade
   const ampStep = stepTween(_paramTweens.mouseAmp, MOUSE_AMPLITUDE_ANIM, MOUSE_AMPLITUDE_TARGET, now);
@@ -1269,11 +1600,14 @@ function effectiveTaperMode(){
 }
 function triggerTaperSwitch(nextMode){
   const target = String(nextMode||'Rounded');
+  // Switch shapes instantly without easing/transition
   if (target === taperMode){ return; }
-  _taperPendingMode = target;
-  _taperTransActive = true;
-  _taperPhase = 'shrink';
-  _taperT0 = performance.now();
+  taperMode = target;
+  _taperPendingMode = null;
+  _taperTransActive = false;
+  _taperPhase = 'idle';
+  _lineMul = 1.0;
+  requestRedraw();
   // Reflect target immediately in UI controls so chips/sliders don't look swapped
   try {
     if (typeof document !== 'undefined'){
@@ -1354,6 +1688,7 @@ function setup(){
   elThickness    = byId('thickness');
   elWidth        = byId('widthScale');
   elGap          = byId('gap');
+  elFillBtn      = byId('fillBtn');
   elLogoText     = byId('logoText');
   elGroups       = byId('groups');
   elGroupsOut    = byId('groupsOut');
@@ -1815,6 +2150,15 @@ function setup(){
       requestRedraw();
     });
   }
+  // Fill button: make all lines ~2.8× longer (independent of Width)
+  if (elFillBtn){
+    elFillBtn.addEventListener('click', ()=>{
+      LINE_LEN_MUL_TARGET = 2.8;
+      updateUIFromState();
+      requestRedraw();
+      try { if (typeof kfAutosaveCurrent === 'function') kfAutosaveCurrent(); } catch(e){}
+    });
+  }
 
   function updateUIFromState(){
     if (elColorPreset) elColorPreset.value = String(activeColorComboIdx);
@@ -1906,10 +2250,10 @@ function setup(){
       elRepeatFalloff.min = '0.5';
       elRepeatFalloff.max = '1';
       elRepeatFalloff.step = '0.01';
-      elRepeatFalloff.value = REPEAT_FALLOFF.toFixed(2);
+      elRepeatFalloff.value = REPEAT_FALLOFF_TARGET.toFixed(2);
     }
     if (elRepeatFalloffOut){
-      elRepeatFalloffOut.textContent = REPEAT_FALLOFF.toFixed(2);
+      elRepeatFalloffOut.textContent = REPEAT_FALLOFF_TARGET.toFixed(2);
     }
     if (elRepeatModeUniform) elRepeatModeUniform.checked = (REPEAT_MODE === 'uniform');
     if (elRepeatModeFalloff) elRepeatModeFalloff.checked = (REPEAT_MODE === 'falloff');
@@ -1925,7 +2269,7 @@ function setup(){
     }
     if (elEaseAmp){
       elEaseAmp.value = String(EASE_AMPLITUDE.toFixed(2));
-      elEaseAmp.disabled = !(EASE_TYPE === 'snap');
+      elEaseAmp.disabled = false; // always allow editing
     }
     if (elEaseAmpOut){
       elEaseAmpOut.textContent = `${EASE_AMPLITUDE.toFixed(2)}×`;
@@ -1965,7 +2309,7 @@ function setup(){
     if (elEaseDurPctOut) elEaseDurPctOut.textContent = `${Math.round(EASE_DURATION_PCT)} %`;
     if (elEaseAmp)  elEaseAmp.value  = String(EASE_AMPLITUDE.toFixed(2));
     if (elEaseAmpOut) elEaseAmpOut.textContent = `${EASE_AMPLITUDE.toFixed(2)}×`;
-    if (elEaseAmp) elEaseAmp.disabled = !(EASE_TYPE === 'snap');
+    if (elEaseAmp) elEaseAmp.disabled = false;
 
     // Do not force preset/custom inputs here; preserve user selection
 
@@ -2018,8 +2362,8 @@ function setup(){
     elRepeatFalloff.addEventListener('input', ()=>{
       const v = parseFloat(elRepeatFalloff.value);
       if (Number.isFinite(v)){
-        REPEAT_FALLOFF = Math.max(0.5, Math.min(1, v));
-        if (elRepeatFalloffOut) elRepeatFalloffOut.textContent = REPEAT_FALLOFF.toFixed(2);
+        REPEAT_FALLOFF_TARGET = Math.max(0.5, Math.min(1, v));
+        if (elRepeatFalloffOut) elRepeatFalloffOut.textContent = REPEAT_FALLOFF_TARGET.toFixed(2);
         requestRedraw();
       }
     });
@@ -2130,6 +2474,24 @@ function setup(){
         } catch(err){
           console.error('Export MP4 failed:', err);
           alert('Export MP4 failed: ' + (err && err.message ? err.message : err));
+        }
+        return;
+      }
+      if (fmt === 'mp4hq'){
+        try {
+          await exportMP4HQ();
+        } catch(err){
+          console.error('Export MP4 (HQ) failed:', err);
+          alert('Export MP4 (HQ) failed: ' + (err && err.message ? err.message : err));
+        }
+        return;
+      }
+      if (fmt === 'webm'){
+        try {
+          await exportWebM();
+        } catch(err){
+          console.error('Export WebM failed:', err);
+          alert('Export WebM failed: ' + (err && err.message ? err.message : err));
         }
         return;
       }
@@ -2351,7 +2713,7 @@ function setup(){
 
   // Easing controls (for slider-driven transitions)
   // Allow amplitude only for 'snap' (elastic removed)
-  function updateEaseAmpState(){ if (elEaseAmp) elEaseAmp.disabled = !(EASE_TYPE === 'snap'); }
+  function updateEaseAmpState(){ if (elEaseAmp) elEaseAmp.disabled = false; }
   updateEaseAmpState();
   // Initialize duration % control
   if (elEaseDurPct){
@@ -2364,8 +2726,9 @@ function setup(){
   updateEaseDurationFromKf();
   if (elEaseType){
     elEaseType.addEventListener('change', ()=>{
-      const v = String(elEaseType.value||'smooth');
-      EASE_TYPE = (v === 'linear' || v === 'easeInOut' || v === 'snap' || v === 'snapHalf') ? v : 'smooth';
+      let v = String(elEaseType.value||'smooth');
+      if (v === 'fade-in') v = 'fadeIn'; // accept hyphen alias
+      EASE_TYPE = (v === 'linear' || v === 'easeInOut' || v === 'snap' || v === 'snapHalf' || v === 'fadeIn') ? v : 'smooth';
       updateEaseAmpState();
       updateUIFromState();
       requestRedraw();
@@ -2534,6 +2897,9 @@ function setup(){
     linePxTarget = LINE_HEIGHT;
     widthScale = WIDTH_SCALE_DEFAULT;
     widthScaleTarget = WIDTH_SCALE_DEFAULT;
+    LINE_LEN_MUL = LINE_LEN_MUL_DEFAULT;
+    LINE_LEN_MUL_TARGET = LINE_LEN_MUL_DEFAULT;
+    LINE_LEN_MUL_ANIM = LINE_LEN_MUL_DEFAULT;
     gapPx = GAP_PX_DEFAULT;
     gapPxTarget = GAP_PX_DEFAULT;
     displaceGroupsTarget = DISPLACE_GROUPS_DEFAULT;
@@ -2567,6 +2933,7 @@ function setup(){
     REPEAT_EXTRA_ROWS_ANIM = (Number.isFinite(REPEAT_EXTRA_ROWS_DEFAULT) ? REPEAT_EXTRA_ROWS_DEFAULT : 0);
     REPEAT_EXTRA_ROWS_IS_FULL = !Number.isFinite(REPEAT_EXTRA_ROWS_DEFAULT) && REPEAT_EXTRA_ROWS_DEFAULT > 0;
     REPEAT_FALLOFF = REPEAT_FALLOFF_DEFAULT;
+    REPEAT_FALLOFF_TARGET = REPEAT_FALLOFF_DEFAULT;
     REPEAT_MODE    = REPEAT_MODE_DEFAULT;
     updateRepeatSlidersRange();
 
@@ -2892,7 +3259,16 @@ function renderLogo(g){
   } else {
     g.background(color1);
   }
-  g.fill(color2);
+  // Apply subtle global opacity during fade-in
+  if (EASE_TYPE === 'fadeIn' && !_taperTransActive){
+    try {
+      const cc = color(color2);
+      cc.setAlpha(Math.max(0, Math.min(255, Math.floor(255 * fadeInAlphaMul()))));
+      g.fill(cc);
+    } catch(e){ g.fill(color2); }
+  } else {
+    g.fill(color2);
+  }
   g.noStroke();
 
   const fit = computeLayoutFit();
@@ -3055,16 +3431,20 @@ function renderLogo(g){
         const baseRowRel = baseRowAbs - baseStartAbs; // 0 op start, stijgt per rowPitch
         const baseRowRelScaled = baseRowRel * Math.max(0.01, hMul);
 
+        // Row-specific fade-in: height stagger only (no opacity changes)
+
         const y = mirrored
           ? (tileHScaled - baseRowRelScaled) + yOff    // spiegel binnen geschaalde venster-hoogte
           : (baseRowRelScaled + yOff);
         for (const span of spans){
           const rightEdgeX = baseX + span.rightRel * layout.scale * wScaleUse;
           const baseLen    = Math.max(0, span.runLen * layout.scale * wScaleUse);
-          const maxDash = Math.max(0, rightEdgeX - baseX);
-          const dashLenClamped = Math.min(baseLen, maxDash);
+          // Base dash length (from scan result), scaled independently by LINE_LEN_MUL (animated)
+          const dashLenUse = Math.max(0, baseLen * Math.max(0, (LINE_LEN_MUL_ANIM || 0)));
+          // Distribute any extra length equally to left and right by shifting the right edge
+          const extraLen = Math.max(0, dashLenUse - baseLen);
           const xShift = computeXShift(r, rows, displaceGroupsAnim);
-          let rx = rightEdgeX + xShift;
+          let rx = rightEdgeX + xShift + (extraLen * 0.5);
           if (ANIM_ENABLED && effHWave !== 0 && rowPitchNow > 0){
             const ampLayout = rowPitchNow * effHWave;
             const periodHW = Math.max(0.1, H_WAVE_PERIOD);
@@ -3074,23 +3454,24 @@ function renderLogo(g){
             const phase = (rowW * (r / rows) * TWO_PI) - tRel * TWO_PI / periodHW;
             rx += Math.sin(phase) * ampLayout;
           }
-          const drawH = Math.max(MIN_DRAW_HEIGHT, linePx * _lineMul * Math.max(0.01, hMul));
+          const heightMul = (EASE_TYPE === 'fadeIn' && !_taperTransActive) ? Math.max(0, Math.min(1, fadeInRowMul(r, rows))) : _lineMul;
+          const drawH = Math.max(MIN_DRAW_HEIGHT, linePx * heightMul * Math.max(0.01, hMul));
           switch (taperMode) {
             case 'Straight':
-              drawStraightTaper(gDest, rx, y, dashLenClamped, drawH, TIP_RATIO);
+              drawStraightTaper(gDest, rx, y, dashLenUse, drawH, TIP_RATIO);
               break;
             case 'Circles':
-              drawCircleTaper(gDest, rx, y, dashLenClamped, drawH, TIP_RATIO);
+              drawCircleTaper(gDest, rx, y, dashLenUse, drawH, TIP_RATIO);
               break;
             case 'Blocks':
-              drawBlockTaper(gDest, rx, y, dashLenClamped, drawH, TIP_RATIO);
+              drawBlockTaper(gDest, rx, y, dashLenUse, drawH, TIP_RATIO);
               break;
             case 'Pluses':
-              drawPlusTaper(gDest, rx, y, dashLenClamped, drawH, TIP_RATIO);
+              drawPlusTaper(gDest, rx, y, dashLenUse, drawH, TIP_RATIO);
               break;
             case 'Rounded':
             default:
-              drawRoundedTaper(gDest, rx, y, dashLenClamped, drawH, TIP_RATIO);
+              drawRoundedTaper(gDest, rx, y, dashLenUse, drawH, TIP_RATIO);
               break;
           }
         }
@@ -3372,7 +3753,7 @@ function drawCircleTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
   const step = Math.max(1, (PERF_MODE && isPlaybackActive() && !isExport) ? TAPER_SPACING * 1.5 : TAPER_SPACING);
   const n = Math.max(1, Math.floor(pathLen / step) + 1);
 
-  g.fill(color2);
+  // use current fill (may include global fade alpha)
   for (let i = 0; i < n; i++){
     const cx = xRight - i * step;
     if (cx < xLeftLimit - 1e-3) break; // guard
@@ -3413,8 +3794,7 @@ function drawBlockTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
   g.push();
   g.noStroke();
 
-  // Draw cap on the right
-  g.fill(color2);
+  // Draw cap on the right (respect global fade alpha)
   g.rect(xCapL, yCap, capLen, capH);
 
   // March leftwards with normalized block widths so total exactly fills `len`
@@ -3427,7 +3807,9 @@ function drawBlockTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
     const xL = rightEdge - w; // touch previous element
 
     // Optional subtle fade towards the tip
-    const alpha = Math.floor(255 - (255 - 80) * frac);
+    const baseAlpha = Math.floor(255 - (255 - 80) * frac);
+    const globalMul = (EASE_TYPE === 'fadeIn' && !_taperTransActive) ? fadeInAlphaMul() : 1;
+    const alpha = Math.max(0, Math.min(255, Math.floor(baseAlpha * globalMul)));
     const cc = color(color2);
     cc.setAlpha(alpha);
     g.fill(cc);
@@ -3458,7 +3840,7 @@ function drawPlusTaper(g, rightX, cy, len, h, tipRatio = TIP_RATIO){
 
   g.push();
   g.noStroke();
-  g.fill(color2);
+  // use current fill (may include global fade alpha)
   for (let i = 0; i < n; i++){
     // Center progresses from near the big end to near the tip at fixed spacing
     let cx = startCx - i * step;
@@ -3817,6 +4199,8 @@ function getParamSnapshot(){
   snap.tipRatio = Number(TIP_RATIO_TARGET.toFixed(2));
   snap.widthPct = Math.round(Math.max(0, Math.min(500, (widthScaleTarget * 100))));
   snap.gapPx = Math.round(gapPxTarget);
+  // Independent dash length multiplier (use target like other params)
+  snap.dashMul = Number(Math.max(0, LINE_LEN_MUL_TARGET || 0).toFixed(2));
   // Use the active taper mode for shape; do not read the UI slider to avoid leaking edits between keyframes
   snap.shapeIdx = modeToIndex(effectiveTaperMode());
   snap.groups = Math.round(displaceGroupsTarget);
@@ -3842,12 +4226,12 @@ function getParamSnapshot(){
   snap.repeatEnabled = !!REPEAT_ENABLED;
   const repeatModeMap = { uniform:0, falloff:1 };
   snap.repeatMode = repeatModeMap[String(REPEAT_MODE||'uniform')] ?? 0;
-  snap.repeatFalloff = Number(Math.max(0.5, Math.min(1, REPEAT_FALLOFF)).toFixed(2));
+  snap.repeatFalloff = Number(Math.max(0.5, Math.min(1, REPEAT_FALLOFF_TARGET)).toFixed(2));
   snap.repeatMirror = !!REPEAT_MIRROR;
   const isAll = !!REPEAT_EXTRA_ROWS_IS_FULL || !Number.isFinite(REPEAT_EXTRA_ROWS);
   snap.repeatExtraRows = isAll ? 'ALL' : Math.max(0, Math.round(REPEAT_EXTRA_ROWS));
   const et = String(EASE_TYPE||'smooth');
-  const easeTypeMap = { smooth:0, linear:1, easeInOut:2, snap:4, snapHalf:5 };
+  const easeTypeMap = { smooth:0, linear:1, easeInOut:2, snap:4, snapHalf:5, fadeIn:6 };
   snap.easeType = easeTypeMap[et] ?? 0;
   snap.easeAmp = Number(Math.max(0, EASE_AMPLITUDE).toFixed(2));
   return snap;
@@ -3862,6 +4246,8 @@ function buildParamCode(snap){
   parts.push('tr' + s.tipRatio.toFixed(2));
   parts.push('w' + s.widthPct);
   parts.push('g' + s.gapPx);
+   // dash length multiplier per keyframe
+  parts.push('dl' + Number(s.dashMul).toFixed(2));
   parts.push('sh' + s.shapeIdx);
   parts.push('gr' + s.groups);
   parts.push('du' + s.dispUnit);
@@ -3901,7 +4287,7 @@ function parseParamCode(str){
   if (!str || typeof str !== 'string') return null;
   const input = str.trim();
   const tokens = [
-    'hwp','hwa','rmi','bgl','bgt','lh','tr','sh','gr','du','cp','tx','am','cv','ad','pw','pp','kt','km','rm','rf','rx','et','ed','ea','re','an','s','r','w','g'
+    'hwp','hwa','rmi','bgl','bgt','lh','tr','sh','gr','du','cp','tx','am','cv','ad','pw','pp','kt','km','rm','rf','rx','et','ed','ea','re','an','dl','s','r','w','g'
   ].sort((a,b)=> b.length - a.length);
   const out = {};
   let i = 0;
@@ -3950,6 +4336,13 @@ function applyParamCode(code){
   }
 
   if (map.lh){ setVal('thickness', clamp(parseInt(map.lh,10)||LINE_HEIGHT, 1, 100), 'input'); }
+  // Dash length multiplier (no UI control) → set target or reset to default if absent in code
+  if (Object.prototype.hasOwnProperty.call(map, 'dl')){
+    const v = Math.max(0, parseFloat(map.dl)||0);
+    LINE_LEN_MUL_TARGET = v;
+  } else {
+    LINE_LEN_MUL_TARGET = LINE_LEN_MUL_DEFAULT;
+  }
   if (map.tr){ setVal('tipRatio', clamp(parseFloat(map.tr)||TIP_RATIO_DEFAULT, 0, 1).toFixed(2), 'input'); }
   if (map.w){  setVal('widthScale', clamp(parseInt(map.w,10)||110, 0, 500), 'input'); }
   if (map.g){  setVal('gap', parseInt(map.g,10)||0, 'input'); }
@@ -4045,7 +4438,12 @@ function applyParamCode(code){
   // Easing
   if (map.et){
     const etIdx = parseInt(map.et,10)||0;
-    const etVal = etIdx===1 ? 'linear' : etIdx===2 ? 'easeInOut' : etIdx===4 ? 'snap' : etIdx===5 ? 'snapHalf' : 'smooth';
+    const etVal = etIdx===1 ? 'linear'
+                : etIdx===2 ? 'easeInOut'
+                : etIdx===4 ? 'snap'
+                : etIdx===5 ? 'snapHalf'
+                : etIdx===6 ? 'fadeIn'
+                : 'smooth';
     setVal('easeType', etVal, 'change');
   }
   if (map.ed){
@@ -4082,6 +4480,13 @@ function applyParamCodeFast(codeOrMap){
   }
   if (map.s){ logoScaleTarget = clamp(parseInt(map.s,10)||100, 10, 200) / 100; }
   if (map.lh){ linePxTarget = clamp(parseInt(map.lh,10)||LINE_HEIGHT, 1, 200); }
+  // Dash length multiplier: set target or reset to default when missing
+  if (Object.prototype.hasOwnProperty.call(map, 'dl')){
+    const v = Math.max(0, parseFloat(map.dl)||0);
+    LINE_LEN_MUL_TARGET = v;
+  } else {
+    LINE_LEN_MUL_TARGET = LINE_LEN_MUL_DEFAULT;
+  }
   if (map.tr){ TIP_RATIO_TARGET = clamp(parseFloat(map.tr)||TIP_RATIO_DEFAULT, 0, 1); }
   if (map.w){  widthScaleTarget = clamp(parseInt(map.w,10)||110, 0, 500)/100; }
   if (map.g){  gapPxTarget = parseInt(map.g,10)||0; }
@@ -4141,7 +4546,7 @@ function applyParamCodeFast(codeOrMap){
 
   if (map.re){ REPEAT_ENABLED = (parseInt(map.re,10) === 1); }
   if (map.rm){ REPEAT_MODE = ((parseInt(map.rm,10)||0)===1)?'falloff':'uniform'; }
-  if (map.rf){ REPEAT_FALLOFF = clamp(parseFloat(map.rf)||1, 0.5, 1); }
+  if (map.rf){ REPEAT_FALLOFF_TARGET = clamp(parseFloat(map.rf)||1, 0.5, 1); }
   if (map.rmi){ REPEAT_MIRROR = (parseInt(map.rmi,10) === 1); }
   if (map.rx){
     const v = String(map.rx).trim();
@@ -4155,7 +4560,7 @@ function applyParamCodeFast(codeOrMap){
     // tween for extra rows anim handles the visual interpolation
   }
 
-  if (map.et){ const etIdx = parseInt(map.et,10)||0; EASE_TYPE = etIdx===1?'linear':etIdx===2?'easeInOut':etIdx===4?'snap':etIdx===5?'snapHalf':'smooth'; }
+  if (map.et){ const etIdx = parseInt(map.et,10)||0; EASE_TYPE = etIdx===1?'linear':etIdx===2?'easeInOut':etIdx===4?'snap':etIdx===5?'snapHalf':etIdx===6?'fadeIn':'smooth'; }
   if (map.ed){ EASE_DURATION = Math.max(0, parseFloat(map.ed)||EASE_DURATION_DEFAULT); }
   if (map.ea){ EASE_AMPLITUDE = Math.max(0, parseFloat(map.ea)||EASE_AMPLITUDE_DEFAULT); }
 
