@@ -676,7 +676,11 @@ function exportSVG(cb){
   try {
     const w = Math.max(1, width);
     const h = Math.max(1, height);
-    const sg = createGraphics(w, h, SVG);
+    // Use the p5.svg renderer if loaded; avoid referencing an undefined SVG symbol
+    const hasSVG = (typeof p5 !== 'undefined') && (p5 && (p5.RendererSVG || (typeof SVG !== 'undefined') || (typeof window !== 'undefined' && window.SVG)));
+    if (!hasSVG) { throw new Error('p5.svg not loaded'); }
+    const renderer = (typeof SVG !== 'undefined') ? SVG : 'svg';
+    const sg = createGraphics(w, h, renderer);
     // Ensure intrinsic size on the SVG output
     if (sg && sg.elt && sg.elt.tagName && sg.elt.tagName.toLowerCase() === 'svg'){
       sg.elt.setAttribute('width', String(w));
@@ -2437,7 +2441,10 @@ function setup(){
       if (fmt === 'pdf'){
         try {
           const data = exportSVG();
-          if (!data){ throw new Error('SVG data unavailable'); }
+          if (!data){
+            const missing = (typeof p5 !== 'undefined') && !(p5 && (p5.RendererSVG || (typeof SVG !== 'undefined') || (typeof window !== 'undefined' && window.SVG)));
+            throw new Error(missing ? 'p5.svg not loaded' : 'SVG data unavailable');
+          }
           // Parse into a DOM element for svg2pdf
           const parser = new DOMParser();
           const doc = parser.parseFromString(data, 'image/svg+xml');

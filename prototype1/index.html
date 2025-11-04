@@ -4,7 +4,8 @@
     <meta charset="utf-8" />
     <title>Prototype</title>
     <script src="https://cdn.jsdelivr.net/npm/p5@1.11.10/lib/p5.js"></script>
-    <script src="https://unpkg.com/p5.js-svg@1.6.0"></script>
+    <!-- p5.svg addon: use explicit dist UMD to expose global SVG and p5.RendererSVG -->
+    <script src="https://cdn.jsdelivr.net/npm/p5.js-svg@1.6.0/dist/p5.svg.min.js"></script>
     <!-- Vector PDF export dependencies (used only for Export actions) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/3.0.2/jspdf.umd.min.js"></script>
     <script src="https://unpkg.com/svg2pdf.js@2.2.4/dist/svg2pdf.umd.min.js"></script>
