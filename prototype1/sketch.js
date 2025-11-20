@@ -2396,6 +2396,7 @@ function setup(){
       b.addEventListener('click', ()=> kfSelect(i));
       elKfList.appendChild(b);
     });
+    _kfPrevIdx = kfIndex;
   }
 
   function kfSelect(idx){
@@ -2500,34 +2501,45 @@ function setup(){
   }
 
   function kfIsPlaying(){ return !!kfTimer; }
-  function kfUpdateToggleUI(){ if (elKfToggle){ elKfToggle.textContent = kfIsPlaying() ? '⏸' : '▶'; elKfToggle.title = kfIsPlaying() ? 'Pause' : 'Play'; } }
+  function kfUpdateToggleUI(){
+    if (elKfToggle){
+      const playing = kfIsPlaying();
+      elKfToggle.textContent = playing ? '⏸' : '▶';
+      elKfToggle.title = playing ? 'Pause' : 'Play';
+      elKfToggle.classList.toggle('is-active', playing);
+    }
+  }
   function kfStop(){ if (kfTimer){ clearTimeout(kfTimer); kfTimer = null; } KF_PLAYING = false; kfUpdateToggleUI(); }
   function kfPlay(){
     if (!keyframes.length){ return; }
     kfStop();
     KF_PLAYING = true;
-    const tick = ()=>{
+    if (kfIndex < 0 || kfIndex >= keyframes.length) kfIndex = 0;
+    _kfPrevIdx = kfIndex;
+    // Persist edits on the current (starting) frame before playback
+    try { kfAutosaveCurrent(true); } catch(e){}
+    const runFrame = ()=>{
       if (!keyframes.length){ kfStop(); return; }
-      // Persist edits on the current frame before advancing
-      try { kfAutosaveCurrent(true); } catch(e){}
-      const next = (kfIndex + 1) % keyframes.length;
-      kfIndex = next;
       const f = keyframes[kfIndex];
       if (f){
-        // Sync easing duration to this frame's duration so transitions fit the interval
         const tSec = Math.max(0.05, (f && f.timeSec) ? f.timeSec : KF_TIME_DEFAULT);
         KF_TIME_CUR = tSec;
         updateEaseDurationFromKf();
         kfApply(f.code);
+        kfHighlightActive();
+        if (elIdCode && f.code){ elIdCode.value = f.code; }
+        const delayMs = Math.max(50, Math.round(tSec * Math.max(0.1, KF_SPEED_MUL) * 1000));
+        kfTimer = setTimeout(()=>{
+          try { kfAutosaveCurrent(true); } catch(e){}
+          kfIndex = (kfIndex + 1) % keyframes.length;
+          runFrame();
+        }, delayMs);
+      } else {
+        kfStop();
       }
-      kfHighlightActive();
-      if (elIdCode && f && f.code){ elIdCode.value = f.code; }
-      const tSec = Math.max(0.05, (f && f.timeSec) ? f.timeSec : KF_TIME_DEFAULT);
-      const delayMs = Math.max(50, Math.round(tSec * Math.max(0.1, KF_SPEED_MUL) * 1000));
-      kfTimer = setTimeout(tick, delayMs);
     };
-    // Advance immediately so the initially selected frame is deselected
-    tick();
+    // Start playback from the current keyframe (respect its duration)
+    runFrame();
     kfUpdateToggleUI();
   }
 
