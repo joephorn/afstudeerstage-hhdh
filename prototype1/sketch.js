@@ -1462,6 +1462,90 @@ function updateAnimatedParameters(){
   if (animating) requestRedraw();
 }
 
+// --- Control locking (for main Controls UI) ---
+const LOCKED_PARAMS = new Set();
+if (typeof window !== 'undefined'){ window.__lockedParams = LOCKED_PARAMS; }
+
+function normalizeLockKey(id){
+  const k = String(id || '').toLowerCase();
+  if (k === 'genrows' || k === 'rows') return 'rows';
+  if (k === 'genlineheight' || k === 'thickness') return 'thickness';
+  if (k === 'gengap' || k === 'gap') return 'gap';
+  if (k === 'genwidth' || k === 'widthscale' || k === 'width') return 'width';
+  if (k === 'dispoffset' || k === 'dispunit') return 'dispUnit';
+  if (k === 'gentipratio' || k === 'tipratio') return 'tipRatio';
+  if (k === 'genshape' || k === 'taperindex') return 'taperIndex';
+  if (k === 'dispgroups' || k === 'groups') return 'groups';
+  if (k === 'gencolor' || k === 'colorpreset') return 'colorPreset';
+  return k;
+}
+function isParamLocked(key){
+  const norm = normalizeLockKey(key);
+  return LOCKED_PARAMS.has(norm);
+}
+function setRowLocked(row, locked){
+  if (!row) return;
+  const key = normalizeLockKey(row.dataset.lockKey || '');
+  row.dataset.locked = locked ? '1' : '0';
+  if (key){
+    if (locked) LOCKED_PARAMS.add(key); else LOCKED_PARAMS.delete(key);
+  }
+  row.querySelectorAll('input, select, textarea').forEach(el=>{
+    if (el.classList && el.classList.contains('ui-lock')) return;
+    el.disabled = !!locked;
+  });
+  row.querySelectorAll('.scalar').forEach(sc=> sc.classList.toggle('is-disabled', !!locked));
+  // Custom dropdown: disable its button when locked
+  row.querySelectorAll('.dropdown__button').forEach(btn => {
+    btn.setAttribute('aria-disabled', locked ? 'true' : 'false');
+  });
+}
+
+function clearLocksInScope(scope){
+  const root = scope || document.getElementById('controls');
+  if (!root) return;
+  root.querySelectorAll('.ui-row[data-lock-init="1"], .ui-row[data-lock-init="true"]').forEach(row => setRowLocked(row, false));
+  root.querySelectorAll('.ui-row').forEach(row => setRowLocked(row, false));
+}
+function attachLockToRow(row){
+  if (!row || row.dataset.lockInit === '1') return;
+  const control = row.querySelector('input[id], select[id], textarea[id]');
+  if (!control || !control.id) return;
+  const key = normalizeLockKey(control.id);
+  if (!key) return;
+  row.dataset.lockInit = '1';
+  row.dataset.lockKey = key;
+  if (!row.dataset.locked) row.dataset.locked = '0';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'ui-lock';
+  btn.title = 'Lock value';
+  row.insertBefore(btn, row.firstChild);
+  const toggle = (e)=>{
+    if (e){ e.preventDefault(); e.stopPropagation(); }
+    const locked = row.dataset.locked === '1';
+    setRowLocked(row, !locked);
+    updateNewUIFromState();
+  };
+  btn.addEventListener('click', toggle);
+  const showHover = ()=> row.classList.add('show-lock');
+  const hideHover = ()=> row.classList.remove('show-lock');
+  btn.addEventListener('mouseenter', showHover);
+  btn.addEventListener('mouseleave', hideHover);
+  const label = row.querySelector('.ui-label');
+  if (label){
+    label.style.cursor = 'pointer';
+    label.addEventListener('click', toggle);
+    label.addEventListener('mouseenter', showHover);
+    label.addEventListener('mouseleave', hideHover);
+  }
+  setRowLocked(row, row.dataset.locked === '1');
+}
+function initControlLocks(){
+  if (typeof document === 'undefined') return;
+  document.querySelectorAll('#controls .ui-row').forEach(attachLockToRow);
+}
+
 function applyRandomTweaks(){
   let mutated = false;
 
@@ -1477,63 +1561,63 @@ function applyRandomTweaks(){
   };
 
   maybe(0.9, ()=>{
-    if (!elRows) return;
+    if (!elRows || isParamLocked('rows')) return;
     const { min, max, step } = getInputRange(elRows, 4, 32, 1);
     const val = randFromRangeInt(Math.round(Math.max(1, min)), Math.round(Math.max(min, max)), Math.max(1, Math.round(step || 1)));
     setAndDispatch(elRows, val, 'input');
   });
 
   maybe(0.8, ()=>{
-    if (!elThickness) return;
+    if (!elThickness || isParamLocked('thickness')) return;
     const { min, max, step } = getInputRange(elThickness, 1, 25, 1);
     const val = randFromRangeInt(Math.round(Math.max(1, min)), Math.round(Math.max(min, max)), Math.max(1, Math.round(step || 1)));
     setAndDispatch(elThickness, val, 'input');
   });
 
   maybe(0.75, ()=>{
-    if (!elGap) return;
+    if (!elGap || isParamLocked('gap')) return;
     const { min, max, step } = getInputRange(elGap, -20, 150, 1);
     const val = randFromRangeInt(min, Math.min(150, max), Math.max(0.1, step || 1));
     setAndDispatch(elGap, val, 'input');
   });
 
   maybe(0.75, ()=>{
-    if (!elWidth) return;
+    if (!elWidth || isParamLocked('width')) return;
     const { min, max, step } = getInputRange(elWidth);
     const pct = randFromRangeInt(Math.max(min), Math.min(max), Math.max(step));
     setAndDispatch(elWidth, pct, 'input');
   });
 
   maybe(0.7, ()=>{
-    if (!elDispUnit) return;
+    if (!elDispUnit || isParamLocked('dispUnit')) return;
     const { min, max, step } = getInputRange(elDispUnit, 0, 80, 1);
     const val = randFromRangeInt(Math.max(0, min), Math.max(min, max), Math.max(0.1, step || 1));
     setAndDispatch(elDispUnit, val, 'input');
   });
 
   maybe(0.7, ()=>{
-    if (!elTipRatio) return;
+    if (!elTipRatio || isParamLocked('tipRatio')) return;
     const { min, max, step } = getInputRange(elTipRatio, 0, 1, 0.01);
     const val = randFromRangeInt(Math.max(0, min), Math.min(1, max), Math.max(0.001, step || 0.01));
     setAndDispatch(elTipRatio, Number(val.toFixed(2)), 'input');
   });
 
   maybe(0.6, ()=>{
-    if (!elTaperIndex) return;
+    if (!elTaperIndex || isParamLocked('taperIndex')) return;
     const { min, max } = getInputRange(elTaperIndex, 1, 5, 1);
     const val = randInt(Math.round(Math.max(1, min)), Math.round(Math.max(min, max)) || 5);
     setAndDispatch(elTaperIndex, val, 'input');
   });
 
   maybe(0.65, ()=>{
-    if (!elGroups) return;
+    if (!elGroups || isParamLocked('groups')) return;
     const min = parseInt(elGroups.min || '0', 10) || 0;
     const max = parseInt(elGroups.max || '0', 10) || 0;
     if (max >= min) setAndDispatch(elGroups, randInt(min, max), 'input');
   });
 
   maybe(0.6, ()=>{
-    if (!elColorPreset) return;
+    if (!elColorPreset || isParamLocked('colorPreset')) return;
     const count = elColorPreset.options ? elColorPreset.options.length : 0;
     if (count <= 0) return;
     let idx = randInt(0, count - 1);
@@ -1542,7 +1626,7 @@ function applyRandomTweaks(){
   });
 
   if (!mutated){
-    if (elRows){
+    if (elRows && !isParamLocked('rows')){
       const { min, max, step } = getInputRange(elRows, 4, 32, 1);
       const val = randFromRangeInt(Math.round(Math.max(1, min)), Math.round(Math.max(min, max)), Math.max(1, Math.round(step || 1)));
       setAndDispatch(elRows, val, 'input');
@@ -1905,6 +1989,18 @@ function setup(){
     if (nTransDur){ nTransDur.min='0'; nTransDur.max='200'; nTransDur.step='1'; nTransDur.value = String(Math.round(EASE_DURATION_PCT)); }
     if (nTransAmp){ nTransAmp.min='0'; nTransAmp.max='2'; nTransAmp.step='0.1'; nTransAmp.value = EASE_AMPLITUDE.toFixed(1); }
 
+    // Disable locked controls in the new UI so they can't be edited while locked
+    const isLocked = (key)=> isParamLocked(key);
+    if (nRows)       nRows.disabled       = isLocked('rows');
+    if (nLineHeight) nLineHeight.disabled = isLocked('thickness');
+    if (nGap)        nGap.disabled        = isLocked('gap');
+    if (nWidth)      nWidth.disabled      = isLocked('width');
+    if (nTipRatio)   nTipRatio.disabled   = isLocked('tipRatio');
+    if (nShape)      nShape.disabled      = isLocked('taperIndex');
+    if (nColor)      nColor.disabled      = isLocked('colorPreset');
+    if (nDispGroups) nDispGroups.disabled = isLocked('groups');
+    if (nDispOffset) nDispOffset.disabled = isLocked('dispUnit');
+
     updateNewUIVisibility();
     // Resync custom sliders with any programmatic value changes
     try {
@@ -1951,6 +2047,7 @@ function setup(){
   populateNewUI();
   try { if (window.__resyncCustomDropdowns) window.__resyncCustomDropdowns(); } catch(e){}
   updateNewUIFromState();
+  initControlLocks();
 
   // New UI event listeners
   if (nText){ nText.addEventListener('change', ()=>{ setLogoText(nText.value || LOGO_TEXT_OPTIONS[0]); requestRedraw(); }); }
@@ -2129,6 +2226,9 @@ function setup(){
       default:
         break;
     }
+    // Clear locks within this section
+    const secEl = document.getElementById(id);
+    if (secEl) clearLocksInScope(secEl);
     updateUIFromState();
     requestRedraw();
   }
@@ -2683,11 +2783,11 @@ function setup(){
       elEaseDurPctOut.textContent = `${Math.round(EASE_DURATION_PCT)} %`;
     }
     if (elEaseAmp){
-      elEaseAmp.value = String(EASE_AMPLITUDE.toFixed(2));
+      elEaseAmp.value = String(EASE_AMPLITUDE.toFixed(1));
       elEaseAmp.disabled = false; // always allow editing
     }
     if (elEaseAmpOut){
-      elEaseAmpOut.textContent = `${EASE_AMPLITUDE.toFixed(2)}×`;
+      elEaseAmpOut.textContent = `${EASE_AMPLITUDE.toFixed(1)}×`;
     }
 
     // Keyframe timing UI
@@ -2720,8 +2820,8 @@ function setup(){
     if (elEaseType) elEaseType.value = EASE_TYPE;
     if (elEaseDurPct)  elEaseDurPct.value  = String(Math.round(EASE_DURATION_PCT));
     if (elEaseDurPctOut) elEaseDurPctOut.textContent = `${Math.round(EASE_DURATION_PCT)} %`;
-    if (elEaseAmp)  elEaseAmp.value  = String(EASE_AMPLITUDE.toFixed(2));
-    if (elEaseAmpOut) elEaseAmpOut.textContent = `${EASE_AMPLITUDE.toFixed(2)}×`;
+    if (elEaseAmp)  elEaseAmp.value  = String(EASE_AMPLITUDE.toFixed(1));
+    if (elEaseAmpOut) elEaseAmpOut.textContent = `${EASE_AMPLITUDE.toFixed(1)}×`;
     if (elEaseAmp) elEaseAmp.disabled = false;
 
     // Do not force preset/custom inputs here; preserve user selection
@@ -3428,6 +3528,9 @@ function setup(){
 
     fitViewportToWindow();
     requestRedraw();
+
+    // Also clear all locks on controls
+    clearLocksInScope(document.getElementById('controls'));
   }
 
   elReset.addEventListener('click', resetDefaults);
