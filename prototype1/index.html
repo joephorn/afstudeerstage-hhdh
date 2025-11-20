@@ -2,11 +2,9 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Prototype</title>
+    <title>Albion - Ontwerp Toolkit</title>
     <script src="https://cdn.jsdelivr.net/npm/p5@1.11.10/lib/p5.js"></script>
-    <!-- p5.svg addon: use explicit dist UMD to expose global SVG and p5.RendererSVG -->
     <script src="https://cdn.jsdelivr.net/npm/p5.js-svg@1.6.0/dist/p5.svg.min.js"></script>
-    <!-- Vector PDF export dependencies (used only for Export actions) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/3.0.2/jspdf.umd.min.js"></script>
     <script src="https://unpkg.com/svg2pdf.js@2.2.4/dist/svg2pdf.umd.min.js"></script>
     <link rel="stylesheet" href="style.css" />
@@ -17,14 +15,16 @@
           <div id="canvasWrap"></div>
           <div id="exportBar" class="export-bar">
             <div class="bar-inner">
-              <!-- Left column: Size + Format stacked -->
-              <div class="export-left">
-              <!-- Size group: preset + custom resolution -->
-              <div class="size-group">
+              <!-- Settings section -->
+              <section class="export-section export-section--settings">
+                <div class="export-section-head">
+                  <h2 class="export-section-title">Settings</h2>
+                </div>
+                <div class="size-group">
                 <label class="control-label control-label--inline" for="preset">
                   <span>Size</span>
                 </label>
-                <select id="preset" class="control-select control-select--tight">
+                <select id="preset" class="visually-hidden">
                   <option value="fit" selected>Fit — fill screen</option>
                   <option value="ar1" data-aw="16" data-ah="9" data-w="1920" data-h="1080">16:9 — 1920 × 1080 (Full HD)</option>
                   <option value="ar2" data-aw="16" data-ah="9" data-w="1280" data-h="720">16:9 — 1280 × 720 (HD)</option>
@@ -40,6 +40,7 @@
                   <option value="ar12" data-aw="21" data-ah="9" data-w="3440" data-h="1440">21:9 — 3440 × 1440 (Ultrawide)</option>
                   <option value="custom" data-aw="" data-ah="" data-w="" data-h="">Custom…</option>
                 </select>
+                <div class="dropdown dropdown--text" data-link="#preset"></div>
                 <div id="customAR" class="custom-resolution">
                   <label class="control-label inline-label">
                     <span>Custom resolution</span>
@@ -53,65 +54,431 @@
                     <button id="applyCustomAR" type="button">Apply</button>
                   </div>
                 </div>
-              </div>
-              <!-- Format group -->
-              <div class="format-group">
+                <!-- Format -->
+                <div class="format-group">
                 <label class="control-label control-label--inline" for="exportFormat">
                   <span>Format</span>
                 </label>
-                <select id="exportFormat" class="control-select control-select--tight">
+                <select id="exportFormat" class="visually-hidden">
                   <option value="svg">SVG</option>
                   <option value="pdf">PDF</option>
-                  <option value="mp4">MP4 (screen capture)</option>
-                  <option value="mp4hq">MP4 (high quality)</option>
-                  <option value="webm">WebM (screen capture)</option>
+                  <option value="mp4">MP4</option>
+                  <option value="webm">WebM</option>
                 </select>
-                <div class="field-row" style="align-items:center; gap:8px; margin-top:6px;">
-                  <button id="cfgSave" type="button">Scene opslaan</button>
-                  <button id="cfgLoad" type="button">Scene laden</button>
-                  <input id="cfgFile" type="file" accept=".json,.txt" style="display:none" />
+                <div class="dropdown dropdown--text" data-link="#exportFormat"></div>
+                <input id="cfgFile" type="file" accept=".json,.txt" style="display:none" />
                 </div>
-              </div>
-              </div>
-              <!-- Keyframes -->
-              <div class="keyframe-group">
-                <label class="control-label control-label--inline">
-                  <span>Keyframes</span>
-                </label>
-                <div id="kfList" class="kf-list"></div>
-                <div class="field-row" style="align-items:center; gap:8px; margin-top:6px;">
-                  <button id="kfAdd" type="button" title="Add keyframe">+</button>
-                  <button id="kfDel" type="button" title="Remove keyframe">–</button>
+              </section>
+
+              <!-- Keyframes section -->
+              <section class="keyframe-group export-section export-section--keyframes">
+                <div class="export-section-head">
+                  <h2 class="export-section-title">Keyframes</h2>
+                </div>
+                <div class="kf-row">
                   <button id="kfToggle" type="button" title="Play/Pause">▶</button>
+                  <div id="kfList" class="kf-list"></div>
                 </div>
                 <div class="control-field">
                   <label class="control-label" for="kfTime">
                     <span>Duration</span>
-                    <span id="kfTimeOut" class="sub">0.50 s</span>
+                    <span id="kfTimeOut" class="sub">0.5 Sec</span>
                   </label>
-                  <input id="kfTime" type="range" min="0.05" max="5" step="0.05" value="0.50" />
+                  <input id="kfTime" class="visually-hidden" type="range" min="0.05" max="5" step="0.05" value="0.5" />
+                  <div class="scalar" data-link="#kfTime" data-unit="Sec">
+                    <div class="scalar__fill"></div>
+                    <div class="scalar__value"></div>
+                    <div class="scalar__unit">Sec</div>
+                    <div class="scalar__edit"><input type="number" /></div>
+                  </div>
                 </div>
                 <div class="control-field">
-                  <label class="control-label" for="kfSpeed">
-                    <span>Time multiplier</span>
-                    <span>
-                      <span id="kfSpeedOut" class="sub">1.00×</span>
-                      <span id="kfTotalOut" class="sub" style="margin-left:8px;">Total: 0.50 s</span>
-                    </span>
+                  <label class="control-label">
+                    <span>Total Duration</span>
+                    <span id="kfTotalOut" class="sub">0.5 Sec</span>
                   </label>
-                  <input id="kfSpeed" type="range" min="0.25" max="3" step="0.05" value="1.00" />
                 </div>
-              </div>
+              </section>
 
-              <!-- Actions -->
-              <div class="actions">
-                <button id="exportGo" type="button">Export</button>
-              </div>
+              <!-- Actions section -->
+              <section class="actions export-section export-section--actions">
+                <div class="export-section-head">
+                  <h2 class="export-section-title">Actions</h2>
+                </div>
+                <div class="actions-grid">
+                  <button id="kfDel" type="button" title="Remove keyframe">- Keyframe</button>
+                  <button id="kfAdd" type="button" title="Add keyframe">+ Keyframe</button>
+                  <button id="cfgLoad" type="button">Load scene</button>
+                  <button id="cfgSave" type="button">Save scene</button>
+                  <button id="exportGo" type="button" class="actions-export">Export</button>
+                </div>
+              </section>
             </div>
           </div>
       </div>
 
       <div id="controls">
+        <!-- Redesigned control layout (WIP) -->
+        <section class="control-section" id="ui-general">
+          <div class="ui-section-head">
+            <span class="sec-icon sec-icon--left" aria-hidden="true"></span>
+            <h2 class="control-section-title">General</h2>
+            <span class="sec-icon sec-icon--right" aria-hidden="true"></span>
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="genText">Text</label>
+            <div class="ui-control">
+              <select id="genText" class="visually-hidden"></select>
+              <div class="dropdown dropdown--text" data-link="#genText"></div>
+            </div>
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="genScale">Scale</label>
+            <div class="ui-control">
+              <input id="genScale" class="visually-hidden" type="range" min="10" max="200" step="1" value="100" />
+              <div class="scalar" data-link="#genScale" data-unit="%">
+                <div class="scalar__fill"></div>
+                <div class="scalar__value"></div>
+                <div class="scalar__unit">%</div>
+                <div class="scalar__edit"><input type="number" /></div>
+              </div>
+            </div>
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="genWidth">Width</label>
+            <div class="ui-control">
+              <input id="genWidth" class="visually-hidden" type="range" min="0" max="500" step="1" value="110" />
+              <div class="scalar" data-link="#genWidth" data-unit="%">
+                <div class="scalar__fill"></div>
+                <div class="scalar__value"></div>
+                <div class="scalar__unit">%</div>
+                <div class="scalar__edit"><input type="number" /></div>
+              </div>
+            </div>
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="genGap">Gap</label>
+            <div class="ui-control">
+              <input id="genGap" class="visually-hidden" type="range" min="-20" max="150" step="1" value="9" />
+              <div class="scalar" data-link="#genGap" data-unit="px">
+                <div class="scalar__fill"></div>
+                <div class="scalar__value"></div>
+                <div class="scalar__unit">px</div>
+                <div class="scalar__edit"><input type="number" /></div>
+              </div>
+            </div>
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="genRows">Rows</label>
+            <div class="ui-control">
+              <input id="genRows" class="visually-hidden" type="range" min="4" max="32" step="4" value="12" />
+              <div class="scalar" data-link="#genRows">
+                <div class="scalar__fill"></div>
+                <div class="scalar__value"></div>
+                <div class="scalar__unit"></div>
+                <div class="scalar__edit"><input type="number" /></div>
+              </div>
+            </div>
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="genLineHeight">Line Height</label>
+            <div class="ui-control">
+              <input id="genLineHeight" class="visually-hidden" type="range" min="1" max="50" step="1" value="10" />
+              <div class="scalar" data-link="#genLineHeight" data-unit="px">
+                <div class="scalar__fill"></div>
+                <div class="scalar__value"></div>
+                <div class="scalar__unit">px</div>
+                <div class="scalar__edit"><input type="number" /></div>
+              </div>
+            </div>
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="genTipRatio">Tip Ratio</label>
+            <div class="ui-control">
+              <input id="genTipRatio" class="visually-hidden" type="range" min="0" max="1" step="0.01" value="0.30" />
+              <div class="scalar" data-link="#genTipRatio" data-unit="%">
+                <div class="scalar__fill"></div>
+                <div class="scalar__value"></div>
+                <div class="scalar__unit">%</div>
+                <div class="scalar__edit"><input type="number" /></div>
+              </div>
+            </div>
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="genShape">Shape</label>
+            <div class="ui-control">
+              <select id="genShape" class="visually-hidden">
+                <option value="rounded" data-icon-src="./src/shape-previews/shape-preview-rounded.svg">Rounded</option>
+                <option value="straight" data-icon-src="./src/shape-previews/shape-preview-straight.svg">Straight</option>
+                <option value="blocks" data-icon-src="./src/shape-previews/shape-preview-blocks.svg">Blocks</option>
+                <option value="circles" data-icon-src="./src/shape-previews/shape-preview-circles.svg">Circles</option>
+                <option value="pluses" data-icon-src="./src/shape-previews/shape-preview-plusjes.svg">Plusses</option>
+              </select>
+              <div class="dropdown dropdown--shape" data-link="#genShape"></div>
+            </div>
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="genColor">Color</label>
+            <div class="ui-control">
+              <select id="genColor" class="visually-hidden"></select>
+              <div class="dropdown dropdown--color" data-link="#genColor"></div>
+            </div>
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="genBgLines">BG Lines</label>
+            <input id="genBgLines" class="ui-control ui-checkbox" type="checkbox" />
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="genBgTransparent">BG Transparent</label>
+            <input id="genBgTransparent" class="ui-control ui-checkbox" type="checkbox" />
+          </div>
+        </section>
+
+        <section class="control-section" id="ui-displacement">
+          <div class="ui-section-head">
+            <span class="sec-icon sec-icon--left" aria-hidden="true"></span>
+            <h2 class="control-section-title">Displace</h2>
+            <span class="sec-icon sec-icon--right" aria-hidden="true"></span>
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="dispGroups">Groups</label>
+            <div class="ui-control">
+              <input id="dispGroups" class="visually-hidden" type="range" min="0" max="5" step="1" value="0" />
+              <div class="scalar" data-link="#dispGroups">
+                <div class="scalar__fill"></div>
+                <div class="scalar__value"></div>
+                <div class="scalar__unit"></div>
+                <div class="scalar__edit"><input type="number" /></div>
+              </div>
+            </div>
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="dispOffset">Offset</label>
+            <div class="ui-control">
+              <input id="dispOffset" class="visually-hidden" type="range" min="0" max="80" step="1" value="0" />
+              <div class="scalar" data-link="#dispOffset" data-unit="px">
+                <div class="scalar__fill"></div>
+                <div class="scalar__value"></div>
+                <div class="scalar__unit">px</div>
+                <div class="scalar__edit"><input type="number" /></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="control-section" id="ui-repeat">
+          <div class="ui-section-head">
+            <span class="sec-icon sec-icon--left" aria-hidden="true"></span>
+            <h2 class="control-section-title">Repeat</h2>
+            <span class="sec-icon sec-icon--right" aria-hidden="true"></span>
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="repeatModeButtons">Mode</label>
+            <div class="ui-control button-row" id="repeatModeButtons">
+              <button type="button" data-mode="off">Off</button>
+              <button type="button" data-mode="uniform">Uniform</button>
+              <button type="button" data-mode="falloff">Falloff</button>
+            </div>
+            <select id="repeatMode" class="visually-hidden">
+              <option value="off">Off</option>
+              <option value="uniform">Uniform</option>
+              <option value="falloff">Falloff</option>
+            </select>
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="repFalloff">Falloff</label>
+            <div class="ui-control">
+              <input id="repFalloff" class="visually-hidden" type="range" min="0.5" max="1" step="0.01" value="1.00" />
+              <div class="scalar" data-link="#repFalloff">
+                <div class="scalar__fill"></div>
+                <div class="scalar__value"></div>
+                <div class="scalar__unit"></div>
+                <div class="scalar__edit"><input type="number" /></div>
+              </div>
+            </div>
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="repRows">Rows</label>
+            <div class="ui-control">
+              <input id="repRows" class="visually-hidden" type="range" min="0" max="0" step="1" value="0" />
+              <div class="scalar" data-link="#repRows">
+                <div class="scalar__fill"></div>
+                <div class="scalar__value"></div>
+                <div class="scalar__unit"></div>
+                <div class="scalar__edit"><input type="number" /></div>
+              </div>
+            </div>
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="repMirror">Mirror</label>
+            <input id="repMirror" class="ui-control ui-checkbox" type="checkbox" />
+          </div>
+        </section>
+
+        <section class="control-section" id="ui-vwave">
+          <div class="ui-section-head">
+            <span class="sec-icon sec-icon--left" aria-hidden="true"></span>
+            <h2 class="control-section-title">Wave Verticaal</h2>
+            <span class="sec-icon sec-icon--right" aria-hidden="true"></span>
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="vWaveModeButtons">Mode</label>
+            <div class="ui-control button-row" id="vWaveModeButtons">
+              <button type="button" data-mode="off">Off</button>
+              <button type="button" data-mode="mouse">Mouse</button>
+              <button type="button" data-mode="pulse">Pulse</button>
+              <button type="button" data-mode="scan">Scan</button>
+            </div>
+            <select id="vWaveMode" class="visually-hidden">
+              <option value="off">Off</option>
+              <option value="mouse">Mouse</option>
+              <option value="pulse">Pulse</option>
+              <option value="scan">Scan</option>
+            </select>
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="vWaveCurveButtons">Curve</label>
+            <div class="ui-control button-row" id="vWaveCurveButtons">
+              <button type="button" data-mode="sine">Sine</button>
+              <button type="button" data-mode="step">Step</button>
+            </div>
+            <select id="vWaveCurve" class="visually-hidden">
+              <option value="sine">Sine</option>
+              <option value="step">Step</option>
+            </select>
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="vWaveDuration">Duration</label>
+            <div class="ui-control">
+              <input id="vWaveDuration" class="visually-hidden" type="range" min="2" max="10" step="0.1" value="3.0" />
+              <div class="scalar" data-link="#vWaveDuration" data-unit="s">
+                <div class="scalar__fill"></div>
+                <div class="scalar__value"></div>
+                <div class="scalar__unit">s</div>
+                <div class="scalar__edit"><input type="number" /></div>
+              </div>
+            </div>
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="vWaveAmplitude">Amplitude</label>
+            <div class="ui-control">
+              <input id="vWaveAmplitude" class="visually-hidden" type="range" min="0" max="3" step="0.05" value="1.00" />
+              <div class="scalar" data-link="#vWaveAmplitude" data-unit="×">
+                <div class="scalar__fill"></div>
+                <div class="scalar__value"></div>
+                <div class="scalar__unit">×</div>
+                <div class="scalar__edit"><input type="number" /></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="control-section" id="ui-hwave">
+          <div class="ui-section-head">
+            <span class="sec-icon sec-icon--left" aria-hidden="true"></span>
+            <h2 class="control-section-title">Wave Horizontaal</h2>
+            <span class="sec-icon sec-icon--right" aria-hidden="true"></span>
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="hWaveModeButtons">Mode</label>
+            <div class="ui-control button-row" id="hWaveModeButtons">
+              <button type="button" data-mode="off">Off</button>
+              <button type="button" data-mode="on">On</button>
+            </div>
+            <select id="hWaveMode" class="visually-hidden">
+              <option value="off">Off</option>
+              <option value="on">On</option>
+            </select>
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="hWaveDuration">Duration</label>
+            <div class="ui-control">
+              <input id="hWaveDuration" class="visually-hidden" type="range" min="0.5" max="10" step="0.1" value="3.0" />
+              <div class="scalar" data-link="#hWaveDuration" data-unit="s">
+                <div class="scalar__fill"></div>
+                <div class="scalar__value"></div>
+                <div class="scalar__unit">s</div>
+                <div class="scalar__edit"><input type="number" /></div>
+              </div>
+            </div>
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="hWaveAmplitude">Amplitude</label>
+            <div class="ui-control">
+              <input id="hWaveAmplitude" class="visually-hidden" type="range" min="0" max="200" step="1" value="100" />
+              <div class="scalar" data-link="#hWaveAmplitude" data-unit="%">
+                <div class="scalar__fill"></div>
+                <div class="scalar__value"></div>
+                <div class="scalar__unit">%</div>
+                <div class="scalar__edit"><input type="number" /></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="control-section" id="ui-transition">
+          <div class="ui-section-head">
+            <span class="sec-icon sec-icon--left" aria-hidden="true"></span>
+            <h2 class="control-section-title">Transition</h2>
+            <span class="sec-icon sec-icon--right" aria-hidden="true"></span>
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="transMode">Mode</label>
+            <div class="ui-control">
+              <select id="transMode" class="visually-hidden">
+                <option value="smooth"    data-icon-src="./src/easing-previews/easing-1.png">Smoothstep</option>
+                <option value="linear"    data-icon-src="./src/easing-previews/easing-0.png">Linear</option>
+                <option value="easeInOut" data-icon-src="./src/easing-previews/easing-5.png">Ease In-Out</option>
+                <option value="snap"      data-icon-src="./src/easing-previews/easing-4.png">Snap</option>
+                <option value="snapHalf"  data-icon-src="./src/easing-previews/easing-3.png">Snap + Ease</option>
+                <option value="fadeIn"    data-icon-src="./src/easing-previews/easing-2.png">Fade-In</option>
+              </select>
+              <div class="dropdown dropdown--ease" data-link="#transMode"></div>
+            </div>
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="transDuration">Duration</label>
+            <div class="ui-control">
+              <input id="transDuration" class="visually-hidden" type="range" min="0" max="200" step="1" value="100" />
+              <div class="scalar" data-link="#transDuration" data-unit="%">
+                <div class="scalar__fill"></div>
+                <div class="scalar__value"></div>
+                <div class="scalar__unit">%</div>
+                <div class="scalar__edit"><input type="number" /></div>
+              </div>
+            </div>
+          </div>
+          <div class="ui-row">
+            <label class="ui-label" for="transAmplitude">Amplitude</label>
+            <div class="ui-control">
+              <input id="transAmplitude" class="visually-hidden" type="range" min="0" max="2" step="0.05" value="1.00" />
+              <div class="scalar" data-link="#transAmplitude" data-unit="×">
+                <div class="scalar__fill"></div>
+                <div class="scalar__value"></div>
+                <div class="scalar__unit">×</div>
+                <div class="scalar__edit"><input type="number" /></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="control-section" id="ui-quick-actions">
+          <div class="ui-section-head">
+            <span class="sec-icon sec-icon--left" aria-hidden="true"></span>
+            <h2 class="control-section-title">Actions</h2>
+          </div>
+          <div class="ui-row ui-row-actions">
+            <span class="ui-label"></span>
+            <div class="ui-control button-row">
+              <button id="qaRandomize" type="button">Randomize</button>
+              <button id="qaFill" type="button">Transition fill</button>
+              <button id="qaReset" type="button">Reset</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Hide legacy controls to keep current functionality intact -->
+        <div id="legacyControls" class="legacy-controls">
         <section class="control-section">
           <h2 class="control-section-title">General</h2>
           <div class="control-field">
@@ -183,7 +550,7 @@
         </section>
 
         <section class="control-section">
-          <h2 class="control-section-title">Displacement</h2>
+          <h2 class="control-section-title">Displace</h2>
           <div class="control-field">
             <label class="control-label" for="groups">
               <span>Groups</span>
@@ -207,7 +574,8 @@
               <span>Preset</span>
               <span class="sub" id="colorPresetLabel">Preset</span>
             </label>
-            <select id="colorPreset" class="control-select control-select--tight"></select>
+            <select id="colorPreset" class="visually-hidden"></select>
+            <div class="dropdown dropdown--color" data-link="#colorPreset"></div>
           </div>
           <div class="control-row">
             <label class="checkbox-label">
@@ -384,9 +752,13 @@
             <button id="resetDefaults" type="button">Reset</button>
           </div>
         </section>
+        </div><!-- /legacyControls -->
       </div>
     </main>
     <script src="./src/kleuren.js"></script>
     <script src="sketch.js"></script>
+    <script src="./src/custom-slider.js"></script>
+    <script src="./src/custom-dropdown.js"></script>
+
   </body>
 </html>

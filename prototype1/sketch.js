@@ -90,6 +90,7 @@ let H_WAVE_AMP = H_WAVE_AMP_DEFAULT; // target
 let H_WAVE_AMP_TARGET = H_WAVE_AMP_DEFAULT;
 let H_WAVE_AMP_ANIM = H_WAVE_AMP_DEFAULT;
 let H_WAVE_PERIOD = H_WAVE_PERIOD_DEFAULT;
+let H_WAVE_MODE = 'off'; // 'off' | 'mouse' | 'pulse' | 'scan'
 let PULSE_PHASE = PULSE_PHASE_DEFAULT; // 0..1
 let H_WAVE_T0 = 0; // activation time reference for zero-crossing start
 
@@ -532,6 +533,16 @@ function updateRepeatSlidersRange(){
     elRepeatExtraRows.disabled = disabled;
   }
 
+  // New UI: repRows mirrors repeat extra rows
+  const nRepRowsEl = (typeof document !== 'undefined') ? document.getElementById('repRows') : null;
+  if (nRepRowsEl){
+    nRepRowsEl.min = '0';
+    nRepRowsEl.max = String(Math.max(0, Math.floor(maxExtra)));
+    nRepRowsEl.step = '1';
+    nRepRowsEl.value = String(Math.max(0, Math.floor(sliderValue)));
+    nRepRowsEl.disabled = disabled;
+  }
+
   if (elRepeatExtraRowsOut){
     if (disabled){
       elRepeatExtraRowsOut.textContent = 'OFF';
@@ -586,7 +597,8 @@ function startAnimLoop(){
     const mouseAmpBusy = Math.abs((MOUSE_AMPLITUDE_ANIM||0) - (MOUSE_AMPLITUDE_TARGET||0)) > 1e-4;
     const hAmpBusy = Math.abs((H_WAVE_AMP_ANIM||0) - (H_WAVE_AMP_TARGET||0)) > 1e-4;
     const modeActive = (ANIM_ENABLED && (ANIM_MODE === 'pulse' || ANIM_MODE === 'scan'));
-    const waveActive = (ANIM_ENABLED && (H_WAVE_AMP_TARGET||0) !== 0);
+    const hModeTimed = (H_WAVE_MODE === 'pulse' || H_WAVE_MODE === 'scan');
+    const waveActive = ((ANIM_ENABLED || hModeTimed) && (H_WAVE_AMP_TARGET||0) !== 0);
     const frameActive = (modeActive || waveActive || fadeBusy || mouseAmpBusy || hAmpBusy);
     if (frameActive) requestRedraw();
 
@@ -606,8 +618,9 @@ function updateAnimRun(){
   const fadeBusy = Math.abs((ANIM_FADE||0) - (ANIM_FADE_TARGET||0)) > 1e-4;
   const mouseAmpBusy = Math.abs((MOUSE_AMPLITUDE_ANIM||0) - (MOUSE_AMPLITUDE_TARGET||0)) > 1e-4;
   const hAmpBusy = Math.abs((H_WAVE_AMP_ANIM||0) - (H_WAVE_AMP_TARGET||0)) > 1e-4;
+  const hModeTimed = (H_WAVE_MODE === 'pulse' || H_WAVE_MODE === 'scan');
   const modeActive = (ANIM_ENABLED && (ANIM_MODE === 'pulse' || ANIM_MODE === 'scan'));
-  const waveActive = (ANIM_ENABLED && (H_WAVE_AMP_TARGET||0) !== 0);
+  const waveActive = ((ANIM_ENABLED || hModeTimed) && (H_WAVE_AMP_TARGET||0) !== 0);
   if (modeActive || waveActive || fadeBusy || mouseAmpBusy || hAmpBusy){
     startAnimLoop();
   } else {
@@ -618,8 +631,9 @@ function updateAnimRun(){
 function isPlaybackActive(){
   if (KF_PLAYING) return true;
   const fadeBusy = Math.abs((ANIM_FADE||0) - (ANIM_FADE_TARGET||0)) > 1e-4;
+  const hModeTimed2 = (H_WAVE_MODE === 'pulse' || H_WAVE_MODE === 'scan');
   const modeActive = (ANIM_ENABLED && (ANIM_MODE === 'pulse' || ANIM_MODE === 'scan'));
-  const waveActive = (ANIM_ENABLED && (H_WAVE_AMP_TARGET||0) !== 0);
+  const waveActive = ((ANIM_ENABLED || hModeTimed2) && (H_WAVE_AMP_TARGET||0) !== 0);
   return !!(modeActive || waveActive || fadeBusy);
 }
 
@@ -1161,10 +1175,10 @@ function updateKfTotalOut(){
     const el = (typeof document !== 'undefined') ? document.getElementById('kfTotalOut') : null;
     if (!el) return;
     const list = (typeof window !== 'undefined' && Array.isArray(window.__keyframesRef)) ? window.__keyframesRef : [];
-    if (!list.length){ el.textContent = 'Total: 0.00 s'; return; }
+    if (!list.length){ el.textContent = '0.0 Sec'; return; }
     const sum = list.reduce((s, k) => s + Math.max(0.05, (k && k.timeSec) ? k.timeSec : KF_TIME_DEFAULT), 0);
     const total = Math.max(0.05, sum * Math.max(0.1, KF_SPEED_MUL));
-    el.textContent = `Total: ${total.toFixed(2)} s`;
+    el.textContent = `${total.toFixed(1)} Sec`;
   } catch(e){}
 }
 
@@ -1551,7 +1565,19 @@ function preload(){
       const lines = sanitizeColor(combo.lines || combo.accent, COLOR_LINES_DEFAULT).toUpperCase();
       const label = combo.label ? String(combo.label) : `Preset ${idx + 1}`;
       const id = combo.id ? String(combo.id) : `combo-${idx}`;
-      return { id, label, background, logo, lines };
+      // Carry through any icon path/markup so custom dropdowns can render previews
+      const icon = (typeof combo.icon === 'string' && combo.icon.trim())
+        ? combo.icon.trim()
+        : (typeof combo.iconSrc === 'string' && combo.iconSrc.trim())
+          ? combo.iconSrc.trim()
+          : '';
+      const iconSrc = (typeof combo.iconSrc === 'string' && combo.iconSrc.trim())
+        ? combo.iconSrc.trim()
+        : icon;
+      const base = { id, label, background, logo, lines };
+      if (icon) base.icon = icon;
+      if (iconSrc) base.iconSrc = iconSrc;
+      return base;
     })
     .filter(Boolean);
   if (!COLOR_COMBOS.length){
@@ -1754,6 +1780,376 @@ function setup(){
   elTaperIndexOut = byId('taperIndexOut');
   elAnimEnabled = byId('animEnabled');
   const elPerfMode = byId('perfMode');
+
+  // ===== New UI controls (direct → state) =====
+  const nText          = byId('genText');
+  const nScale         = byId('genScale');
+  const nWidth         = byId('genWidth');
+  const nGap           = byId('genGap');
+  const nRows          = byId('genRows');
+  const nLineHeight    = byId('genLineHeight');
+  const nTipRatio      = byId('genTipRatio');
+  const nShape         = byId('genShape');
+  const nColor         = byId('genColor');
+  const nBgLines       = byId('genBgLines');
+  const nBgTrans       = byId('genBgTransparent');
+  const nDispGroups    = byId('dispGroups');
+  const nDispOffset    = byId('dispOffset');
+  const nRepMode       = byId('repeatMode');
+  const nRepFalloff    = byId('repFalloff');
+  const nRepRows       = byId('repRows');
+  const nRepMirror     = byId('repMirror');
+  const nVMode         = byId('vWaveMode');
+  const nVCurve        = byId('vWaveCurve');
+  const nVDur          = byId('vWaveDuration');
+  const nVAmp          = byId('vWaveAmplitude');
+  const nHMode         = byId('hWaveMode');
+  const nHCurve        = byId('hWaveCurve');
+  const nHDur          = byId('hWaveDuration');
+  const nHAmp          = byId('hWaveAmplitude');
+  const nTransMode     = byId('transMode');
+  const nTransDur      = byId('transDuration');
+  const nTransAmp      = byId('transAmplitude');
+  const nQReset        = byId('qaReset');
+  const nQFill         = byId('qaFill');
+  const nQRand         = byId('qaRandomize');
+
+  const EASE_MODES = ['smooth','linear','easeInOut','snap','snapHalf','fadeIn'];
+
+  const rowOf = (id)=>{ const el = byId(id); return el ? el.closest('.ui-row') : null; };
+  const setRowHidden = (id, hidden)=>{ const r = rowOf(id); if (r) r.style.display = hidden ? 'none' : ''; };
+  const setCtrlDisabled = (id, dis)=>{ const e = byId(id); if (e) e.disabled = !!dis; };
+
+  function populateNewUI(){
+    // Text options
+    if (nText){
+      nText.innerHTML = '';
+      (Array.isArray(LOGO_TEXT_OPTIONS) ? LOGO_TEXT_OPTIONS : []).forEach(txt=>{
+        const o = document.createElement('option'); o.value = txt; o.textContent = txt; nText.appendChild(o);
+      });
+      nText.value = currentLogoText();
+    }
+    // Color options
+    if (nColor){
+      nColor.innerHTML = '';
+      (Array.isArray(COLOR_COMBOS) ? COLOR_COMBOS : []).forEach((c, i)=>{
+        const o = document.createElement('option');
+        o.value = String(i);
+        o.textContent = c.label || `Preset ${i+1}`;
+        if (c){
+          if (typeof c.icon === 'string'){
+            const iv = c.icon.trim();
+            if (iv.startsWith('<')) o.dataset.icon = iv; else o.dataset.iconSrc = iv;
+          }
+          if (typeof c.iconSrc === 'string') o.dataset.iconSrc = c.iconSrc;
+        }
+        nColor.appendChild(o);
+      });
+      nColor.value = String(activeColorComboIdx);
+    }
+  }
+
+  function updateNewUIFromState(){
+    if (nText) nText.value = currentLogoText();
+    if (nScale){ nScale.min='10'; nScale.max='200'; nScale.step='1'; nScale.value = String(Math.round(logoScaleTarget*100)); }
+    if (nWidth){ nWidth.min='0'; nWidth.max='500'; nWidth.step='1'; nWidth.value = String(Math.round(widthScaleTarget*100)); }
+    if (nGap){ nGap.min='-20'; nGap.max='150'; nGap.step='1'; nGap.value = String(Math.round(gapPxTarget)); }
+    if (nRows){ nRows.min='4'; nRows.max='32'; nRows.step='4'; nRows.value = String(Math.max(1, Math.round(rowsTarget))); }
+    if (nLineHeight){ nLineHeight.min='1'; nLineHeight.max='50'; nLineHeight.step='1'; nLineHeight.value = String(Math.round(linePxTarget)); }
+    if (nTipRatio){ nTipRatio.min='0'; nTipRatio.max='1'; nTipRatio.step='0.01'; nTipRatio.value = TIP_RATIO_TARGET.toFixed(2); }
+    if (nShape){ nShape.value = String(effectiveTaperMode()).toLowerCase(); }
+    if (nColor){ nColor.value = String(activeColorComboIdx); }
+    if (nBgLines) nBgLines.checked = !!BG_LINES;
+    if (nBgTrans) nBgTrans.checked = !!BG_TRANSPARENT;
+    // Displacement
+    if (nDispOffset){ nDispOffset.min='0'; nDispOffset.max='80'; nDispOffset.step='1'; nDispOffset.value = String(Math.round(DISPLACE_UNIT_TARGET)); }
+    // Groups slider is an index into _signedGroupOptions (set in rebuildGroupsSelect)
+    // Repeat
+    if (nRepMode){
+      nRepMode.value = REPEAT_ENABLED ? (REPEAT_MODE === 'falloff' ? 'falloff' : 'uniform') : 'off';
+      if (typeof nRepMode.__syncModeButtons === 'function') nRepMode.__syncModeButtons();
+    }
+    if (nRepFalloff){ nRepFalloff.min='0.5'; nRepFalloff.max='1'; nRepFalloff.step='0.01'; nRepFalloff.value = REPEAT_FALLOFF_TARGET.toFixed(2); }
+    if (nRepMirror) nRepMirror.checked = !!REPEAT_MIRROR;
+    // v-wave
+    if (nVMode){
+      nVMode.value = ANIM_ENABLED ? ANIM_MODE : 'off';
+      if (typeof nVMode.__syncModeButtons === 'function') nVMode.__syncModeButtons();
+    }
+    if (nVCurve){
+      nVCurve.value = (MOUSE_CURVE === 'sine') ? 'sine' : 'step';
+      if (typeof nVCurve.__syncModeButtons === 'function') nVCurve.__syncModeButtons();
+    }
+    if (nVDur){ nVDur.min='2'; nVDur.max='10'; nVDur.step='0.1'; nVDur.value = ANIM_PERIOD.toFixed(2); }
+    if (nVAmp){ nVAmp.min='0'; nVAmp.max='3'; nVAmp.step='0.05'; nVAmp.value = MOUSE_AMPLITUDE.toFixed(2); }
+    // h-wave (On/Off + amplitude as %)
+    if (nHMode){
+      const v = (H_WAVE_MODE && H_WAVE_MODE !== 'off') ? 'on' : 'off';
+      nHMode.value = v;
+      if (typeof nHMode.__syncModeButtons === 'function') nHMode.__syncModeButtons();
+    }
+    if (nHAmp){
+      nHAmp.min = '0';
+      nHAmp.max = '200';
+      nHAmp.step = '1';
+      nHAmp.value = String(Math.round((H_WAVE_AMP || 0) * 100));
+    }
+
+    // transition
+    if (nTransMode){
+      nTransMode.value = (EASE_MODES.indexOf(EASE_TYPE) >= 0) ? EASE_TYPE : 'smooth';
+      // Only update button contents; avoid rebuilding menus every time
+      try { if (window.__syncCustomDropdownButtons) window.__syncCustomDropdownButtons(); } catch(e){}
+    }
+    if (nTransDur){ nTransDur.min='0'; nTransDur.max='200'; nTransDur.step='1'; nTransDur.value = String(Math.round(EASE_DURATION_PCT)); }
+    if (nTransAmp){ nTransAmp.min='0'; nTransAmp.max='2'; nTransAmp.step='0.05'; nTransAmp.value = EASE_AMPLITUDE.toFixed(2); }
+
+    updateNewUIVisibility();
+    // Resync custom sliders with any programmatic value changes
+    try {
+      document.querySelectorAll('.scalar[data-link]').forEach(el => {
+        if (el.__scalar && typeof el.__scalar.syncFromLink === 'function') el.__scalar.syncFromLink();
+      });
+    } catch(e){}
+    // Quick actions visual state
+    if (nQFill){
+      const fillActive = ((LINE_LEN_MUL_TARGET ?? LINE_LEN_MUL) > 1.001);
+      nQFill.classList.toggle('is-active', fillActive);
+      nQFill.classList.toggle('btn-active', fillActive);
+      nQFill.setAttribute('aria-pressed', fillActive ? 'true' : 'false');
+    }
+    }
+
+  function updateNewUIVisibility(){
+    // Repeat UI
+    if (nRepMode){
+      const v = String(nRepMode.value||'off');
+      setRowHidden('repFalloff', v === 'uniform' || v === 'off');
+      setRowHidden('repRows', v !== 'uniform');
+      setRowHidden('repMirror', v === 'off');
+    }
+    // Vertical wave
+    if (nVMode){
+      const v = String(nVMode.value||'off');
+      setRowHidden('vWaveCurve', v === 'off');
+      setRowHidden('vWaveDuration', v === 'off' || v === 'mouse');
+      setRowHidden('vWaveAmplitude', v === 'off' || v === 'mouse');
+      setCtrlDisabled('vWaveDuration', v === 'mouse');
+    }
+    // Horizontal wave
+    if (nHMode){
+      const v = String(nHMode.value||'off');
+      // Only On/Off + duration + amplitude; duration/amp visible when On
+      setRowHidden('hWaveCurve', true);
+      setRowHidden('hWaveDuration', v === 'off');
+      setRowHidden('hWaveAmplitude', v === 'off');
+      setCtrlDisabled('hWaveDuration', v === 'off');
+    }
+  }
+
+  populateNewUI();
+  try { if (window.__resyncCustomDropdowns) window.__resyncCustomDropdowns(); } catch(e){}
+  updateNewUIFromState();
+
+  // New UI event listeners
+  if (nText){ nText.addEventListener('change', ()=>{ setLogoText(nText.value || LOGO_TEXT_OPTIONS[0]); requestRedraw(); }); }
+  if (nScale){ nScale.addEventListener('input', ()=>{ const v = parseInt(nScale.value,10); if (Number.isFinite(v)) logoScaleTarget = Math.max(10, Math.min(200, v))/100; updateUIFromState(); requestRedraw(); }); }
+  if (nWidth){ nWidth.addEventListener('input', ()=>{ const v = parseInt(nWidth.value,10); if (Number.isFinite(v)) widthScaleTarget = Math.max(0, Math.min(500, v))/100; updateUIFromState(); requestRedraw(); }); }
+  if (nGap){ nGap.addEventListener('input', ()=>{ const v = parseInt(nGap.value,10); if (Number.isFinite(v)) gapPxTarget = v; _layoutDirty = true; updateUIFromState(); requestRedraw(); }); }
+  if (nRows){ nRows.addEventListener('input', ()=>{ const v = parseInt(nRows.value,10); if (Number.isFinite(v)) rowsTarget = Math.max(1, v); rebuildGroupsSelect(); updateRepeatSlidersRange(); updateUIFromState(); requestRedraw(); }); }
+  if (nLineHeight){ nLineHeight.addEventListener('input', ()=>{ const v = parseInt(nLineHeight.value,10); if (Number.isFinite(v)) linePxTarget = Math.max(1, v); updateUIFromState(); requestRedraw(); }); }
+  if (nTipRatio){ nTipRatio.addEventListener('input', ()=>{ const v = parseFloat(nTipRatio.value); if (Number.isFinite(v)) TIP_RATIO_TARGET = Math.max(0, Math.min(1, v)); updateUIFromState(); requestRedraw(); }); }
+  if (nShape){ nShape.addEventListener('change', ()=>{ const v = String(nShape.value||'rounded'); triggerTaperSwitch(v[0].toUpperCase()+v.slice(1)); updateUIFromState(); requestRedraw(); }); }
+  if (nColor){ nColor.addEventListener('change', ()=>{ const idx = parseInt(nColor.value,10)||0; applyColorComboByIndex(Math.max(0, Math.min((COLOR_COMBOS||[]).length-1, idx))); updateUIFromState(); requestRedraw(); }); }
+  if (nBgLines){ nBgLines.addEventListener('change', ()=>{ BG_LINES = !!nBgLines.checked; updateUIFromState(); requestRedraw(); }); }
+  if (nBgTrans){ nBgTrans.addEventListener('change', ()=>{ BG_TRANSPARENT = !!nBgTrans.checked; updateUIFromState(); requestRedraw(); }); }
+  if (nDispOffset){ nDispOffset.addEventListener('input', ()=>{ const v = parseInt(nDispOffset.value,10); if (Number.isFinite(v)) { DISPLACE_UNIT_TARGET = Math.max(0, v); updateUIFromState(); requestRedraw(); } }); }
+  if (nDispGroups){ nDispGroups.addEventListener('input', ()=>{ const idx = parseInt(nDispGroups.value,10)||0; displaceGroupsTarget = _signedGroupOptions[idx] || 1; updateUIFromState(); requestRedraw(); }); }
+  if (nRepMode){ nRepMode.addEventListener('change', ()=>{ const v=String(nRepMode.value||'off'); if (v==='off'){ REPEAT_ENABLED=false; } else { REPEAT_ENABLED=true; REPEAT_MODE = (v==='falloff')?'falloff':'uniform'; } updateRepeatSlidersRange(); updateNewUIVisibility(); updateUIFromState(); requestRedraw(); }); }
+  if (nRepFalloff){ nRepFalloff.addEventListener('input', ()=>{ const v = parseFloat(nRepFalloff.value); if (Number.isFinite(v)){ REPEAT_FALLOFF_TARGET = Math.max(0.5, Math.min(1, v)); updateUIFromState(); requestRedraw(); } }); }
+  if (nRepRows){ nRepRows.addEventListener('input', ()=>{ const raw = parseInt(nRepRows.value,10); if (!Number.isFinite(raw)) return; if (_repeatExtraRowsMax > 0 && raw >= _repeatExtraRowsMax){ REPEAT_EXTRA_ROWS_IS_FULL = true; REPEAT_EXTRA_ROWS = Number.POSITIVE_INFINITY; } else { REPEAT_EXTRA_ROWS_IS_FULL = false; REPEAT_EXTRA_ROWS = Math.max(0, raw); } updateRepeatSlidersRange(); requestRedraw(); }); }
+  if (nRepMirror){ nRepMirror.addEventListener('change', ()=>{ REPEAT_MIRROR = !!nRepMirror.checked; updateUIFromState(); requestRedraw(); }); }
+  if (nVMode){ nVMode.addEventListener('change', ()=>{ const v=String(nVMode.value||'off'); if (v==='off'){ ANIM_ENABLED=false; setAnim('off'); } else { ANIM_ENABLED=true; setAnim(v==='mouse'?'mouse':(v==='pulse'?'pulse':'scan')); } updateNewUIVisibility(); updateUIFromState(); requestRedraw(); }); }
+  if (nVCurve){ nVCurve.addEventListener('change', ()=>{ const v=String(nVCurve.value||'sine'); MOUSE_CURVE=(v==='step')?'smoothstep':'sine'; requestRedraw(); }); }
+  if (nVDur){ nVDur.addEventListener('input', ()=>{ const v=parseFloat(nVDur.value); if (Number.isFinite(v)){ ANIM_PERIOD=Math.max(0.1,v); updateAnimRun(); updateUIFromState(); requestRedraw(); } }); }
+  if (nVAmp){ nVAmp.addEventListener('input', ()=>{ const v=parseFloat(nVAmp.value); if (Number.isFinite(v)){ MOUSE_AMPLITUDE=Math.max(0,v); MOUSE_AMPLITUDE_TARGET=MOUSE_AMPLITUDE; updateUIFromState(); requestRedraw(); } }); }
+  if (nHMode){
+    nHMode.addEventListener('change', ()=>{
+      const v = String(nHMode.value||'off');
+      if (v === 'off'){
+        H_WAVE_MODE = 'off';
+      } else {
+        H_WAVE_MODE = 'pulse';
+        // When turning on, default amplitude to 1.0 (100%) if it was zero
+        if (!H_WAVE_AMP || H_WAVE_AMP <= 0){
+          H_WAVE_AMP = 1.0;
+          H_WAVE_AMP_TARGET = 1.0;
+        }
+      }
+      if (H_WAVE_MODE !== 'off'){ H_WAVE_T0 = 0; }
+      updateNewUIVisibility();
+      updateUIFromState();
+      updateAnimRun();
+      requestRedraw();
+    });
+  }
+  if (nHCurve){ nHCurve.addEventListener('change', ()=>{ const v=String(nHCurve.value||'sine'); MOUSE_CURVE=(v==='step')?'smoothstep':'sine'; requestRedraw(); }); }
+  if (nHDur){ nHDur.addEventListener('input', ()=>{ const v=parseFloat(nHDur.value); if(Number.isFinite(v)){ H_WAVE_PERIOD=Math.max(0.1,v); updateUIFromState(); requestRedraw(); } }); }
+  if (nHAmp){
+    nHAmp.addEventListener('input', ()=>{
+      const v = parseFloat(nHAmp.value);
+      if (Number.isFinite(v)){
+        const amp = Math.max(0, v) / 100;
+        H_WAVE_AMP = amp;
+        H_WAVE_AMP_TARGET = amp;
+        updateUIFromState();
+        updateAnimRun();
+        requestRedraw();
+      }
+    });
+  }
+  if (nTransMode){
+    nTransMode.addEventListener('change', ()=>{
+      const v = String(nTransMode.value || 'smooth');
+      EASE_TYPE = (EASE_MODES.indexOf(v) >= 0) ? v : 'smooth';
+      updateUIFromState();
+      requestRedraw();
+    });
+  }
+  if (nTransDur){ nTransDur.addEventListener('input', ()=>{ const v=parseFloat(nTransDur.value); if(Number.isFinite(v)){ EASE_DURATION_PCT=Math.max(0,v); updateEaseDurationFromKf(); updateUIFromState(); requestRedraw(); } }); }
+  if (nTransAmp){ nTransAmp.addEventListener('input', ()=>{ const v=parseFloat(nTransAmp.value); if(Number.isFinite(v)){ EASE_AMPLITUDE=Math.max(0,v); updateUIFromState(); requestRedraw(); } }); }
+  if (nQFill){
+    nQFill.addEventListener('click', ()=>{
+      const isOn = (LINE_LEN_MUL_TARGET || LINE_LEN_MUL || 0) > 1.001;
+      LINE_LEN_MUL_TARGET = isOn ? LINE_LEN_MUL_DEFAULT : 2.8;
+      // Reflect active state on the button
+      const nowOn = !isOn;
+      nQFill.classList.toggle('is-active', nowOn);
+      nQFill.classList.toggle('btn-active', nowOn);
+      nQFill.setAttribute('aria-pressed', nowOn ? 'true' : 'false');
+      updateUIFromState();
+      updateNewUIFromState();
+      requestRedraw();
+    });
+  }
+  if (nQReset){ nQReset.addEventListener('click', ()=>{ resetDefaults(); }); }
+  if (nQRand){ nQRand.addEventListener('click', ()=>{ applyRandomTweaks(); try{ if (typeof kfAutosaveCurrent==='function') kfAutosaveCurrent(); }catch(e){} }); }
+
+  // Button groups for modes (Repeat, V-wave, H-wave)
+  function bindModeButtonGroup(selectEl, containerId){
+    if (!selectEl) return;
+    const wrap = document.getElementById(containerId);
+    if (!wrap) return;
+    const buttons = Array.from(wrap.querySelectorAll('button[data-mode]'));
+    const sync = ()=>{
+      const val = String(selectEl.value || '');
+      buttons.forEach(btn => {
+        const on = String(btn.dataset.mode||'') === val;
+        btn.classList.toggle('is-active', on);
+        btn.classList.toggle('btn-active', on);
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+    };
+    buttons.forEach(btn => {
+      btn.type = 'button';
+      btn.addEventListener('click', ()=>{
+        const v = String(btn.dataset.mode||'');
+        if (!v || v === String(selectEl.value||'')) return;
+        selectEl.value = v;
+        selectEl.dispatchEvent(new Event('change', { bubbles:true }));
+        sync();
+      });
+    });
+    selectEl.__syncModeButtons = sync;
+    sync();
+  }
+
+  bindModeButtonGroup(nRepMode, 'repeatModeButtons');
+  bindModeButtonGroup(nVMode, 'vWaveModeButtons');
+  bindModeButtonGroup(nHMode, 'hWaveModeButtons');
+  bindModeButtonGroup(nVCurve, 'vWaveCurveButtons');
+  bindModeButtonGroup(nHCurve, 'hWaveCurveButtons');
+
+  // Section header actions (collapse / reset)
+  function setSectionCollapsed(el, collapsed){
+    if (!el) return;
+    if (collapsed){ el.setAttribute('data-collapsed','1'); el.setAttribute('aria-expanded','false'); }
+    else { el.removeAttribute('data-collapsed'); el.setAttribute('aria-expanded','true'); }
+  }
+  function resetSection(id){
+    switch(id){
+      case 'ui-general':
+        setLogoText(LOGO_TEXT_OPTIONS[0]);
+        rowsTarget = ROWS_DEFAULT;
+        linePxTarget = LINE_HEIGHT;
+        widthScaleTarget = WIDTH_SCALE_DEFAULT;
+        gapPxTarget = GAP_PX_DEFAULT;
+        TIP_RATIO_TARGET = TIP_RATIO_DEFAULT;
+        triggerTaperSwitch(TAPER_MODE_DEFAULT);
+        logoScaleTarget = LOGO_SCALE_DEFAULT;
+        BG_LINES = BG_LINES_DEFAULT;
+        applyColorComboByIndex(0);
+        break;
+      case 'ui-displacement':
+        displaceGroupsTarget = DISPLACE_GROUPS_DEFAULT;
+        displaceGroupsAnim = DISPLACE_GROUPS_DEFAULT;
+        DISPLACE_UNIT_TARGET = DISPLACE_UNIT_DEFAULT;
+        rebuildGroupsSelect();
+        break;
+      case 'ui-repeat':
+        REPEAT_ENABLED = REPEAT_ENABLED_DEFAULT;
+        REPEAT_MIRROR = REPEAT_MIRROR_DEFAULT;
+        REPEAT_EXTRA_ROWS = REPEAT_EXTRA_ROWS_DEFAULT;
+        REPEAT_EXTRA_ROWS_IS_FULL = !Number.isFinite(REPEAT_EXTRA_ROWS_DEFAULT) && REPEAT_EXTRA_ROWS_DEFAULT > 0;
+        REPEAT_FALLOFF = REPEAT_FALLOFF_DEFAULT;
+        REPEAT_FALLOFF_TARGET = REPEAT_FALLOFF_DEFAULT;
+        REPEAT_MODE = REPEAT_MODE_DEFAULT;
+        updateRepeatSlidersRange();
+        break;
+      case 'ui-vwave':
+        ANIM_ENABLED = ANIM_ENABLED_DEFAULT;
+        ANIM_MODE = ANIM_MODE_DEFAULT;
+        ANIM_PERIOD = ANIM_PERIOD_DEFAULT;
+        MOUSE_AMPLITUDE = MOUSE_AMPLITUDE_DEFAULT; MOUSE_AMPLITUDE_TARGET = MOUSE_AMPLITUDE_DEFAULT;
+        PULSE_PHASE = PULSE_PHASE_DEFAULT;
+        updateAnimRun();
+        break;
+      case 'ui-hwave':
+        H_WAVE_MODE = 'off';
+        H_WAVE_AMP = H_WAVE_AMP_DEFAULT; H_WAVE_AMP_TARGET = H_WAVE_AMP_DEFAULT; H_WAVE_AMP_ANIM = H_WAVE_AMP_DEFAULT;
+        H_WAVE_PERIOD = H_WAVE_PERIOD_DEFAULT; H_WAVE_T0 = 0;
+        updateAnimRun();
+        break;
+      case 'ui-transition':
+        EASE_TYPE = EASE_TYPE_DEFAULT;
+        EASE_DURATION_PCT = EASE_DURATION_PCT_DEFAULT;
+        EASE_AMPLITUDE = EASE_AMPLITUDE_DEFAULT;
+        break;
+      default:
+        break;
+    }
+    updateUIFromState();
+    requestRedraw();
+  }
+  (function attachSectionHeaderActions(){
+    const secs = Array.from(document.querySelectorAll('.control-section'));
+    secs.forEach(sec => {
+      const id = sec.id || '';
+      const left = sec.querySelector('.sec-icon--left');
+      const right = sec.querySelector('.sec-icon--right');
+      if (left){
+        left.title = 'Collapse/expand';
+        left.addEventListener('click', ()=>{
+          const isCollapsed = sec.hasAttribute('data-collapsed');
+          setSectionCollapsed(sec, !isCollapsed);
+        });
+      }
+      if (right){
+        right.title = 'Reset section';
+        right.addEventListener('click', ()=> resetSection(id));
+      }
+    });
+  })();
 
   // Logo text dropdown
   if (elLogoText){
@@ -2065,29 +2461,15 @@ function setup(){
   // Keyframe timing controls (seconds per keyframe + global multiplier)
   if (elKfTime){
     const init = (Number.isFinite(KF_TIME_CUR) ? KF_TIME_CUR : KF_TIME_DEFAULT);
-    elKfTime.value = init.toFixed(2);
-    if (elKfTimeOut) elKfTimeOut.textContent = `${init.toFixed(2)} s`;
+    elKfTime.value = init.toFixed(1);
+    if (elKfTimeOut) elKfTimeOut.textContent = `${init.toFixed(1)} Sec`;
     elKfTime.addEventListener('input', ()=>{
       const v = parseFloat(elKfTime.value);
       if (Number.isFinite(v)){
         KF_TIME_CUR = Math.max(0.05, v);
-        if (elKfTimeOut) elKfTimeOut.textContent = `${KF_TIME_CUR.toFixed(2)} s`;
+        if (elKfTimeOut) elKfTimeOut.textContent = `${KF_TIME_CUR.toFixed(1)} Sec`;
         if (kfIndex >= 0 && kfIndex < keyframes.length){ keyframes[kfIndex].timeSec = KF_TIME_CUR; kfAutosaveCurrent(); }
         updateEaseDurationFromKf();
-        updateKfTotalOut();
-        if (kfIsPlaying()){ kfPlay(); }
-      }
-    });
-  }
-  if (elKfSpeed){
-    const initS = (Number.isFinite(KF_SPEED_MUL) ? KF_SPEED_MUL : KF_SPEED_DEFAULT);
-    elKfSpeed.value = initS.toFixed(2);
-    if (elKfSpeedOut) elKfSpeedOut.textContent = `${initS.toFixed(2)}×`;
-    elKfSpeed.addEventListener('input', ()=>{
-      const v = parseFloat(elKfSpeed.value);
-      if (Number.isFinite(v)){
-        KF_SPEED_MUL = Math.max(0.1, v);
-        if (elKfSpeedOut) elKfSpeedOut.textContent = `${KF_SPEED_MUL.toFixed(2)}×`;
         updateKfTotalOut();
         if (kfIsPlaying()){ kfPlay(); }
       }
@@ -2278,10 +2660,8 @@ function setup(){
     }
 
     // Keyframe timing UI
-    if (elKfTime){ elKfTime.value = Math.max(0.05, KF_TIME_CUR).toFixed(2); }
-    if (elKfTimeOut){ elKfTimeOut.textContent = `${Math.max(0.05, KF_TIME_CUR).toFixed(2)} s`; }
-    if (elKfSpeed){ elKfSpeed.value = Math.max(0.1, KF_SPEED_MUL).toFixed(2); }
-    if (elKfSpeedOut){ elKfSpeedOut.textContent = `${Math.max(0.1, KF_SPEED_MUL).toFixed(2)}×`; }
+    if (elKfTime){ elKfTime.value = Math.max(0.05, KF_TIME_CUR).toFixed(1); }
+    if (elKfTimeOut){ elKfTimeOut.textContent = `${Math.max(0.05, KF_TIME_CUR).toFixed(1)} Sec`; }
 
     // Curve radios
     const curveSineEl = document.getElementById('curveSine');
@@ -2318,6 +2698,12 @@ function setup(){
     // Set state for background controls; handlers are bound once in setup
     if (elBgLines) elBgLines.checked = BG_LINES;
     if (elRepeatMirror) elRepeatMirror.checked = REPEAT_MIRROR;
+
+    // Also keep new UI in sync
+    try { updateNewUIFromState(); } catch(e){}
+    // Ensure custom sliders + dropdown buttons reflect latest values after any update/reset
+    try { if (window.__resyncCustomSliders) window.__resyncCustomSliders(); } catch(e){}
+    try { if (window.__syncCustomDropdownButtons) window.__syncCustomDropdownButtons(); } catch(e){}
   }
 
   function updateColorPresetLabel(idx){
@@ -2338,10 +2724,18 @@ function setup(){
       const opt = document.createElement('option');
       opt.value = String(idx);
       opt.textContent = combo.label || `Preset ${idx + 1}`;
+      if (combo){
+        const iconVal = (typeof combo.icon === 'string') ? combo.icon.trim() : '';
+        if (iconVal){
+          if (iconVal.startsWith('<')) opt.dataset.icon = iconVal; else opt.dataset.iconSrc = iconVal;
+        }
+        if (typeof combo.iconSrc === 'string') opt.dataset.iconSrc = combo.iconSrc;
+      }
       elColorPreset.appendChild(opt);
     });
     elColorPreset.value = String(activeColorComboIdx);
     updateColorPresetLabel(activeColorComboIdx);
+    try { if (window.__resyncCustomDropdowns) window.__resyncCustomDropdowns(); } catch(e){}
   }
 
   populateColorPresetSelect();
@@ -3031,6 +3425,14 @@ function setup(){
       elGroups.step = 1;
       elGroups.value = (idx >= 0) ? idx : 0;
     }
+    // New UI: displacement groups index
+    const nDispGroupsEl = (typeof document !== 'undefined') ? document.getElementById('dispGroups') : null;
+    if (nDispGroupsEl){
+      nDispGroupsEl.min = 0;
+      nDispGroupsEl.max = Math.max(0, _signedGroupOptions.length - 1);
+      nDispGroupsEl.step = 1;
+      nDispGroupsEl.value = (idx >= 0) ? idx : 0;
+    }
 
     if (elGroupsOut) elGroupsOut.textContent = String(displaceGroupsTarget);
   }
@@ -3324,7 +3726,9 @@ function renderLogo(g){
   // (keep txAdj/tyAdj for the final transform below)
   // Effective wave fades
   const fadeShaped = shapeFade01(Math.max(0, ANIM_FADE||0));
-  const effHWave = (H_WAVE_AMP_ANIM || 0) * fadeShaped;
+  let effHWave = (H_WAVE_AMP_ANIM || 0) * fadeShaped;
+  const hModeNow = String(H_WAVE_MODE || 'off');
+  if (hModeNow === 'off') effHWave = 0;
   if (rows <= 1){
     rowYsCanvas = [0];
   } else {
@@ -3442,14 +3846,32 @@ function renderLogo(g){
           const extraLen = Math.max(0, dashLenUse - baseLen);
           const xShift = computeXShift(r, rows, displaceGroupsAnim);
           let rx = rightEdgeX + xShift + (extraLen * 0.5);
-          if (ANIM_ENABLED && effHWave !== 0 && rowPitchNow > 0){
-            const ampLayout = rowPitchNow * effHWave;
+          if (effHWave !== 0 && rowPitchNow > 0){
+            const ampBase = rowPitchNow * effHWave;
             const periodHW = Math.max(0.1, H_WAVE_PERIOD);
-            // Blend row-phase in with the fade so we start at a global zero-crossing
-            const rowW = fadeShaped; // 0..1: 0=uniform phase, 1=full per-row phase
-            const tRel = Math.max(0, animTime - (H_WAVE_T0||0));
-            const phase = (rowW * (r / rows) * TWO_PI) - tRel * TWO_PI / periodHW;
-            rx += Math.sin(phase) * ampLayout;
+            const rowW = fadeShaped; // keep subtle per-row phase
+            let phaseTime = 0;
+            let ampMul = 1;
+            if (hModeNow === 'mouse'){
+              // Focus effect around mouse X
+              const letterBaseScaledW = layout.letterW[li] * layout.scale;
+              const letterCenter = baseX + letterBaseScaledW * 0.5;
+              ampMul = mouseWeight(localMouseX, letterCenter, Math.max(1e-3, letterBaseScaledW), contentWAdj, MOUSE_CURVE, MOUSE_POWER);
+            } else if (hModeNow === 'pulse'){
+              // Time-driven oscillation (independent of vertical pulse)
+              const period = Math.max(0.1, H_WAVE_PERIOD);
+              const cyc = (animTime / period) % 1; // 0..1
+              phaseTime = cyc * TWO_PI;
+            } else if (hModeNow === 'scan'){
+              // Time-driven traveling wave
+              const tRel = Math.max(0, animTime - (H_WAVE_T0||0));
+              phaseTime = tRel * TWO_PI / periodHW;
+            } else {
+              // off already gated; default: no time
+              phaseTime = 0;
+            }
+            const phase = (rowW * (r / rows) * TWO_PI) - phaseTime;
+            rx += Math.sin(phase) * (ampBase * ampMul);
           }
           const heightMul = (EASE_TYPE === 'fadeIn' && !_taperTransActive)
             ? Math.max(0, Math.min(1, fadeInRowMul(r, rows)))
