@@ -677,6 +677,38 @@ function computeProgressiveBandHeights(avail, fillFrac, count){
 let isExport = false;
 let _needsRedraw = false;
 let _lastDrawT = 0;
+
+// Offscreen capture (for WebM/MP4) + UI indicator
+let _recordingBuffer = null;
+let _recordingActive = false;
+let _recordingBlinkT0 = 0;
+let _recordingPrevPerf = null;
+
+function beginRecordingBuffer(w, h){
+  const W = Math.max(1, Math.round(w));
+  const H = Math.max(1, Math.round(h));
+  const buf = createGraphics(W, H);
+  if (!buf || !buf.elt) throw new Error('Kon offscreen export-buffer niet maken');
+  try { buf.pixelDensity(1); buf.noSmooth(); } catch(e){}
+  _recordingPrevPerf = PERF_MODE;
+  PERF_MODE = false;
+  _recordingBuffer = buf;
+  _recordingActive = true;
+  _recordingBlinkT0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  requestRedraw();
+  return buf;
+}
+
+function endRecordingBuffer(){
+  PERF_MODE = (_recordingPrevPerf !== null && _recordingPrevPerf !== undefined) ? _recordingPrevPerf : PERF_MODE;
+  _recordingPrevPerf = null;
+  _recordingActive = false;
+  if (_recordingBuffer){
+    try { if (typeof _recordingBuffer.remove === 'function') _recordingBuffer.remove(); } catch(e){}
+  }
+  _recordingBuffer = null;
+  requestRedraw();
+}
 function requestRedraw(){
   if (_needsRedraw) return;
   _needsRedraw = true;
@@ -756,127 +788,98 @@ async function exportMP4(){
     }
   } catch(e){}
 
-  const canvasEl = (mainCanvas && mainCanvas.elt) ? mainCanvas.elt : null;
-  if (!canvasEl || !canvasEl.captureStream){
-    throw new Error('Canvas captureStream not available');
-  }
-
-  // Temporarily resize the main canvas to target resolution for crisp capture
-  const prevW = width, prevH = height;
-  let prevPD = null;
-  const prevPerf = PERF_MODE;
+  let capture = null;
   try {
-    // Force high-quality rendering during capture
-    PERF_MODE = false;
-    if (width !== targetW || height !== targetH){
-      // Force pixel density = 1 so exported pixels match requested resolution exactly
-      try { prevPD = (typeof pixelDensity === 'function') ? pixelDensity() : null; } catch(e){}
-      try { if (typeof pixelDensity === 'function') pixelDensity(1); } catch(e){}
-      resizeCanvas(Math.max(1, targetW), Math.max(1, targetH), true);
-      layout = buildLayout(currentLogoText(), rows);
+    capture = beginRecordingBuffer(targetW, targetH);
+    const canvasEl = (capture && capture.elt) ? capture.elt : null;
+    if (!canvasEl || !canvasEl.captureStream){
+      throw new Error('Canvas captureStream not available');
+    }
+
+    const fps = 60;
+    const stream = canvasEl.captureStream(fps);
+    // Pick best supported mime — prefer MP4 first if the browser supports it
+    const candidates = [
+      // MP4/H264 (supported in Safari; some Chrome/Edge builds)
+      'video/mp4;codecs=h264',
+      'video/mp4;codecs=avc1.4D401E',
+      'video/mp4;codecs=avc1.42E01E',
+      'video/mp4',
+      // WebM fallbacks (widely supported by Chrome/Edge/Firefox)
+      'video/webm;codecs=vp9',
+      'video/webm;codecs=vp8',
+      'video/webm'
+    ];
+    let mime = '';
+    for (const m of candidates){ if (MediaRecorder.isTypeSupported(m)){ mime = m; break; } }
+    if (!mime){ throw new Error('No supported recording mimeType'); }
+
+    // Compute bitrate based on resolution and fps to avoid muddiness
+    const px = Math.max(1, Math.round(targetW)) * Math.max(1, Math.round(targetH));
+    const bpp = 1; // bits per pixel per frame (tune as needed)
+    const est = Math.round(px * fps * bpp);
+    const vbr = Math.max(4_000_000, Math.min(50_000_000, est));
+    const chunks = [];
+    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: vbr });
+    rec.ondataavailable = (e)=>{ if (e && e.data && e.data.size > 0) chunks.push(e.data); };
+
+    // Determine duration: one full keyframe cycle if available; else 3s
+    const kfList = (function(){ try { return (typeof window !== 'undefined' && window.__keyframesRef) ? window.__keyframesRef : []; } catch(e){ return []; }})();
+    let totalSec = 3.0;
+    try {
+      if (Array.isArray(kfList) && kfList.length){
+        const sum = kfList.reduce((s,k)=> s + Math.max(0.05, (k && k.timeSec) ? k.timeSec : KF_TIME_DEFAULT), 0);
+        totalSec = Math.max(0.2, sum * Math.max(0.1, KF_SPEED_MUL));
+      }
+    } catch(e){}
+
+    // Prepare playback; start after recorder is running
+    const wasPlaying = !!KF_PLAYING;
+
+    // Warm-up: force a couple of painted frames before starting the recorder
+    try {
+      // Ensure glyphs for current text are available
+      try { ensureGlyphsLoadedFor(currentLogoText()); } catch(e){}
+      // Wait briefly for any pending glyph loads (bounded)
+      const chars = Array.from(new Set(String(currentLogoText()||'').toUpperCase().split('').filter(c => /^[A-Z]$/.test(c))));
+      const deadlineAssets = performance.now() + 1000;
+      while (true){
+        const ready = chars.every(ch => glyphImgs[ch] && glyphDims[ch] && glyphDims[ch].w > 0 && glyphDims[ch].h > 0);
+        if (ready || performance.now() > deadlineAssets) break;
+        await new Promise(res => setTimeout(res, 16));
+      }
+      const startMark = performance.now();
       requestRedraw();
-      // Allow one tick for resize to take effect
-      await new Promise(r => setTimeout(r, 0));
-    }
-  } catch(e){}
-
-  const fps = 60;
-  const stream = canvasEl.captureStream(fps);
-  // Pick best supported mime — prefer MP4 first if the browser supports it
-  const candidates = [
-    // MP4/H264 (supported in Safari; some Chrome/Edge builds)
-    'video/mp4;codecs=h264',
-    'video/mp4;codecs=avc1.4D401E',
-    'video/mp4;codecs=avc1.42E01E',
-    'video/mp4',
-    // WebM fallbacks (widely supported by Chrome/Edge/Firefox)
-    'video/webm;codecs=vp9',
-    'video/webm;codecs=vp8',
-    'video/webm'
-  ];
-  let mime = '';
-  for (const m of candidates){ if (MediaRecorder.isTypeSupported(m)){ mime = m; break; } }
-  if (!mime){ throw new Error('No supported recording mimeType'); }
-
-  // Compute bitrate based on resolution and fps to avoid muddiness
-  const px = Math.max(1, Math.round(targetW)) * Math.max(1, Math.round(targetH));
-  const bpp = 1; // bits per pixel per frame (tune as needed)
-  const est = Math.round(px * fps * bpp);
-  const vbr = Math.max(4_000_000, Math.min(50_000_000, est));
-  const chunks = [];
-  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: vbr });
-  rec.ondataavailable = (e)=>{ if (e && e.data && e.data.size > 0) chunks.push(e.data); };
-
-  // Determine duration: one full keyframe cycle if available; else 3s
-  const kfList = (function(){ try { return (typeof window !== 'undefined' && window.__keyframesRef) ? window.__keyframesRef : []; } catch(e){ return []; }})();
-  let totalSec = 3.0;
-  try {
-    if (Array.isArray(kfList) && kfList.length){
-      const sum = kfList.reduce((s,k)=> s + Math.max(0.05, (k && k.timeSec) ? k.timeSec : KF_TIME_DEFAULT), 0);
-      totalSec = Math.max(0.2, sum * Math.max(0.1, KF_SPEED_MUL));
-    }
-  } catch(e){}
-
-  // Prepare playback; start after recorder is running
-  const wasPlaying = !!KF_PLAYING;
-
-  // Warm-up: force a couple of painted frames at target size before starting the recorder
-  try {
-    // Ensure glyphs for current text are available
-    try { ensureGlyphsLoadedFor(currentLogoText()); } catch(e){}
-    // Wait briefly for any pending glyph loads (bounded)
-    const chars = Array.from(new Set(String(currentLogoText()||'').toUpperCase().split('').filter(c => /^[A-Z]$/.test(c))));
-    const deadlineAssets = performance.now() + 1000;
-    while (true){
-      const ready = chars.every(ch => glyphImgs[ch] && glyphDims[ch] && glyphDims[ch].w > 0 && glyphDims[ch].h > 0);
-      if (ready || performance.now() > deadlineAssets) break;
-      await new Promise(res => setTimeout(res, 16));
-    }
-    const startMark = performance.now();
-    requestRedraw();
-    await new Promise(res => requestAnimationFrame(res));
-    await new Promise(res => requestAnimationFrame(res));
-    // Wait until draw() has happened after warm-up
-    const t0 = _lastDrawT;
-    const deadline = startMark + 1000;
-    while (_lastDrawT <= t0 && performance.now() < deadline){
       await new Promise(res => requestAnimationFrame(res));
-    }
-  } catch(e){}
+      await new Promise(res => requestAnimationFrame(res));
+      // Wait until draw() has happened after warm-up
+      const t0 = _lastDrawT;
+      const deadline = startMark + 1000;
+      while (_lastDrawT <= t0 && performance.now() < deadline){
+        await new Promise(res => requestAnimationFrame(res));
+      }
+    } catch(e){}
 
-  const started = new Promise((resolve)=>{ try { rec.onstart = ()=> resolve(); } catch(e){ resolve(); } });
-  const stopped = new Promise((resolve)=>{
-    rec.onstop = ()=> resolve();
-  });
-  // Hint encoder for detailed content
-  try { const tr = stream.getVideoTracks && stream.getVideoTracks()[0]; if (tr) tr.contentHint = 'detail'; } catch(e){}
-  rec.start();
-  // Wait for recorder to be ready, then start autoplay to capture from exact beginning
-  try { await started; } catch(e){}
-  if (!wasPlaying){ try { if (typeof window !== 'undefined' && window.__kfPlay) window.__kfPlay(); } catch(e){} }
-  await new Promise(res=> setTimeout(res, Math.round(totalSec * 1000)));
-  rec.stop();
-  await stopped;
+    const started = new Promise((resolve)=>{ try { rec.onstart = ()=> resolve(); } catch(e){ resolve(); } });
+    const stopped = new Promise((resolve)=>{ rec.onstop = ()=> resolve(); });
+    // Hint encoder for detailed content
+    try { const tr = stream.getVideoTracks && stream.getVideoTracks()[0]; if (tr) tr.contentHint = 'detail'; } catch(e){}
+    rec.start();
+    // Wait for recorder to be ready, then start autoplay to capture from exact beginning
+    try { await started; } catch(e){}
+    if (!wasPlaying){ try { if (typeof window !== 'undefined' && window.__kfPlay) window.__kfPlay(); } catch(e){} }
+    await new Promise(res=> setTimeout(res, Math.round(totalSec * 1000)));
+    rec.stop();
+    await stopped;
 
-  if (!wasPlaying){ try { if (typeof window !== 'undefined' && window.__kfStop) window.__kfStop(); } catch(e){} }
+    if (!wasPlaying){ try { if (typeof window !== 'undefined' && window.__kfStop) window.__kfStop(); } catch(e){} }
 
-  const blob = new Blob(chunks, { type: mime });
-  const ext = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
-  downloadBlob(blob, `export.${ext}`);
-
-  // Restore original canvas size after capture
-  try {
-    // Restore pixel density first so resize uses the correct backing resolution
-    try { if (prevPD != null && typeof pixelDensity === 'function') pixelDensity(prevPD); } catch(e){}
-    if (prevW !== width || prevH !== height){
-      resizeCanvas(Math.max(1, prevW), Math.max(1, prevH), true);
-      layout = buildLayout(currentLogoText(), rows);
-      requestRedraw();
-    }
-    PERF_MODE = prevPerf;
-    // Refit wrapper just in case
-    try { if (typeof fitViewportToWindow === 'function') fitViewportToWindow(); } catch(e){}
-  } catch(e){}
+    const blob = new Blob(chunks, { type: mime });
+    const ext = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
+    downloadBlob(blob, `export.${ext}`);
+  } finally {
+    endRecordingBuffer();
+  }
 }
 
 // Higher-bitrate MP4 export (less compression)
@@ -910,106 +913,84 @@ async function exportMP4HQ(){
     }
   } catch(e){}
 
-  const canvasEl = (mainCanvas && mainCanvas.elt) ? mainCanvas.elt : null;
-  if (!canvasEl || !canvasEl.captureStream){
-    throw new Error('Canvas captureStream not available');
-  }
-
-  // Temporarily resize the main canvas to target resolution for crisp capture
-  const prevW = width, prevH = height;
-  let prevPD = null;
-  const prevPerf = PERF_MODE;
+  let capture = null;
   try {
-    PERF_MODE = false;
-    if (width !== targetW || height !== targetH){
-      try { prevPD = (typeof pixelDensity === 'function') ? pixelDensity() : null; } catch(e){}
-      try { if (typeof pixelDensity === 'function') pixelDensity(1); } catch(e){}
-      resizeCanvas(Math.max(1, targetW), Math.max(1, targetH), true);
-      layout = buildLayout(currentLogoText(), rows);
+    capture = beginRecordingBuffer(targetW, targetH);
+    const canvasEl = (capture && capture.elt) ? capture.elt : null;
+    if (!canvasEl || !canvasEl.captureStream){
+      throw new Error('Canvas captureStream not available');
+    }
+
+    const fps = 60;
+    const stream = canvasEl.captureStream(fps);
+    // Restrict to MP4‑compatible mime types; prefer H264
+    const candidates = [
+      'video/mp4;codecs=h264',
+      'video/mp4;codecs=avc1.4D401E',
+      'video/mp4;codecs=avc1.42E01E',
+      'video/mp4'
+    ];
+    let mime = '';
+    for (const m of candidates){ if (MediaRecorder.isTypeSupported(m)){ mime = m; break; } }
+    if (!mime){ throw new Error('No MP4 recording mimeType supported by this browser'); }
+
+    // Higher target bitrate: scale with resolution × fps, use a higher bpp and cap higher
+    const px = Math.max(1, Math.round(targetW)) * Math.max(1, Math.round(targetH));
+    const bppHQ = 2; // bits per pixel per frame (higher than default)
+    const est = Math.round(px * fps * bppHQ);
+    const vbr = Math.max(20_000_000, Math.min(100_000_000, est));
+    const chunks = [];
+    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: vbr });
+    rec.ondataavailable = (e)=>{ if (e && e.data && e.data.size > 0) chunks.push(e.data); };
+
+    // Determine duration: one full keyframe cycle if available; else 3s
+    const kfList = (function(){ try { return (typeof window !== 'undefined' && window.__keyframesRef) ? window.__keyframesRef : []; } catch(e){ return []; }})();
+    let totalSec = 3.0;
+    try {
+      if (Array.isArray(kfList) && kfList.length){
+        const sum = kfList.reduce((s,k)=> s + Math.max(0.05, (k && k.timeSec) ? k.timeSec : KF_TIME_DEFAULT), 0);
+        totalSec = Math.max(0.2, sum * Math.max(0.1, KF_SPEED_MUL));
+      }
+    } catch(e){}
+
+    // Warm-up then record
+    const wasPlaying = !!KF_PLAYING;
+    try {
+      try { ensureGlyphsLoadedFor(currentLogoText()); } catch(e){}
+      const chars = Array.from(new Set(String(currentLogoText()||'').toUpperCase().split('').filter(c => /^[A-Z]$/.test(c))));
+      const deadlineAssets = performance.now() + 1000;
+      while (true){
+        const ready = chars.every(ch => glyphImgs[ch] && glyphDims[ch] && glyphDims[ch].w > 0 && glyphDims[ch].h > 0);
+        if (ready || performance.now() > deadlineAssets) break;
+        await new Promise(res => setTimeout(res, 16));
+      }
+      const startMark = performance.now();
       requestRedraw();
-      await new Promise(r => setTimeout(r, 0));
-    }
-  } catch(e){}
-
-  const fps = 60;
-  const stream = canvasEl.captureStream(fps);
-  // Restrict to MP4‑compatible mime types; prefer H264
-  const candidates = [
-    'video/mp4;codecs=h264',
-    'video/mp4;codecs=avc1.4D401E',
-    'video/mp4;codecs=avc1.42E01E',
-    'video/mp4'
-  ];
-  let mime = '';
-  for (const m of candidates){ if (MediaRecorder.isTypeSupported(m)){ mime = m; break; } }
-  if (!mime){ throw new Error('No MP4 recording mimeType supported by this browser'); }
-
-  // Higher target bitrate: scale with resolution × fps, use a higher bpp and cap higher
-  const px = Math.max(1, Math.round(targetW)) * Math.max(1, Math.round(targetH));
-  const bppHQ = 2; // bits per pixel per frame (higher than default)
-  const est = Math.round(px * fps * bppHQ);
-  const vbr = Math.max(20_000_000, Math.min(100_000_000, est));
-  const chunks = [];
-  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: vbr });
-  rec.ondataavailable = (e)=>{ if (e && e.data && e.data.size > 0) chunks.push(e.data); };
-
-  // Determine duration: one full keyframe cycle if available; else 3s
-  const kfList = (function(){ try { return (typeof window !== 'undefined' && window.__keyframesRef) ? window.__keyframesRef : []; } catch(e){ return []; }})();
-  let totalSec = 3.0;
-  try {
-    if (Array.isArray(kfList) && kfList.length){
-      const sum = kfList.reduce((s,k)=> s + Math.max(0.05, (k && k.timeSec) ? k.timeSec : KF_TIME_DEFAULT), 0);
-      totalSec = Math.max(0.2, sum * Math.max(0.1, KF_SPEED_MUL));
-    }
-  } catch(e){}
-
-  // Warm-up then record
-  const wasPlaying = !!KF_PLAYING;
-  try {
-    try { ensureGlyphsLoadedFor(currentLogoText()); } catch(e){}
-    const chars = Array.from(new Set(String(currentLogoText()||'').toUpperCase().split('').filter(c => /^[A-Z]$/.test(c))));
-    const deadlineAssets = performance.now() + 1000;
-    while (true){
-      const ready = chars.every(ch => glyphImgs[ch] && glyphDims[ch] && glyphDims[ch].w > 0 && glyphDims[ch].h > 0);
-      if (ready || performance.now() > deadlineAssets) break;
-      await new Promise(res => setTimeout(res, 16));
-    }
-    const startMark = performance.now();
-    requestRedraw();
-    await new Promise(res => requestAnimationFrame(res));
-    await new Promise(res => requestAnimationFrame(res));
-    const t0 = _lastDrawT;
-    const deadline = startMark + 1000;
-    while (_lastDrawT <= t0 && performance.now() < deadline){
       await new Promise(res => requestAnimationFrame(res));
-    }
-  } catch(e){}
+      await new Promise(res => requestAnimationFrame(res));
+      const t0 = _lastDrawT;
+      const deadline = startMark + 1000;
+      while (_lastDrawT <= t0 && performance.now() < deadline){
+        await new Promise(res => requestAnimationFrame(res));
+      }
+    } catch(e){}
 
-  const started = new Promise((resolve)=>{ try { rec.onstart = ()=> resolve(); } catch(e){ resolve(); } });
-  const stopped = new Promise((resolve)=>{ rec.onstop = ()=> resolve(); });
-  try { const tr = stream.getVideoTracks && stream.getVideoTracks()[0]; if (tr) tr.contentHint = 'detail'; } catch(e){}
-  rec.start();
-  try { await started; } catch(e){}
-  if (!wasPlaying){ try { if (typeof window !== 'undefined' && window.__kfPlay) window.__kfPlay(); } catch(e){} }
-  await new Promise(res=> setTimeout(res, Math.round(totalSec * 1000)));
-  rec.stop();
-  await stopped;
-  if (!wasPlaying){ try { if (typeof window !== 'undefined' && window.__kfStop) window.__kfStop(); } catch(e){} }
+    const started = new Promise((resolve)=>{ try { rec.onstart = ()=> resolve(); } catch(e){ resolve(); } });
+    const stopped = new Promise((resolve)=>{ rec.onstop = ()=> resolve(); });
+    try { const tr = stream.getVideoTracks && stream.getVideoTracks()[0]; if (tr) tr.contentHint = 'detail'; } catch(e){}
+    rec.start();
+    try { await started; } catch(e){}
+    if (!wasPlaying){ try { if (typeof window !== 'undefined' && window.__kfPlay) window.__kfPlay(); } catch(e){} }
+    await new Promise(res=> setTimeout(res, Math.round(totalSec * 1000)));
+    rec.stop();
+    await stopped;
+    if (!wasPlaying){ try { if (typeof window !== 'undefined' && window.__kfStop) window.__kfStop(); } catch(e){} }
 
-  const blob = new Blob(chunks, { type: mime });
-  downloadBlob(blob, 'export-hq.mp4');
-
-  // Restore original canvas size after capture
-  try {
-    try { if (prevPD != null && typeof pixelDensity === 'function') pixelDensity(prevPD); } catch(e){}
-    if (prevW !== width || prevH !== height){
-      resizeCanvas(Math.max(1, prevW), Math.max(1, prevH), true);
-      layout = buildLayout(currentLogoText(), rows);
-      requestRedraw();
-    }
-    PERF_MODE = prevPerf;
-    try { if (typeof fitViewportToWindow === 'function') fitViewportToWindow(); } catch(e){}
-  } catch(e){}
+    const blob = new Blob(chunks, { type: mime });
+    downloadBlob(blob, 'export-hq.mp4');
+  } finally {
+    endRecordingBuffer();
+  }
 }
 
 async function exportWebM(){
@@ -1042,112 +1023,89 @@ async function exportWebM(){
     }
   } catch(e){}
 
-  const canvasEl = (mainCanvas && mainCanvas.elt) ? mainCanvas.elt : null;
-  if (!canvasEl || !canvasEl.captureStream){
-    throw new Error('Canvas captureStream not available');
-  }
-
-  // Temporarily resize the main canvas to target resolution for crisp capture
-  const prevW = width, prevH = height;
-  let prevPD = null;
-  const prevPerf = PERF_MODE;
+  let capture = null;
   try {
-    // Force high-quality rendering during capture
-    PERF_MODE = false;
-    if (width !== targetW || height !== targetH){
-      try { prevPD = (typeof pixelDensity === 'function') ? pixelDensity() : null; } catch(e){}
-      try { if (typeof pixelDensity === 'function') pixelDensity(1); } catch(e){}
-      resizeCanvas(Math.max(1, targetW), Math.max(1, targetH), true);
-      layout = buildLayout(currentLogoText(), rows);
+    capture = beginRecordingBuffer(targetW, targetH);
+    const canvasEl = (capture && capture.elt) ? capture.elt : null;
+    if (!canvasEl || !canvasEl.captureStream){
+      throw new Error('Canvas captureStream not available');
+    }
+
+    const fps = 60;
+    const stream = canvasEl.captureStream(fps);
+    // Prefer WebM codecs first
+    const candidates = [
+      'video/webm;codecs=vp9',
+      'video/webm;codecs=vp8',
+      'video/webm',
+      // Fallbacks (in case browser only supports mp4)
+      'video/mp4;codecs=h264',
+      'video/mp4;codecs=avc1.4D401E',
+      'video/mp4;codecs=avc1.42E01E',
+      'video/mp4'
+    ];
+    let mime = '';
+    for (const m of candidates){ if (MediaRecorder.isTypeSupported(m)){ mime = m; break; } }
+    if (!mime){ throw new Error('No supported recording mimeType'); }
+
+    // Bitrate based on resolution and fps
+    const px = Math.max(1, Math.round(targetW)) * Math.max(1, Math.round(targetH));
+    const bpp = 1; // bits per pixel per frame
+    const est = Math.round(px * fps * bpp);
+    const vbr = Math.max(4_000_000, Math.min(50_000_000, est));
+    const chunks = [];
+    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: vbr });
+    rec.ondataavailable = (e)=>{ if (e && e.data && e.data.size > 0) chunks.push(e.data); };
+
+    // Duration: full keyframe cycle if present; else 3s
+    const kfList = (function(){ try { return (typeof window !== 'undefined' && window.__keyframesRef) ? window.__keyframesRef : []; } catch(e){ return []; }})();
+    let totalSec = 3.0;
+    try {
+      if (Array.isArray(kfList) && kfList.length){
+        const sum = kfList.reduce((s,k)=> s + Math.max(0.05, (k && k.timeSec) ? k.timeSec : KF_TIME_DEFAULT), 0);
+        totalSec = Math.max(0.2, sum * Math.max(0.1, KF_SPEED_MUL));
+      }
+    } catch(e){}
+
+    // Warm-up and start
+    const wasPlaying = !!KF_PLAYING;
+    try {
+      try { ensureGlyphsLoadedFor(currentLogoText()); } catch(e){}
+      const chars = Array.from(new Set(String(currentLogoText()||'').toUpperCase().split('').filter(c => /^[A-Z]$/.test(c))));
+      const deadlineAssets = performance.now() + 1000;
+      while (true){
+        const ready = chars.every(ch => glyphImgs[ch] && glyphDims[ch] && glyphDims[ch].w > 0 && glyphDims[ch].h > 0);
+        if (ready || performance.now() > deadlineAssets) break;
+        await new Promise(res => setTimeout(res, 16));
+      }
+      const startMark = performance.now();
       requestRedraw();
-      await new Promise(r => setTimeout(r, 0));
-    }
-  } catch(e){}
-
-  const fps = 60;
-  const stream = canvasEl.captureStream(fps);
-  // Prefer WebM codecs first
-  const candidates = [
-    'video/webm;codecs=vp9',
-    'video/webm;codecs=vp8',
-    'video/webm',
-    // Fallbacks (in case browser only supports mp4)
-    'video/mp4;codecs=h264',
-    'video/mp4;codecs=avc1.4D401E',
-    'video/mp4;codecs=avc1.42E01E',
-    'video/mp4'
-  ];
-  let mime = '';
-  for (const m of candidates){ if (MediaRecorder.isTypeSupported(m)){ mime = m; break; } }
-  if (!mime){ throw new Error('No supported recording mimeType'); }
-
-  // Bitrate based on resolution and fps
-  const px = Math.max(1, Math.round(targetW)) * Math.max(1, Math.round(targetH));
-  const bpp = 1; // bits per pixel per frame
-  const est = Math.round(px * fps * bpp);
-  const vbr = Math.max(4_000_000, Math.min(50_000_000, est));
-  const chunks = [];
-  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: vbr });
-  rec.ondataavailable = (e)=>{ if (e && e.data && e.data.size > 0) chunks.push(e.data); };
-
-  // Duration: full keyframe cycle if present; else 3s
-  const kfList = (function(){ try { return (typeof window !== 'undefined' && window.__keyframesRef) ? window.__keyframesRef : []; } catch(e){ return []; }})();
-  let totalSec = 3.0;
-  try {
-    if (Array.isArray(kfList) && kfList.length){
-      const sum = kfList.reduce((s,k)=> s + Math.max(0.05, (k && k.timeSec) ? k.timeSec : KF_TIME_DEFAULT), 0);
-      totalSec = Math.max(0.2, sum * Math.max(0.1, KF_SPEED_MUL));
-    }
-  } catch(e){}
-
-  // Warm-up and start
-  const wasPlaying = !!KF_PLAYING;
-  try {
-    try { ensureGlyphsLoadedFor(currentLogoText()); } catch(e){}
-    const chars = Array.from(new Set(String(currentLogoText()||'').toUpperCase().split('').filter(c => /^[A-Z]$/.test(c))));
-    const deadlineAssets = performance.now() + 1000;
-    while (true){
-      const ready = chars.every(ch => glyphImgs[ch] && glyphDims[ch] && glyphDims[ch].w > 0 && glyphDims[ch].h > 0);
-      if (ready || performance.now() > deadlineAssets) break;
-      await new Promise(res => setTimeout(res, 16));
-    }
-    const startMark = performance.now();
-    requestRedraw();
-    await new Promise(res => requestAnimationFrame(res));
-    await new Promise(res => requestAnimationFrame(res));
-    const t0 = _lastDrawT;
-    const deadline = startMark + 1000;
-    while (_lastDrawT <= t0 && performance.now() < deadline){
       await new Promise(res => requestAnimationFrame(res));
-    }
-  } catch(e){}
+      await new Promise(res => requestAnimationFrame(res));
+      const t0 = _lastDrawT;
+      const deadline = startMark + 1000;
+      while (_lastDrawT <= t0 && performance.now() < deadline){
+        await new Promise(res => requestAnimationFrame(res));
+      }
+    } catch(e){}
 
-  const started = new Promise((resolve)=>{ try { rec.onstart = ()=> resolve(); } catch(e){ resolve(); } });
-  const stopped = new Promise((resolve)=>{ rec.onstop = ()=> resolve(); });
-  try { const tr = stream.getVideoTracks && stream.getVideoTracks()[0]; if (tr) tr.contentHint = 'detail'; } catch(e){}
-  rec.start();
-  try { await started; } catch(e){}
-  if (!wasPlaying){ try { if (typeof window !== 'undefined' && window.__kfPlay) window.__kfPlay(); } catch(e){} }
-  await new Promise(res=> setTimeout(res, Math.round(totalSec * 1000)));
-  rec.stop();
-  await stopped;
-  if (!wasPlaying){ try { if (typeof window !== 'undefined' && window.__kfStop) window.__kfStop(); } catch(e){} }
+    const started = new Promise((resolve)=>{ try { rec.onstart = ()=> resolve(); } catch(e){ resolve(); } });
+    const stopped = new Promise((resolve)=>{ rec.onstop = ()=> resolve(); });
+    try { const tr = stream.getVideoTracks && stream.getVideoTracks()[0]; if (tr) tr.contentHint = 'detail'; } catch(e){}
+    rec.start();
+    try { await started; } catch(e){}
+    if (!wasPlaying){ try { if (typeof window !== 'undefined' && window.__kfPlay) window.__kfPlay(); } catch(e){} }
+    await new Promise(res=> setTimeout(res, Math.round(totalSec * 1000)));
+    rec.stop();
+    await stopped;
+    if (!wasPlaying){ try { if (typeof window !== 'undefined' && window.__kfStop) window.__kfStop(); } catch(e){} }
 
-  const blob = new Blob(chunks, { type: mime });
-  const ext = mime.includes('webm') ? 'webm' : (mime.includes('mp4') ? 'mp4' : 'webm');
-  downloadBlob(blob, `export.${ext}`);
-
-  // Restore canvas
-  try {
-    try { if (prevPD != null && typeof pixelDensity === 'function') pixelDensity(prevPD); } catch(e){}
-    if (prevW !== width || prevH !== height){
-      resizeCanvas(Math.max(1, prevW), Math.max(1, prevH), true);
-      layout = buildLayout(currentLogoText(), rows);
-      requestRedraw();
-    }
-    PERF_MODE = prevPerf;
-    try { if (typeof fitViewportToWindow === 'function') fitViewportToWindow(); } catch(e){}
-  } catch(e){}
+    const blob = new Blob(chunks, { type: mime });
+    const ext = mime.includes('webm') ? 'webm' : (mime.includes('mp4') ? 'mp4' : 'webm');
+    downloadBlob(blob, `export.${ext}`);
+  } finally {
+    endRecordingBuffer();
+  }
 }
 
 function downloadTextAsFile(text, filename, mime = 'image/svg+xml'){
@@ -3667,7 +3625,7 @@ function setup(){
   requestRedraw();
 }
 
-function computeLayoutFit(){
+function computeLayoutFit(canvasW = width, canvasH = height){
   // Centering based on fixed layout metrics; no auto scale-to-fit
   const tEff = 1 + (widthScale - 1);
   // Derive pitch from a fixed target content height so more rows → tighter spacing
@@ -3695,8 +3653,8 @@ function computeLayoutFit(){
   const contentH = contentH0;
 
   // Centreer binnen huidige viewport
-  const left = (width  - contentW) * 0.5 - leftmost;
-  const top  = (height - contentH) * 0.5;
+  const left = (canvasW  - contentW) * 0.5 - leftmost;
+  const top  = (canvasH - contentH) * 0.5;
 
   return { tEff, rowPitchNow, leftmost, rightmost, contentW0, contentH0, sFit, left, top };
 }
@@ -3781,8 +3739,13 @@ function computeRepeatRowsSequence(totalExtraRows, rowsPerBlock, falloff){
   return out;
 }
 
-function renderLogo(g){
-  updateAnimatedParameters();
+function renderLogo(g, options = {}){
+  const opts = options || {};
+  const canvasW = Math.max(1, Math.round(opts.canvasW || ((g && typeof g.width === 'number') ? g.width : width)));
+  const canvasH = Math.max(1, Math.round(opts.canvasH || ((g && typeof g.height === 'number') ? g.height : height)));
+  const prevExport = isExport;
+  if (opts.forceExport) isExport = true;
+  if (!opts.skipUpdate) updateAnimatedParameters();
   if (_layoutDirty){
     layout = buildLayout(currentLogoText(), rows);
     _layoutDirty = false;
@@ -3808,19 +3771,19 @@ function renderLogo(g){
   g.fill(color2);
   g.noStroke();
 
-  const fit = computeLayoutFit();
+  const fit = computeLayoutFit(canvasW, canvasH);
   const { tEff, rowPitchNow, leftmost, contentW0, contentH0 } = fit;
 
   if (!Number.isFinite(displaceGroupsAnim)) displaceGroupsAnim = displaceGroupsTarget;
 
   // Center using the *current* content bounds so it stays centered as width/gap change
-  const innerW = Math.max(1, width);
+  const innerW = Math.max(1, canvasW);
   const refW   = Math.max(1, targetContentW || contentW0);
   const sBase  = innerW / refW;
   const s      = Math.max(0.01, sBase * FIT_FRACTION * logoScaleMul);
 
   // Center using the *current* content bounds so it stays centered as width/gap change
-  const innerH = Math.max(1, height);
+  const innerH = Math.max(1, canvasH);
   let tx = 0, ty = 0;
 
   // Provisional translate (unadjusted) just for mouse mapping
@@ -3892,29 +3855,29 @@ function renderLogo(g){
     if (showBg && pitchPx > 0){
       if (isMainCanvas){
         // Cache stripes aligned at multiples of pitch starting at 0.
-        const key = [Math.round(width), Math.round(height), Math.round(pitchPx*1000)/1000, thickPx, fillCol].join('|');
+        const key = [Math.round(canvasW), Math.round(canvasH), Math.round(pitchPx*1000)/1000, thickPx, fillCol].join('|');
         if (key !== _bgLinesCacheKey || !_bgLinesCache){
           _bgLinesCacheKey = key;
           if (_bgLinesCache){
-            try { _bgLinesCache.resizeCanvas(Math.max(1,width), Math.max(1,height), true); } catch(e){ _bgLinesCache = null; }
+            try { _bgLinesCache.resizeCanvas(Math.max(1,canvasW), Math.max(1,canvasH), true); } catch(e){ _bgLinesCache = null; }
           }
           if (!_bgLinesCache){
-            _bgLinesCache = createGraphics(Math.max(1, width), Math.max(1, height));
+            _bgLinesCache = createGraphics(Math.max(1, canvasW), Math.max(1, canvasH));
             try { _bgLinesCache.pixelDensity(1); _bgLinesCache.noSmooth(); } catch(e){}
           }
           _bgLinesCache.clear();
           _bgLinesCache.noStroke();
           _bgLinesCache.fill(fillCol);
-          for (let y = 0; y <= height; y += pitchPx){
-            _bgLinesCache.rect(0, y - thickPx * 0.5, width, thickPx);
+          for (let y = 0; y <= canvasH; y += pitchPx){
+            _bgLinesCache.rect(0, y - thickPx * 0.5, canvasW, thickPx);
           }
         }
         if (_bgLinesCache){
           // Shift the cached pattern by startY without rebuilding: draw twice to cover wraparound
           const oy = startY % pitchPx;
           g.push();
-          g.image(_bgLinesCache, 0, oy, width, height);
-          if (oy > 0) g.image(_bgLinesCache, 0, oy - height, width, height);
+          g.image(_bgLinesCache, 0, oy, canvasW, canvasH);
+          if (oy > 0) g.image(_bgLinesCache, 0, oy - canvasH, canvasW, canvasH);
           g.pop();
         }
       } else {
@@ -3922,8 +3885,8 @@ function renderLogo(g){
         g.push();
         g.noStroke();
         g.fill(fillCol);
-        for (let y = startY; y <= height; y += pitchPx){
-          g.rect(0, y - thickPx * 0.5, width, thickPx);
+        for (let y = startY; y <= canvasH; y += pitchPx){
+          g.rect(0, y - thickPx * 0.5, canvasW, thickPx);
         }
         g.pop();
       }
@@ -4203,6 +4166,7 @@ function renderLogo(g){
     }
   }
   g.pop();
+  if (opts.forceExport) isExport = prevExport;
 }
 
 function draw(){
@@ -4213,8 +4177,25 @@ function draw(){
   }
   noStroke();
   renderLogo(this);
+  if (_recordingBuffer){
+    renderLogo(_recordingBuffer, { skipUpdate: true, forceExport: true });
+  }
+  if (_recordingActive) drawRecordingIndicator(this);
   if (debugMode) drawdebugModeOverlay();
   try { _lastDrawT = performance.now(); } catch(e){}
+  if (_recordingActive) requestRedraw();
+}
+
+function drawRecordingIndicator(g){
+  if (!_recordingActive || !g) return;
+  const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+  const phase = ((now - _recordingBlinkT0) / 400) % 2;
+  const alpha = (phase < 1) ? 230 : 90;
+  g.push();
+  g.noStroke();
+  g.fill(255, 0, 0, alpha);
+  g.circle(14, 14, 10);
+  g.pop();
 }
 
 // ====== DRAWING ======
