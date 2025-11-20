@@ -63,16 +63,17 @@ main {
 
 #blockLeft {
   flex: 1 1 auto;
+  align-self: stretch;
   min-width: 10px;
   min-height: 100px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  row-gap: 0;
   width: 100%;
   height: 100%;
   min-height: 0;
   align-items: stretch;
-  justify-content: stretch;
+  justify-items: center;
   border-radius: var(--radius-block-left);
   overflow: visible;
 }
@@ -87,10 +88,14 @@ main {
   justify-content: center;
   overflow: visible;
   background: var(--color-panel-bg);
-  margin: auto;
   flex: 0 0 auto;
+  width: auto;
+  max-width: 100%;
   min-height: 0;
+  min-width: 0;
   position: relative;
+  justify-self: center;
+  align-self: center;
 }
 
 #canvasWrap canvas {
@@ -108,6 +113,8 @@ main {
   padding: 12px;
   position: relative;
   z-index: 998;
+  margin-top: auto;
+  justify-self: stretch;
 }
 
 .export-bar .bar-inner {
@@ -270,14 +277,16 @@ main {
 /* ===== Controls ===== */
 #controls {
   width: 400px;
+  max-width: 400px;
   flex: 0 0 400px;
+  height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
   background: var(--color-panel-bg);
   border: 1px solid var(--color-panel-border);
   border-radius: var(--radius-panel);
   padding: var(--space-panel);
-  box-shadow: var(--shadow-panel);
+  box-shadow: none;
   position: relative;
   z-index: 999;
 }
