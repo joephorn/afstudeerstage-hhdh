@@ -160,10 +160,9 @@ main {
   max-width: 260px;
 }
 .export-section--keyframes {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-width: 0;
   max-width: 100%;
-  overflow: hidden;
 }
 
 .export-section-head {
@@ -300,6 +299,12 @@ main {
 
 #exportBar .control-section + .control-section::before {
   content: none;
+}
+
+#exportBar .control-section {
+  padding-top: 0;
+  padding-bottom: 0;
+  align-items: flex-start;
 }
 
 .control-section-title {
@@ -454,6 +459,7 @@ button#resetDefaults:hover {
 }
 .ui-control {
   grid-column: 3;
+  min-width: 0;
 }
 .ui-range {
   width: 100%;
@@ -633,10 +639,17 @@ button#resetDefaults:hover {
   grid-column: 2 / 4;
   display: flex;
   flex-direction: column;
-  margin-top: 8px;
+  margin-top: 0;
 }
 #ui-export-actions .ui-row-actions .ui-label {
   display: none;
+}
+
+/* Align total duration value with label in export bar */
+.export-bar #kfTotalOut {
+  display: flex;
+  align-items: center;
+  height: 28px;
 }
 
 .ui-section-head { display: contents; }

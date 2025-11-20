@@ -16,101 +16,120 @@
           <div id="exportBar" class="export-bar">
             <div class="bar-inner">
               <!-- Settings section -->
-              <section class="export-section export-section--settings">
-                <div class="export-section-head">
-                  <h2 class="export-section-title">Settings</h2>
+              <section class="control-section export-section export-section--settings" id="ui-export-settings">
+                <div class="ui-section-head">
+                  <h2 class="control-section-title">Settings</h2>
                 </div>
-                <div class="size-group">
-                <label class="control-label control-label--inline" for="preset">
-                  <span>Size</span>
-                </label>
-                <select id="preset" class="visually-hidden">
-                  <option value="fit" selected>Fit — fill screen</option>
-                  <option value="ar1" data-aw="16" data-ah="9" data-w="1920" data-h="1080">16:9 — 1920 × 1080 (Full HD)</option>
-                  <option value="ar2" data-aw="16" data-ah="9" data-w="1280" data-h="720">16:9 — 1280 × 720 (HD)</option>
-                  <option value="ar3" data-aw="16" data-ah="9" data-w="3840" data-h="2160">16:9 — 3840 × 2160 (4K)</option>
-                  <option value="ar4" data-aw="9" data-ah="16" data-w="1080" data-h="1920">9:16 — 1080 × 1920 (Vertical Full HD)</option>
-                  <option value="ar5" data-aw="9" data-ah="16" data-w="720" data-h="1280">9:16 — 720 × 1280</option>
-                  <option value="ar6" data-aw="1" data-ah="1" data-w="1080" data-h="1080">1:1 — 1080 × 1080</option>
-                  <option value="ar7" data-aw="4" data-ah="5" data-w="1080" data-h="1350">4:5 — 1080 × 1350</option>
-                  <option value="ar8" data-aw="3" data-ah="2" data-w="1620" data-h="1080">3:2 — 1620 × 1080</option>
-                  <option value="ar9" data-aw="4" data-ah="3" data-w="1024" data-h="768">4:3 — 1024 × 768</option>
-                  <option value="ar10" data-aw="4" data-ah="3" data-w="2048" data-h="1536">4:3 — 2048 × 1536</option>
-                  <option value="ar11" data-aw="21" data-ah="9" data-w="2560" data-h="1080">21:9 — 2560 × 1080 (Ultrawide)</option>
-                  <option value="ar12" data-aw="21" data-ah="9" data-w="3440" data-h="1440">21:9 — 3440 × 1440 (Ultrawide)</option>
-                  <option value="custom" data-aw="" data-ah="" data-w="" data-h="">Custom…</option>
-                </select>
-                <div class="dropdown dropdown--text" data-link="#preset"></div>
-                <div id="customAR" class="custom-resolution">
-                  <label class="control-label inline-label">
-                    <span>Custom resolution</span>
-                    <span class="sub">pixels</span>
-                  </label>
-                  <div class="field-row">
-                    <input id="aspectW" class="input-fluid" type="number" min="1" step="1" value="1920" placeholder="Width (px)" />
-                    <input id="aspectH" class="input-fluid" type="number" min="1" step="1" value="1080" placeholder="Height (px)" />
-                  </div>
-                  <div class="field-row" style="align-items:center; gap:8px; margin-top:6px;">
-                    <button id="applyCustomAR" type="button">Apply</button>
+                <div class="ui-row">
+                  <label class="ui-label" for="preset">Size</label>
+                  <div class="ui-control">
+                    <select id="preset" class="visually-hidden">
+                      <option value="fit" selected>Fit — fill screen</option>
+                      <option value="ar1" data-aw="16" data-ah="9" data-w="1920" data-h="1080">16:9 — 1920 × 1080 (Full HD)</option>
+                      <option value="ar2" data-aw="16" data-ah="9" data-w="1280" data-h="720">16:9 — 1280 × 720 (HD)</option>
+                      <option value="ar3" data-aw="16" data-ah="9" data-w="3840" data-h="2160">16:9 — 3840 × 2160 (4K)</option>
+                      <option value="ar4" data-aw="9" data-ah="16" data-w="1080" data-h="1920">9:16 — 1080 × 1920 (Vertical Full HD)</option>
+                      <option value="ar5" data-aw="9" data-ah="16" data-w="720" data-h="1280">9:16 — 720 × 1280</option>
+                      <option value="ar6" data-aw="1" data-ah="1" data-w="1080" data-h="1080">1:1 — 1080 × 1080</option>
+                      <option value="ar7" data-aw="4" data-ah="5" data-w="1080" data-h="1350">4:5 — 1080 × 1350</option>
+                      <option value="ar8" data-aw="3" data-ah="2" data-w="1620" data-h="1080">3:2 — 1620 × 1080</option>
+                      <option value="ar9" data-aw="4" data-ah="3" data-w="1024" data-h="768">4:3 — 1024 × 768</option>
+                      <option value="ar10" data-aw="4" data-ah="3" data-w="2048" data-h="1536">4:3 — 2048 × 1536</option>
+                      <option value="ar11" data-aw="21" data-ah="9" data-w="2560" data-h="1080">21:9 — 2560 × 1080 (Ultrawide)</option>
+                      <option value="ar12" data-aw="21" data-ah="9" data-w="3440" data-h="1440">21:9 — 3440 × 1440 (Ultrawide)</option>
+                      <option value="custom" data-aw="" data-ah="" data-w="" data-h="">Custom…</option>
+                    </select>
+                    <div class="dropdown dropdown--text" data-link="#preset"></div>
                   </div>
                 </div>
-                <!-- Format -->
-                <div class="format-group">
-                <label class="control-label control-label--inline" for="exportFormat">
-                  <span>Format</span>
-                </label>
-                <select id="exportFormat" class="visually-hidden">
-                  <option value="svg">SVG</option>
-                  <option value="pdf">PDF</option>
-                  <option value="mp4">MP4</option>
-                  <option value="webm">WebM</option>
-                </select>
-                <div class="dropdown dropdown--text" data-link="#exportFormat"></div>
-                <input id="cfgFile" type="file" accept=".json,.txt" style="display:none" />
-                </div>
-              </section>
-
-              <!-- Keyframes section -->
-              <section class="keyframe-group export-section export-section--keyframes">
-                <div class="export-section-head">
-                  <h2 class="export-section-title">Keyframes</h2>
-                </div>
-                <div class="kf-row">
-                  <button id="kfToggle" type="button" title="Play/Pause">▶</button>
-                  <div id="kfList" class="kf-list"></div>
-                </div>
-                <div class="control-field">
-                  <label class="control-label" for="kfTime">
-                    <span>Duration</span>
-                    <span id="kfTimeOut" class="sub">0.5 Sec</span>
-                  </label>
-                  <input id="kfTime" class="visually-hidden" type="range" min="0.05" max="5" step="0.05" value="0.5" />
-                  <div class="scalar" data-link="#kfTime" data-unit="Sec">
-                    <div class="scalar__fill"></div>
-                    <div class="scalar__value"></div>
-                    <div class="scalar__unit">Sec</div>
-                    <div class="scalar__edit"><input type="number" /></div>
+                <div class="ui-row" id="customARRow">
+                  <label class="ui-label" for="aspectW">Custom resolution</label>
+                  <div class="ui-control">
+                    <div id="customAR" class="custom-resolution">
+                      <label class="control-label inline-label">
+                        <span>Custom resolution</span>
+                        <span class="sub">pixels</span>
+                      </label>
+                      <div class="field-row">
+                        <input id="aspectW" class="input-fluid" type="number" min="1" step="1" value="1920" placeholder="Width (px)" />
+                        <input id="aspectH" class="input-fluid" type="number" min="1" step="1" value="1080" placeholder="Height (px)" />
+                      </div>
+                      <div class="field-row" style="align-items:center; gap:8px; margin-top:6px;">
+                        <button id="applyCustomAR" type="button">Apply</button>
+                      </div>
+                    </div>
                   </div>
                 </div>
-                <div class="control-field">
-                  <label class="control-label">
-                    <span>Total Duration</span>
-                    <span id="kfTotalOut" class="sub">0.5 Sec</span>
-                  </label>
+                <div class="ui-row">
+                  <label class="ui-label" for="exportFormat">Format</label>
+                  <div class="ui-control">
+                    <select id="exportFormat" class="visually-hidden">
+                      <option value="svg">SVG</option>
+                      <option value="pdf">PDF</option>
+                      <option value="mp4">MP4</option>
+                      <option value="webm">WebM</option>
+                    </select>
+                    <div class="dropdown dropdown--text" data-link="#exportFormat"></div>
+                    <input id="cfgFile" type="file" accept=".json,.txt" style="display:none" />
+                  </div>
                 </div>
               </section>
 
               <!-- Actions section -->
-              <section class="actions export-section export-section--actions">
-                <div class="export-section-head">
-                  <h2 class="export-section-title">Actions</h2>
+              <section class="control-section export-section export-section--actions" id="ui-export-actions">
+                <div class="ui-section-head">
+                  <h2 class="control-section-title">Actions</h2>
                 </div>
-                <div class="actions-grid">
-                  <button id="kfDel" type="button" title="Remove keyframe">- Keyframe</button>
-                  <button id="kfAdd" type="button" title="Add keyframe">+ Keyframe</button>
-                  <button id="cfgLoad" type="button">Load scene</button>
-                  <button id="cfgSave" type="button">Save scene</button>
-                  <button id="exportGo" type="button" class="actions-export">Export</button>
+                <div class="ui-row ui-row-actions">
+                  <span class="ui-label"></span>
+                  <div class="ui-control actions-grid">
+                    <div class="actions-grid-row">
+                      <button id="kfDel" type="button" title="Remove keyframe">Remove kf [-]</button>
+                      <button id="kfAdd" type="button" title="Add keyframe">Add kf [+]</button>
+                    </div>
+                    <div class="actions-grid-row">
+                      <button id="cfgLoad" type="button">Load scene</button>
+                      <button id="cfgSave" type="button">Save scene</button>
+                    </div>
+                    <div class="actions-grid-row">
+                      <button id="exportGo" type="button" class="actions-export">Export</button>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <!-- Keyframes section -->
+              <section class="control-section export-section export-section--keyframes" id="ui-export-keyframes">
+                <div class="ui-section-head">
+                  <h2 class="control-section-title">Scene</h2>
+                </div>
+                <div class="ui-row">
+                  <label class="ui-label" for="kfToggle">Keyframes</label>
+                  <div class="ui-control">
+                    <div class="kf-row">
+                      <button id="kfToggle" type="button" title="Play/Pause">▶</button>
+                      <div id="kfList" class="kf-list"></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="ui-row">
+                  <label class="ui-label" for="kfTime">Kf Duration</label>
+                  <div class="ui-control">
+                    <input id="kfTime" class="visually-hidden" type="range" min="0.10" max="5" step="0.1" value="1.0" />
+                    <div class="scalar" data-link="#kfTime" data-unit="Sec">
+                      <div class="scalar__fill"></div>
+                      <div class="scalar__value"></div>
+                      <div class="scalar__unit">Sec</div>
+                      <div class="scalar__edit"><input type="number" /></div>
+                    </div>
+                    <span id="kfTimeOut" class="sub visually-hidden"></span>
+                  </div>
+                </div>
+                <div class="ui-row">
+                  <label class="ui-label">All Duration</label>
+                  <div class="ui-control">
+                    <span id="kfTotalOut" class="sub">0.5 Sec</span>
+                  </div>
                 </div>
               </section>
             </div>

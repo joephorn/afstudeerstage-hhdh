@@ -68,7 +68,7 @@ const ANIM_ENABLED_DEFAULT = false; // master toggle like Repeat (default OFF)
 const ANIM_PERIOD_DEFAULT = 3.0;
 const AUTO_RANDOM_DEFAULT = false; // disabled by default
 const AUTO_RANDOM_PERIOD_DEFAULT = 1.0; // seconds
-const KF_TIME_DEFAULT = 0.5; // seconds per keyframe
+const KF_TIME_DEFAULT = 1.0; // seconds per keyframe
 const KF_SPEED_DEFAULT = 1.0; // global time multiplier
 
 // Pulse position (0..1) representing the peak location across the content
@@ -1739,6 +1739,7 @@ function setup(){
   elAspectW      = byId('aspectW');
   elAspectH      = byId('aspectH');
   elCustomAR     = byId('customAR');
+  const elCustomARRow = byId('customARRow');
   const elApplyCustomAR   = byId('applyCustomAR');
   elReset        = byId('resetDefaults');
 
@@ -1881,7 +1882,7 @@ function setup(){
       if (typeof nVCurve.__syncModeButtons === 'function') nVCurve.__syncModeButtons();
     }
     if (nVDur){ nVDur.min='2'; nVDur.max='10'; nVDur.step='0.1'; nVDur.value = ANIM_PERIOD.toFixed(2); }
-    if (nVAmp){ nVAmp.min='0'; nVAmp.max='3'; nVAmp.step='0.05'; nVAmp.value = MOUSE_AMPLITUDE.toFixed(2); }
+    if (nVAmp){ nVAmp.min='0'; nVAmp.max='3'; nVAmp.step='0.1'; nVAmp.value = MOUSE_AMPLITUDE.toFixed(1); }
     // h-wave (On/Off + amplitude as %)
     if (nHMode){
       const v = (H_WAVE_MODE && H_WAVE_MODE !== 'off') ? 'on' : 'off';
@@ -1902,7 +1903,7 @@ function setup(){
       try { if (window.__syncCustomDropdownButtons) window.__syncCustomDropdownButtons(); } catch(e){}
     }
     if (nTransDur){ nTransDur.min='0'; nTransDur.max='200'; nTransDur.step='1'; nTransDur.value = String(Math.round(EASE_DURATION_PCT)); }
-    if (nTransAmp){ nTransAmp.min='0'; nTransAmp.max='2'; nTransAmp.step='0.05'; nTransAmp.value = EASE_AMPLITUDE.toFixed(2); }
+    if (nTransAmp){ nTransAmp.min='0'; nTransAmp.max='2'; nTransAmp.step='0.1'; nTransAmp.value = EASE_AMPLITUDE.toFixed(1); }
 
     updateNewUIVisibility();
     // Resync custom sliders with any programmatic value changes
@@ -2371,12 +2372,26 @@ function setup(){
     if (elIdCode && frame && frame.code){ elIdCode.value = frame.code; }
     // Update current keyframe duration UI
     const tt = (frame && Number.isFinite(frame.timeSec)) ? frame.timeSec : KF_TIME_DEFAULT;
-    KF_TIME_CUR = Math.max(0.05, tt);
-    if (elKfTime) elKfTime.value = KF_TIME_CUR.toFixed(2);
-    if (elKfTimeOut) elKfTimeOut.textContent = `${KF_TIME_CUR.toFixed(2)} s`;
+    KF_TIME_CUR = Math.max(0.1, tt);
+    if (elKfTime) elKfTime.value = KF_TIME_CUR.toFixed(1);
+    if (elKfTimeOut) elKfTimeOut.textContent = `${KF_TIME_CUR.toFixed(1)} s`;
     updateEaseDurationFromKf();
     updateKfTotalOut();
     kfRebuildList();
+  }
+
+  function kfNext(){
+    const n = keyframes.length;
+    if (n <= 0) return;
+    const idx = (kfIndex >= 0 && kfIndex < n) ? (kfIndex + 1) % n : 0;
+    kfSelect(idx);
+  }
+
+  function kfPrev(){
+    const n = keyframes.length;
+    if (n <= 0) return;
+    const idx = (kfIndex >= 0 && kfIndex < n) ? ((kfIndex - 1 + n) % n) : 0;
+    kfSelect(idx);
   }
 
   function kfAdd(){
@@ -2466,7 +2481,7 @@ function setup(){
     elKfTime.addEventListener('input', ()=>{
       const v = parseFloat(elKfTime.value);
       if (Number.isFinite(v)){
-        KF_TIME_CUR = Math.max(0.05, v);
+        KF_TIME_CUR = Math.max(0.1, v);
         if (elKfTimeOut) elKfTimeOut.textContent = `${KF_TIME_CUR.toFixed(1)} Sec`;
         if (kfIndex >= 0 && kfIndex < keyframes.length){ keyframes[kfIndex].timeSec = KF_TIME_CUR; kfAutosaveCurrent(); }
         updateEaseDurationFromKf();
@@ -2480,14 +2495,30 @@ function setup(){
   if (elKfDel)    elKfDel.addEventListener('click', kfDel);
   if (elKfToggle) elKfToggle.addEventListener('click', kfToggle);
   window.addEventListener('keydown', (e)=>{
-    const isSpace = (e.code === 'Space' || e.key === ' ' || e.key === 'Spacebar');
-    if (!isSpace) return;
     const el = document.activeElement;
     const tag = el && el.tagName ? el.tagName.toLowerCase() : '';
     const isTyping = (tag === 'input' || tag === 'textarea' || tag === 'select' || (el && el.isContentEditable));
     if (isTyping) return;
+    const key = e.key || '';
+    const code = e.code || '';
+    const isSpace = (code === 'Space' || key === ' ' || key === 'Spacebar');
+    const isAddKf = (key === '=' || key === '+' || code === 'Equal');
+    const isDelKf = (key === '-' || key === '_' || code === 'Minus');
+    const isPrevKf = (code === 'ArrowLeft' || key === 'ArrowLeft');
+    const isNextKf = (code === 'ArrowRight' || key === 'ArrowRight');
+    if (!isSpace && !isAddKf && !isDelKf && !isPrevKf && !isNextKf) return;
     e.preventDefault();
-    kfToggle();
+    if (isSpace){
+      kfToggle();
+    } else if (isAddKf){
+      kfAdd();
+    } else if (isDelKf){
+      kfDel();
+    } else if (isPrevKf){
+      kfPrev();
+    } else if (isNextKf){
+      kfNext();
+    }
   });
 
   // Init with a single keyframe reflecting current state
@@ -2660,8 +2691,8 @@ function setup(){
     }
 
     // Keyframe timing UI
-    if (elKfTime){ elKfTime.value = Math.max(0.05, KF_TIME_CUR).toFixed(1); }
-    if (elKfTimeOut){ elKfTimeOut.textContent = `${Math.max(0.05, KF_TIME_CUR).toFixed(1)} Sec`; }
+    if (elKfTime){ elKfTime.value = Math.max(0.1, KF_TIME_CUR).toFixed(1); }
+    if (elKfTimeOut){ elKfTimeOut.textContent = `${Math.max(0.1, KF_TIME_CUR).toFixed(1)} Sec`; }
 
     // Curve radios
     const curveSineEl = document.getElementById('curveSine');
@@ -3221,6 +3252,7 @@ function setup(){
       if (val === PRESET_DEFAULT) {
         FIT_MODE = true;
         if (elCustomAR) elCustomAR.style.display = 'none';
+        if (elCustomARRow) elCustomARRow.style.display = 'none';
         fitViewportToWindow();
         requestRedraw();
         return;
@@ -3230,10 +3262,12 @@ function setup(){
 
       if (val === 'custom') {
         if (elCustomAR) elCustomAR.style.display = 'block';
+        if (elCustomARRow) elCustomARRow.style.display = 'contents';
         // Export bar height may change; refit viewport
         fitViewportToWindow();
       } else {
         if (elCustomAR) elCustomAR.style.display = 'none';
+        if (elCustomARRow) elCustomARRow.style.display = 'none';
         EXPORT_W = null; EXPORT_H = null;
         const opt = elPreset.options[elPreset.selectedIndex];
         const aw = parseInt(opt.dataset.aw, 10);
@@ -3259,6 +3293,7 @@ function setup(){
         ASPECT_W = w; ASPECT_H = h;
 
         if (elCustomAR) elCustomAR.style.display = 'block';
+        if (elCustomARRow) elCustomARRow.style.display = 'contents';
         fitViewportToWindow();
         requestRedraw();
       });
@@ -4645,7 +4680,7 @@ function getParamSnapshot(){
   snap.hWaveAmp = Number(Math.max(0, H_WAVE_AMP).toFixed(2));
   snap.hWavePeriod = Number(Math.max(0.1, H_WAVE_PERIOD).toFixed(2));
   // Keyframe timing
-  snap.kfTimeSec = Number(Math.max(0.05, KF_TIME_CUR).toFixed(2));
+  snap.kfTimeSec = Number(Math.max(0.1, KF_TIME_CUR).toFixed(1));
   snap.kfSpeed = Number(Math.max(0.1, KF_SPEED_MUL).toFixed(2));
   snap.repeatEnabled = !!REPEAT_ENABLED;
   const repeatModeMap = { uniform:0, falloff:1 };
@@ -4657,7 +4692,7 @@ function getParamSnapshot(){
   const et = String(EASE_TYPE||'smooth');
   const easeTypeMap = { smooth:0, linear:1, easeInOut:2, snap:4, snapHalf:5, fadeIn:6 };
   snap.easeType = easeTypeMap[et] ?? 0;
-  snap.easeAmp = Number(Math.max(0, EASE_AMPLITUDE).toFixed(2));
+  snap.easeAmp = Number(Math.max(0, EASE_AMPLITUDE).toFixed(1));
   return snap;
 }
 
@@ -4688,15 +4723,15 @@ function buildParamCode(snap){
   parts.push('hwa' + Number(s.hWaveAmp).toFixed(2));
   parts.push('hwp' + Number(s.hWavePeriod).toFixed(2));
   // Keyframe timing
-  parts.push('kt' + Number(s.kfTimeSec).toFixed(2));
-  parts.push('km' + Number(s.kfSpeed).toFixed(2));
+  parts.push('kt' + Number(s.kfTimeSec).toFixed(1));
+  parts.push('km' + Number(s.kfSpeed).toFixed(1));
   parts.push('re' + (s.repeatEnabled ? 1 : 0));
   parts.push('rm' + s.repeatMode);
   parts.push('rf' + Number(s.repeatFalloff).toFixed(2));
   parts.push('rmi' + (s.repeatMirror ? 1 : 0));
   parts.push('rx' + (s.repeatExtraRows === 'ALL' ? 'A' : s.repeatExtraRows));
   parts.push('et' + s.easeType);
-  parts.push('ea' + Number(s.easeAmp).toFixed(2));
+  parts.push('ea' + Number(s.easeAmp).toFixed(1));
   return parts.join('');
 }
 
@@ -4831,8 +4866,7 @@ function applyParamCode(code){
   if (map.hwa){ setVal('hWaveAmp', Math.max(0, parseFloat(map.hwa)||0).toFixed(2), 'input'); }
   if (map.hwp){ setVal('hWavePeriod', Math.max(0.1, parseFloat(map.hwp)||H_WAVE_PERIOD_DEFAULT).toFixed(2), 'input'); }
   // Keyframe timing (per-frame seconds + global multiplier)
-  if (map.kt){ setVal('kfTime', Math.max(0.05, parseFloat(map.kt)||KF_TIME_DEFAULT).toFixed(2), 'input'); }
-  if (map.km){ setVal('kfSpeed', Math.max(0.1, parseFloat(map.km)||KF_SPEED_DEFAULT).toFixed(2), 'input'); }
+  if (map.kt){ setVal('kfTime', Math.max(0.1, parseFloat(map.kt)||KF_TIME_DEFAULT).toFixed(1), 'input'); }
 
   // Repeat
   if (map.re){ setChk('repeatEnabled', parseInt(map.re,10) === 1); }
@@ -4876,7 +4910,7 @@ function applyParamCode(code){
     const pct = Math.max(0, Math.round((ed / base) * 100));
     setVal('easeDurPct', pct, 'input');
   }
-  if (map.ea){ setVal('easeAmp', Math.max(0, parseFloat(map.ea)||EASE_AMPLITUDE_DEFAULT).toFixed(2), 'input'); }
+  if (map.ea){ setVal('easeAmp', Math.max(0, parseFloat(map.ea)||EASE_AMPLITUDE_DEFAULT).toFixed(1), 'input'); }
 
   // Autosave active keyframe after event-driven apply
   try { if (typeof window !== 'undefined' && window.__kfAutosaveActive) window.__kfAutosaveActive(); } catch(e){}
