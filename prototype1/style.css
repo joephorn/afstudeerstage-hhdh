@@ -767,6 +767,12 @@ button#resetDefaults:hover {
 .dropdown--shape .dropdown__icon img,
 .dropdown--shape .dropdown__icon svg { max-height: 100%; width: auto; }
 .dropdown--shape .dropdown__label { display: none; }
+.dropdown--shape { width: 66%; }
+.dropdown--shape .dropdown__menu {
+  max-height: 360px;
+  height: 400%;
+  overflow-y: auto;
+}
 
 /* Text dropdown: text label + small icon on the right */
 .dropdown--text .dropdown__button {
@@ -821,4 +827,9 @@ button#resetDefaults:hover {
 #controls .ui-row[data-locked="1"] .dropdown__button {
   pointer-events: none;
   opacity: 0.4;
+}
+
+#kfTime + .scalar {
+  width: 250px;
+  max-width: 250px;
 }

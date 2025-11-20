@@ -4905,7 +4905,12 @@ function applyParamCode(code){
   } else {
     LINE_LEN_MUL_TARGET = LINE_LEN_MUL_DEFAULT;
   }
-  if (map.tr){ setVal('tipRatio', clamp(parseFloat(map.tr)||TIP_RATIO_DEFAULT, 0, 1).toFixed(2), 'input'); }
+  if (map.tr){
+    const raw = parseFloat(map.tr);
+    const parsed = Number.isFinite(raw) ? clamp(raw, 0, 100) : null;
+    const normalized = (parsed == null) ? TIP_RATIO_DEFAULT : (parsed > 1 ? parsed / 100 : parsed);
+    setVal('tipRatio', clamp(normalized, 0, 1).toFixed(2), 'input');
+  }
   if (map.w){  setVal('widthScale', clamp(parseInt(map.w,10)||110, 0, 500), 'input'); }
   if (map.g){  setVal('gap', parseInt(map.g,10)||0, 'input'); }
   if (map.du){ setVal('dispUnit', parseInt(map.du,10)||0, 'input'); }
@@ -5048,7 +5053,12 @@ function applyParamCodeFast(codeOrMap){
   } else {
     LINE_LEN_MUL_TARGET = LINE_LEN_MUL_DEFAULT;
   }
-  if (map.tr){ TIP_RATIO_TARGET = clamp(parseFloat(map.tr)||TIP_RATIO_DEFAULT, 0, 1); }
+  if (map.tr){
+    const raw = parseFloat(map.tr);
+    const parsed = Number.isFinite(raw) ? clamp(raw, 0, 100) : null;
+    const normalized = (parsed == null) ? TIP_RATIO_DEFAULT : (parsed > 1 ? parsed / 100 : parsed);
+    TIP_RATIO_TARGET = clamp(normalized, 0, 1);
+  }
   if (map.w){  widthScaleTarget = clamp(parseInt(map.w,10)||110, 0, 500)/100; }
   if (map.g){  gapPxTarget = parseInt(map.g,10)||0; }
   if (map.du){ DISPLACE_UNIT_TARGET = parseInt(map.du,10)||0; }
