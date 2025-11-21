@@ -1853,6 +1853,7 @@ function setup(){
   const nTransMode     = byId('transMode');
   const nTransDur      = byId('transDuration');
   const nTransAmp      = byId('transAmplitude');
+  const nEaseApplyAll  = byId('easeApplyAll');
   const nQReset        = byId('qaReset');
   const nQFill         = byId('qaFill');
   const nQRand         = byId('qaRandomize');
@@ -2081,6 +2082,7 @@ function setup(){
   }
   if (nTransDur){ nTransDur.addEventListener('input', ()=>{ const v=parseFloat(nTransDur.value); if(Number.isFinite(v)){ EASE_DURATION_PCT=Math.max(0,v); updateEaseDurationFromKf(); updateUIFromState(); requestRedraw(); } }); }
   if (nTransAmp){ nTransAmp.addEventListener('input', ()=>{ const v=parseFloat(nTransAmp.value); if(Number.isFinite(v)){ EASE_AMPLITUDE=Math.max(0,v); updateUIFromState(); requestRedraw(); } }); }
+  if (nEaseApplyAll){ nEaseApplyAll.addEventListener('click', applyEasingToAllKeyframes); }
   if (nQFill){
     nQFill.addEventListener('click', ()=>{
       const isOn = (LINE_LEN_MUL_TARGET || LINE_LEN_MUL || 0) > 1.001;
@@ -2367,6 +2369,42 @@ function setup(){
     setShortcutIconState(icon, 'active');
     setTimeout(()=> setShortcutIconState(icon, icon.matches(':hover') ? 'hover' : 'default'), duration);
   }
+  function easeTypeToIndex(val){
+    switch(String(val||'').toLowerCase()){
+      case 'linear': return 1;
+      case 'easeinout': return 2;
+      case 'snap': return 4;
+      case 'snaphalf': return 5;
+      case 'fadein': return 6;
+      default: return 0; // smooth
+    }
+  }
+  function stripEaseTokens(code){
+    let out = String(code||'');
+    out = out.replace(/(?:^|[,&;:])(?:et|ed|ea)[^,&;:]*/gi, '');
+    out = out.replace(/^[,;&:]+/, '').replace(/[,;&:]+$/, '');
+    out = out.replace(/[,;&:]{2,}/g, ',');
+    return out;
+  }
+  function applyEasingToAllKeyframes(){
+    if (!Array.isArray(keyframes) || !keyframes.length) return;
+    const etIdx = easeTypeToIndex(EASE_TYPE);
+    const pct = Math.max(0, Number(EASE_DURATION_PCT) || 0);
+    const amp = Math.max(0, Number(EASE_AMPLITUDE) || 0);
+    keyframes.forEach((kf, i)=>{
+      const t = Math.max(0.05, Number(kf && kf.timeSec) || KF_TIME_DEFAULT);
+      const ed = Math.max(0, t * (pct / 100));
+      const base = stripEaseTokens(kf && kf.code);
+      const extras = [`et${etIdx}`, `ed${ed.toFixed(2)}`, `ea${amp.toFixed(2)}`];
+      const joined = base ? `${base},${extras.join(',')}` : extras.join(',');
+      if (kf){
+        kf.code = joined;
+        kf.map = kfParse(joined);
+      }
+      if (i === kfIndex && elIdCode){ elIdCode.value = joined; }
+    });
+    try { kfAutosaveCurrent(true); } catch(e){}
+  }
   function bindStandaloneShortcutIcon(icon){
     if (!icon) return;
     icon.addEventListener('mouseenter', ()=> setShortcutIconState(icon, 'hover'));
@@ -2379,6 +2417,7 @@ function setup(){
     setShortcutIconState(icon, 'default');
     bindStandaloneShortcutIcon(icon);
   });
+  if (nEaseApplyAll) bindShortcutButton(nEaseApplyAll);
 
   const keyframes = []; // { code: string, map?: object }
   let kfIndex = -1;

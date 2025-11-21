@@ -458,7 +458,7 @@
           </div>
           <div class="ui-row">
             <label class="ui-label" for="transMode">Mode</label>
-            <div class="ui-control">
+            <div class="ui-control ease-apply-wrap">
               <select id="transMode" class="visually-hidden">
                 <option value="smooth"    data-icon-src="./src/easing-previews/easing-1.png">Smoothstep</option>
                 <option value="linear"    data-icon-src="./src/easing-previews/easing-0.png">Linear</option>
@@ -468,6 +468,9 @@
                 <option value="fadeIn"    data-icon-src="./src/easing-previews/easing-2.png">Fade-In</option>
               </select>
               <div class="dropdown dropdown--ease" data-link="#transMode"></div>
+              <button id="easeApplyAll" type="button" class="btn-plain ease-apply-btn" title="Apply this easing globally">
+                <img src="./src/icons/globe-icon.png" alt="Apply this easing globally" />
+              </button>
             </div>
           </div>
           <div class="ui-row">

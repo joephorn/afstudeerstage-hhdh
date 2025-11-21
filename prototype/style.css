@@ -123,6 +123,7 @@ main {
   gap: var(--gap-control-extra-wide);
   width: 100%;
   flex-wrap: nowrap;
+  position: relative;
 }
 
 .export-bar .export-left {
@@ -177,9 +178,17 @@ main {
   position: relative;
 }
 .export-bar .export-section + .export-section {
-  border-left: 1px solid #DCDCDD;
   padding-left: var(--gap-control-wide);
   margin-left: var(--gap-control-wide);
+}
+.export-bar .export-section + .export-section::before {
+  content: '';
+  position: absolute;
+  top: -12px;
+  bottom: -12px;
+  left: calc(-1 * var(--gap-control-wide) / 2);
+  width: 1px;
+  background: #DCDCDD;
 }
 
 .export-section-head {
@@ -194,9 +203,19 @@ main {
 .export-section .ui-section-head {
   display: contents;
 }
-.export-section .sec-icon--right {
+.export-section .sec-icon--right, .control-section .sec-icon--right {
   grid-column: 3;
   justify-self: start;
+  cursor: pointer;
+}
+
+@media (max-width: 1350px){
+  .export-bar {
+    overflow-x: auto;
+  }
+  .export-bar .bar-inner {
+    min-width: max-content;
+  }
 }
 
 /* Keyframes inside export bar */
@@ -554,6 +573,26 @@ button#resetDefaults:hover {
 .dropdown--ease .dropdown__item .dropdown__icon {
   width: 40px;
   height: 24px;
+}
+.ease-apply-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-plain {
+  background: none;
+  border: 0;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.ease-apply-btn img {
+  display: block;
+  height: 16px;
+  width: 16px;
+  pointer-events: none;
 }
 
 /* Shortcut badges */
