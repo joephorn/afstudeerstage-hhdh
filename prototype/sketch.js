@@ -1424,8 +1424,8 @@ function updateAnimatedParameters(){
 const LOCKED_PARAMS = new Set();
 if (typeof window !== 'undefined'){ window.__lockedParams = LOCKED_PARAMS; }
 
-function normalizeLockKey(id){
-  const k = String(id || '').toLowerCase();
+function normalizeLockKey(identifier){
+  const k = String(identifier || '').toLowerCase();
   if (k === 'genrows' || k === 'rows') return 'rows';
   if (k === 'genlineheight' || k === 'thickness') return 'thickness';
   if (k === 'gengap' || k === 'gap') return 'gap';
@@ -1606,7 +1606,7 @@ function preload(){
       const logo = sanitizeColor(combo.logo || combo.foreground, COLOR_LOGO_DEFAULT).toUpperCase();
       const lines = sanitizeColor(combo.lines || combo.accent, COLOR_LINES_DEFAULT).toUpperCase();
       const label = combo.label ? String(combo.label) : `Preset ${idx + 1}`;
-      const id = combo.id ? String(combo.id) : `combo-${idx}`;
+      const identifier = combo.id ? String(combo.id) : `combo-${idx}`;
       // Carry through any icon path/markup so custom dropdowns can render previews
       const icon = (typeof combo.icon === 'string' && combo.icon.trim())
         ? combo.icon.trim()
@@ -1616,7 +1616,7 @@ function preload(){
       const iconSrc = (typeof combo.iconSrc === 'string' && combo.iconSrc.trim())
         ? combo.iconSrc.trim()
         : icon;
-      const base = { id, label, background, logo, lines };
+      const base = { id: identifier, label, background, logo, lines };
       if (icon) base.icon = icon;
       if (iconSrc) base.iconSrc = iconSrc;
       return base;
@@ -1725,7 +1725,7 @@ function setup(){
     });
   }
   // Warp controls
-  mainCanvas = createCanvas(800, 250);
+  mainCanvas = createCanvas(800, 250, P2D); // Explicit renderer to avoid p5.svg warning about empty third param
   // Initialize intrinsic size to match the created canvas (will be updated by fitViewportToWindow)
   if (mainCanvas && mainCanvas.elt && mainCanvas.elt.tagName.toLowerCase() === 'svg'){
     mainCanvas.elt.setAttribute('width', String(width));
@@ -1753,7 +1753,7 @@ function setup(){
   window.addEventListener('resize', fitViewportToWindow);
 
   // Hook up HTML controls from index.html
-  function byId(id){ return document.getElementById(id); }
+  function byId(identifier){ return document.getElementById(identifier); }
   elRows         = byId('rows');
   elThickness    = byId('thickness');
   elWidth        = byId('widthScale');
@@ -1859,9 +1859,9 @@ function setup(){
 
   const EASE_MODES = ['smooth','linear','easeInOut','snap','snapHalf','fadeIn'];
 
-  const rowOf = (id)=>{ const el = byId(id); return el ? el.closest('.ui-row') : null; };
-  const setRowHidden = (id, hidden)=>{ const r = rowOf(id); if (r) r.style.display = hidden ? 'none' : ''; };
-  const setCtrlDisabled = (id, dis)=>{ const e = byId(id); if (e) e.disabled = !!dis; };
+  const rowOf = (identifier)=>{ const el = byId(identifier); return el ? el.closest('.ui-row') : null; };
+  const setRowHidden = (identifier, hidden)=>{ const r = rowOf(identifier); if (r) r.style.display = hidden ? 'none' : ''; };
+  const setCtrlDisabled = (identifier, dis)=>{ const e = byId(identifier); if (e) e.disabled = !!dis; };
 
   function populateNewUI(){
     // Text options
@@ -2139,8 +2139,8 @@ function setup(){
     if (collapsed){ el.setAttribute('data-collapsed','1'); el.setAttribute('aria-expanded','false'); }
     else { el.removeAttribute('data-collapsed'); el.setAttribute('aria-expanded','true'); }
   }
-  function resetSection(id){
-    switch(id){
+  function resetSection(identifier){
+    switch(identifier){
       case 'ui-general':
         setLogoText(LOGO_TEXT_OPTIONS[0]);
         rowsTarget = ROWS_DEFAULT;
@@ -2192,7 +2192,7 @@ function setup(){
         break;
     }
     // Clear locks within this section
-    const secEl = document.getElementById(id);
+    const secEl = document.getElementById(identifier);
     if (secEl) clearLocksInScope(secEl);
     updateUIFromState();
     requestRedraw();
@@ -2200,7 +2200,7 @@ function setup(){
   (function attachSectionHeaderActions(){
     const secs = Array.from(document.querySelectorAll('.control-section'));
     secs.forEach(sec => {
-      const id = sec.id || '';
+      const identifier = sec.id || '';
       const left = sec.querySelector('.sec-icon--left');
       const right = sec.querySelector('.sec-icon--right');
       if (left){
@@ -2212,7 +2212,7 @@ function setup(){
       }
       if (right){
         right.title = 'Reset section';
-        right.addEventListener('click', ()=> resetSection(id));
+        right.addEventListener('click', ()=> resetSection(identifier));
       }
     });
   })();
@@ -2626,9 +2626,9 @@ function setup(){
 
   // Keyframe timing controls (seconds per keyframe + global multiplier)
   if (elKfTime){
-    const init = (Number.isFinite(KF_TIME_CUR) ? KF_TIME_CUR : KF_TIME_DEFAULT);
-    elKfTime.value = init.toFixed(1);
-    if (elKfTimeOut) elKfTimeOut.textContent = `${init.toFixed(1)} Sec`;
+    const initialTime = (Number.isFinite(KF_TIME_CUR) ? KF_TIME_CUR : KF_TIME_DEFAULT);
+    elKfTime.value = initialTime.toFixed(1);
+    if (elKfTimeOut) elKfTimeOut.textContent = `${initialTime.toFixed(1)} Sec`;
     elKfTime.addEventListener('input', ()=>{
       const v = parseFloat(elKfTime.value);
       if (Number.isFinite(v)){
@@ -4964,9 +4964,9 @@ function parseParamCode(str){
 function applyParamCode(code){
   const map = parseParamCode(String(code||''));
   if (!map) return false;
-  const byId = (id)=> document.getElementById(id);
-  const setVal = (id, val, type='input')=>{ const el = byId(id); if (!el) return false; el.value = String(val); el.dispatchEvent(new Event(type, { bubbles:true })); return true; };
-  const setChk = (id, on)=>{ const el = byId(id); if (!el) return false; el.checked = !!on; el.dispatchEvent(new Event('change', { bubbles:true })); return true; };
+  const byId = (identifier)=> document.getElementById(identifier);
+  const setVal = (identifier, val, type='input')=>{ const el = byId(identifier); if (!el) return false; el.value = String(val); el.dispatchEvent(new Event(type, { bubbles:true })); return true; };
+  const setChk = (identifier, on)=>{ const el = byId(identifier); if (!el) return false; el.checked = !!on; el.dispatchEvent(new Event('change', { bubbles:true })); return true; };
   const clamp = (v,min,max)=> Math.max(min, Math.min(max, v));
 
   // Rows first (affects groups options and repeat capacity)
@@ -5041,12 +5041,12 @@ function applyParamCode(code){
   if (map.an){ setChk('animEnabled', parseInt(map.an,10) === 1); }
   if (map.am){
     const v = parseInt(map.am,10)||0;
-    const id = v===1 ? 'animMouse' : v===2 ? 'animPulse' : v===3 ? 'animScan' : 'animOff';
-    const el = byId(id); if (el){ el.checked = true; el.dispatchEvent(new Event('change', { bubbles:true })); }
+    const identifier = v===1 ? 'animMouse' : v===2 ? 'animPulse' : v===3 ? 'animScan' : 'animOff';
+    const el = byId(identifier); if (el){ el.checked = true; el.dispatchEvent(new Event('change', { bubbles:true })); }
   }
   if (map.cv){
-    const id = (parseInt(map.cv,10)||0) === 1 ? 'curveSmooth' : 'curveSine';
-    const el = byId(id); if (el){ el.checked = true; el.dispatchEvent(new Event('change', { bubbles:true })); }
+    const identifier = (parseInt(map.cv,10)||0) === 1 ? 'curveSmooth' : 'curveSine';
+    const el = byId(identifier); if (el){ el.checked = true; el.dispatchEvent(new Event('change', { bubbles:true })); }
   }
   if (map.ad){ setVal('animPeriod', Math.max(0.1, parseFloat(map.ad)||ANIM_PERIOD_DEFAULT).toFixed(2), 'input'); }
   if (map.pw){
@@ -5063,8 +5063,8 @@ function applyParamCode(code){
   // Repeat
   if (map.re){ setChk('repeatEnabled', parseInt(map.re,10) === 1); }
   if (map.rm){
-    const id = (parseInt(map.rm,10)||0) === 1 ? 'repeatModeFalloff' : 'repeatModeUniform';
-    const el = byId(id); if (el){ el.checked = true; el.dispatchEvent(new Event('change', { bubbles:true })); }
+    const identifier = (parseInt(map.rm,10)||0) === 1 ? 'repeatModeFalloff' : 'repeatModeUniform';
+    const el = byId(identifier); if (el){ el.checked = true; el.dispatchEvent(new Event('change', { bubbles:true })); }
   }
   if (map.rf){ setVal('repeatFalloff', clamp(parseFloat(map.rf)||1, 0.5, 1).toFixed(2), 'input'); }
   if (map.rmi){ setChk('repeatMirror', parseInt(map.rmi,10) === 1); }
