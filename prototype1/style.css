@@ -206,15 +206,21 @@ main {
   gap: var(--gap-control);
 }
 .export-bar #kfToggle {
-  width: 42px;
+  width: auto;
   min-width: 42px;
-  flex: 0 0 42px;
-  padding: 0;
+  flex: 0 0 auto;
+  padding: 0 8px;
 }
 .export-bar #kfToggle.is-active {
   background: #797979;
   color: #ffffff;
   box-shadow: none;
+}
+.export-bar .kf-list-shortcuts {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
 }
 .export-bar .kf-chip {
   padding: 4px 8px;
@@ -533,6 +539,31 @@ button#resetDefaults:hover {
 .dropdown--ease .dropdown__item .dropdown__icon {
   width: 40px;
   height: 24px;
+}
+
+/* Shortcut badges */
+.shortcut-icon {
+  height: 18px;
+  width: auto;
+  display: inline-block;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.shortcut-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.shortcut-inline--tight {
+  gap: 4px;
+}
+.button-with-shortcut {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.button-with-shortcut.shortcut-active {
+  background: #BCBCBC;
 }
 .button-row {
   display: flex;

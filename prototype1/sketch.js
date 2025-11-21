@@ -1133,9 +1133,9 @@ function updateKfTotalOut(){
     const el = (typeof document !== 'undefined') ? document.getElementById('kfTotalOut') : null;
     if (!el) return;
     const list = (typeof window !== 'undefined' && Array.isArray(window.__keyframesRef)) ? window.__keyframesRef : [];
-    if (!list.length){ el.textContent = '0.0 Sec'; return; }
-    const sum = list.reduce((s, k) => s + Math.max(0.05, (k && k.timeSec) ? k.timeSec : KF_TIME_DEFAULT), 0);
-    const total = Math.max(0.05, sum * Math.max(0.1, KF_SPEED_MUL));
+    if (!list.length){ el.textContent = '1.0 Sec'; return; }
+    const sum = list.reduce((s, k) => s + Math.max(0.1, (k && k.timeSec) ? k.timeSec : KF_TIME_DEFAULT), 0);
+    const total = Math.max(0.1, sum * Math.max(0.1, KF_SPEED_MUL));
     el.textContent = `${total.toFixed(1)} Sec`;
   } catch(e){}
 }
@@ -2007,6 +2007,13 @@ function setup(){
   updateNewUIFromState();
   initControlLocks();
 
+  const triggerRandomize = ()=>{
+    applyRandomTweaks();
+    try {
+      if (typeof kfAutosaveCurrent === 'function') kfAutosaveCurrent();
+    } catch(e){}
+  };
+
   // New UI event listeners
   if (nText){ nText.addEventListener('change', ()=>{ setLogoText(nText.value || LOGO_TEXT_OPTIONS[0]); requestRedraw(); }); }
   if (nScale){ nScale.addEventListener('input', ()=>{ const v = parseInt(nScale.value,10); if (Number.isFinite(v)) logoScaleTarget = Math.max(10, Math.min(200, v))/100; updateUIFromState(); requestRedraw(); }); }
@@ -2089,7 +2096,7 @@ function setup(){
     });
   }
   if (nQReset){ nQReset.addEventListener('click', ()=>{ resetDefaults(); }); }
-  if (nQRand){ nQRand.addEventListener('click', ()=>{ applyRandomTweaks(); try{ if (typeof kfAutosaveCurrent==='function') kfAutosaveCurrent(); }catch(e){} }); }
+  if (nQRand){ nQRand.addEventListener('click', triggerRandomize); }
 
   // Button groups for modes (Repeat, V-wave, H-wave)
   function bindModeButtonGroup(selectEl, containerId){
@@ -2281,6 +2288,63 @@ function setup(){
   const elKfAdd    = byId('kfAdd');
   const elKfDel    = byId('kfDel');
   const elKfToggle = byId('kfToggle');
+  const elKfShortcutPrev = byId('kfShortcutPrev');
+  const elKfShortcutNext = byId('kfShortcutNext');
+
+  // Shortcut icon helpers
+  const shortcutIconSrc = (base, state)=>{
+    const suffix = state === 'hover' ? '-hover' : (state === 'active' ? '-click' : '');
+    return `./src/icons/${base}${suffix}.png`;
+  };
+  function setShortcutIconState(icon, state){
+    if (!icon || !icon.dataset.iconBase) return;
+    const base = icon.dataset.iconBase;
+    icon.src = shortcutIconSrc(base, state);
+  }
+  function bindShortcutButton(btn){
+    if (!btn) return;
+    const icon = btn.querySelector('.shortcut-icon[data-icon-base]');
+    if (icon) setShortcutIconState(icon, 'default');
+    const resetState = ()=>{ if (icon) setShortcutIconState(icon, btn.matches(':hover') ? 'hover' : 'default'); };
+    const iconEnter = ()=>{ if (icon) setShortcutIconState(icon, 'hover'); };
+    const iconLeave = ()=>{ if (icon) setShortcutIconState(icon, 'default'); };
+    btn.addEventListener('mouseenter', iconEnter);
+    btn.addEventListener('mouseleave', ()=>{ iconLeave(); btn.classList.remove('shortcut-active'); });
+    if (icon){
+      icon.addEventListener('mouseenter', iconEnter);
+      icon.addEventListener('mouseleave', iconLeave);
+    }
+    btn.addEventListener('mousedown', ()=>{ if (icon) setShortcutIconState(icon, 'active'); btn.classList.add('shortcut-active'); });
+    btn.addEventListener('mouseup', ()=>{ resetState(); btn.classList.remove('shortcut-active'); });
+    btn.addEventListener('blur', ()=>{ if (icon) setShortcutIconState(icon, 'default'); btn.classList.remove('shortcut-active'); });
+  }
+  function flashShortcut(btn, duration=140){
+    if (!btn) return;
+    const icon = btn.querySelector('.shortcut-icon[data-icon-base]');
+    btn.classList.add('shortcut-active');
+    if (icon) setShortcutIconState(icon, 'active');
+    setTimeout(()=>{
+      btn.classList.remove('shortcut-active');
+      if (icon) setShortcutIconState(icon, btn.matches(':hover') ? 'hover' : 'default');
+    }, duration);
+  }
+  function flashShortcutIcon(icon, duration=140){
+    if (!icon) return;
+    setShortcutIconState(icon, 'active');
+    setTimeout(()=> setShortcutIconState(icon, icon.matches(':hover') ? 'hover' : 'default'), duration);
+  }
+  function bindStandaloneShortcutIcon(icon){
+    if (!icon) return;
+    icon.addEventListener('mouseenter', ()=> setShortcutIconState(icon, 'hover'));
+    icon.addEventListener('mouseleave', ()=> setShortcutIconState(icon, 'default'));
+  }
+
+  // Init shortcut icon states
+  [elKfAdd, elKfDel, elKfToggle, nQRand].forEach(bindShortcutButton);
+  [elKfShortcutPrev, elKfShortcutNext].forEach(icon => {
+    setShortcutIconState(icon, 'default');
+    bindStandaloneShortcutIcon(icon);
+  });
 
   const keyframes = []; // { code: string, map?: object }
   let kfIndex = -1;
@@ -2370,6 +2434,19 @@ function setup(){
 
   // Light-weight active indicator update (avoids rebuilding the list each tick)
   let _kfPrevIdx = -1;
+  function kfScrollActive(){
+    if (!elKfList) return;
+    const kids = elKfList.children;
+    if (kfIndex < 0 || kfIndex >= kids.length) return;
+    const btn = kids[kfIndex];
+    const parent = elKfList;
+    const parentRect = parent.getBoundingClientRect();
+    const btnRect = btn.getBoundingClientRect();
+    const btnCenter = (btnRect.left - parentRect.left) + parent.scrollLeft + (btnRect.width / 2);
+    const target = btnCenter - (parent.clientWidth / 2);
+    const maxScroll = Math.max(0, parent.scrollWidth - parent.clientWidth);
+    parent.scrollLeft = Math.min(maxScroll, Math.max(0, target));
+  }
   function kfHighlightActive(){
     if (!elKfList) return;
     const kids = elKfList.children;
@@ -2383,6 +2460,7 @@ function setup(){
       if (curBtn && curBtn.classList) curBtn.classList.add('is-active');
     }
     _kfPrevIdx = kfIndex;
+    kfScrollActive();
   }
 
   function kfRebuildList(){
@@ -2397,6 +2475,7 @@ function setup(){
       elKfList.appendChild(b);
     });
     _kfPrevIdx = kfIndex;
+    kfScrollActive();
   }
 
   function kfSelect(idx){
@@ -2504,7 +2583,9 @@ function setup(){
   function kfUpdateToggleUI(){
     if (elKfToggle){
       const playing = kfIsPlaying();
-      elKfToggle.textContent = playing ? '⏸' : '▶';
+      const iconEl = elKfToggle.querySelector('.kf-toggle-icon');
+      if (iconEl){ iconEl.textContent = playing ? '⏸' : '▶'; }
+      else { elKfToggle.textContent = playing ? '⏸' : '▶'; }
       elKfToggle.title = playing ? 'Pause' : 'Play';
       elKfToggle.classList.toggle('is-active', playing);
     }
@@ -2569,6 +2650,7 @@ function setup(){
     const tag = el && el.tagName ? el.tagName.toLowerCase() : '';
     const isTyping = (tag === 'input' || tag === 'textarea' || tag === 'select' || (el && el.isContentEditable));
     if (isTyping) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
     const key = e.key || '';
     const code = e.code || '';
     const isSpace = (code === 'Space' || key === ' ' || key === 'Spacebar');
@@ -2576,18 +2658,27 @@ function setup(){
     const isDelKf = (key === '-' || key === '_' || code === 'Minus');
     const isPrevKf = (code === 'ArrowLeft' || key === 'ArrowLeft');
     const isNextKf = (code === 'ArrowRight' || key === 'ArrowRight');
-    if (!isSpace && !isAddKf && !isDelKf && !isPrevKf && !isNextKf) return;
+    const isRandomize = (code === 'KeyR' || key === 'r' || key === 'R');
+    if (!isSpace && !isAddKf && !isDelKf && !isPrevKf && !isNextKf && !isRandomize) return;
     e.preventDefault();
     if (isSpace){
+      flashShortcut(elKfToggle);
       kfToggle();
     } else if (isAddKf){
+      flashShortcut(elKfAdd);
       kfAdd();
     } else if (isDelKf){
+      flashShortcut(elKfDel);
       kfDel();
     } else if (isPrevKf){
+      flashShortcutIcon(elKfShortcutPrev);
       kfPrev();
     } else if (isNextKf){
+      flashShortcutIcon(elKfShortcutNext);
       kfNext();
+    } else if (isRandomize){
+      flashShortcut(nQRand);
+      triggerRandomize();
     }
   });
 

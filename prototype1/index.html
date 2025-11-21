@@ -84,8 +84,14 @@
                   <span class="ui-label"></span>
                   <div class="ui-control actions-grid">
                     <div class="actions-grid-row">
-                      <button id="kfDel" type="button" title="Remove keyframe">Remove kf [-]</button>
-                      <button id="kfAdd" type="button" title="Add keyframe">Add kf [+]</button>
+                      <button id="kfDel" type="button" class="button-with-shortcut" title="Remove keyframe">
+                        <span>Remove kf</span>
+                        <img class="shortcut-icon" data-icon-base="shortcut-minus" src="./src/icons/shortcut-minus.png" alt="Shortcut Minus" />
+                      </button>
+                      <button id="kfAdd" type="button" class="button-with-shortcut" title="Add keyframe">
+                        <span>Add kf</span>
+                        <img class="shortcut-icon" data-icon-base="shortcut-plus" src="./src/icons/shortcut-plus.png" alt="Shortcut Plus" />
+                      </button>
                     </div>
                     <div class="actions-grid-row">
                       <button id="cfgLoad" type="button">Load scene</button>
@@ -107,8 +113,15 @@
                   <label class="ui-label" for="kfToggle">Keyframes</label>
                   <div class="ui-control">
                     <div class="kf-row">
-                      <button id="kfToggle" type="button" title="Play/Pause">▶</button>
+                      <button id="kfToggle" type="button" class="button-with-shortcut" title="Play/Pause">
+                        <span class="kf-toggle-icon" aria-hidden="true">▶</span>
+                        <img class="shortcut-icon" data-icon-base="shortcut-space" src="./src/icons/shortcut-space.png" alt="Shortcut Space" />
+                      </button>
                       <div id="kfList" class="kf-list"></div>
+                      <div class="shortcut-inline shortcut-inline--tight kf-list-shortcuts" aria-hidden="true">
+                        <img id="kfShortcutPrev" class="shortcut-icon" data-icon-base="shortcut-left" src="./src/icons/shortcut-left.png" alt="Shortcut Left Arrow" />
+                        <img id="kfShortcutNext" class="shortcut-icon" data-icon-base="shortcut-right" src="./src/icons/shortcut-right.png" alt="Shortcut Right Arrow" />
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -128,7 +141,7 @@
                 <div class="ui-row">
                   <label class="ui-label">All Duration</label>
                   <div class="ui-control">
-                    <span id="kfTotalOut" class="sub">0.5 Sec</span>
+                    <span id="kfTotalOut" class="sub">1.0 Sec</span>
                   </div>
                 </div>
               </section>
@@ -489,7 +502,10 @@
           <div class="ui-row ui-row-actions">
             <span class="ui-label"></span>
             <div class="ui-control button-row">
-              <button id="qaRandomize" type="button">Randomize</button>
+              <button id="qaRandomize" type="button" class="button-with-shortcut">
+                <span>Randomize</span>
+                <img class="shortcut-icon" data-icon-base="shortcut-r" src="./src/icons/shortcut-r.png" alt="Shortcut R" />
+              </button>
               <button id="qaFill" type="button">Transition fill</button>
               <button id="qaReset" type="button">Reset</button>
             </div>
