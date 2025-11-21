@@ -120,7 +120,7 @@ main {
 .export-bar .bar-inner {
   display: flex;
   align-items: flex-start;
-  gap: var(--gap-control-wide);
+  gap: var(--gap-control-extra-wide);
   width: 100%;
   flex-wrap: nowrap;
 }
@@ -173,6 +173,14 @@ main {
   min-width: 0;
   max-width: 100%;
 }
+.export-bar .export-section {
+  position: relative;
+}
+.export-bar .export-section + .export-section {
+  border-left: 1px solid #DCDCDD;
+  padding-left: var(--gap-control-wide);
+  margin-left: var(--gap-control-wide);
+}
 
 .export-section-head {
   margin-bottom: 2px;
@@ -182,6 +190,13 @@ main {
   font-weight: 500;
   margin: 0;
   color: #6C6A6D;
+}
+.export-section .ui-section-head {
+  display: contents;
+}
+.export-section .sec-icon--right {
+  grid-column: 3;
+  justify-self: start;
 }
 
 /* Keyframes inside export bar */

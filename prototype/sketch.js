@@ -2188,6 +2188,40 @@ function setup(){
         EASE_DURATION_PCT = EASE_DURATION_PCT_DEFAULT;
         EASE_AMPLITUDE = EASE_AMPLITUDE_DEFAULT;
         break;
+      case 'ui-export-settings': {
+        // Reset size + format to defaults
+        if (elPreset){
+          elPreset.value = 'fit';
+          elPreset.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        const elAspectW = document.getElementById('aspectW');
+        const elAspectH = document.getElementById('aspectH');
+        if (elAspectW){ elAspectW.value = '1920'; elAspectW.dispatchEvent(new Event('input', { bubbles: true })); }
+        if (elAspectH){ elAspectH.value = '1080'; elAspectH.dispatchEvent(new Event('input', { bubbles: true })); }
+        const elExportFormat = document.getElementById('exportFormat');
+        if (elExportFormat){
+          elExportFormat.value = 'svg';
+          elExportFormat.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        try { if (window.__syncCustomDropdownButtons) window.__syncCustomDropdownButtons(); } catch(e){}
+        break;
+      }
+      case 'ui-export-keyframes': {
+        // Reset keyframes to a single frame reflecting current state
+        try { kfStop(); } catch(e){}
+        keyframes.splice(0, keyframes.length);
+        const code0 = kfGetCode();
+        const map0 = kfParse(code0);
+        const t0 = (map0 && parseFloat(map0.kt)) || KF_TIME_DEFAULT;
+        keyframes.push({ code: code0, map: map0, timeSec: Math.max(0.05, t0) });
+        kfIndex = 0;
+        if (elIdCode) elIdCode.value = code0;
+        kfRebuildList();
+        kfUpdateToggleUI();
+        updateKfTotalOut();
+        updateEaseDurationFromKf();
+        break;
+      }
       default:
         break;
     }
