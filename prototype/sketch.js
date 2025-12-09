@@ -882,117 +882,6 @@ async function exportMP4(){
   }
 }
 
-// Higher-bitrate MP4 export (less compression)
-async function exportMP4HQ(){
-  if (typeof MediaRecorder === 'undefined'){
-    throw new Error('MediaRecorder not supported in this browser');
-  }
-  // Determine desired export resolution from Size preset/custom
-  let targetW = Math.max(1, width), targetH = Math.max(1, height);
-  try {
-    const presetSel = document.getElementById('preset');
-    if (presetSel){
-      const val = String(presetSel.value || 'fit');
-      if (val === 'custom'){
-        let w = (typeof EXPORT_W === 'number') ? EXPORT_W : null;
-        let h = (typeof EXPORT_H === 'number') ? EXPORT_H : null;
-        if (!w || !h){
-          const elW = document.getElementById('aspectW');
-          const elH = document.getElementById('aspectH');
-          const ww = parseInt(elW && elW.value, 10);
-          const hh = parseInt(elH && elH.value, 10);
-          if (Number.isFinite(ww) && Number.isFinite(hh) && ww > 0 && hh > 0){ w = ww; h = hh; }
-        }
-        if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0){ targetW = w; targetH = h; }
-      } else if (val !== 'fit'){
-        const opt = presetSel.options[presetSel.selectedIndex];
-        const dw = parseInt(opt && opt.dataset && opt.dataset.w, 10);
-        const dh = parseInt(opt && opt.dataset && opt.dataset.h, 10);
-        if (Number.isFinite(dw) && Number.isFinite(dh) && dw > 0 && dh > 0){ targetW = dw; targetH = dh; }
-      }
-    }
-  } catch(e){}
-
-  let capture = null;
-  try {
-    capture = beginRecordingBuffer(targetW, targetH);
-    const canvasEl = (capture && capture.elt) ? capture.elt : null;
-    if (!canvasEl || !canvasEl.captureStream){
-      throw new Error('Canvas captureStream not available');
-    }
-
-    const fps = 60;
-    const stream = canvasEl.captureStream(fps);
-    // Restrict to MP4‑compatible mime types; prefer H264
-    const candidates = [
-      'video/mp4;codecs=h264',
-      'video/mp4;codecs=avc1.4D401E',
-      'video/mp4;codecs=avc1.42E01E',
-      'video/mp4'
-    ];
-    let mime = '';
-    for (const m of candidates){ if (MediaRecorder.isTypeSupported(m)){ mime = m; break; } }
-    if (!mime){ throw new Error('No MP4 recording mimeType supported by this browser'); }
-
-    // Higher target bitrate: scale with resolution × fps, use a higher bpp and cap higher
-    const px = Math.max(1, Math.round(targetW)) * Math.max(1, Math.round(targetH));
-    const bppHQ = 2; // bits per pixel per frame (higher than default)
-    const est = Math.round(px * fps * bppHQ);
-    const vbr = Math.max(20_000_000, Math.min(100_000_000, est));
-    const chunks = [];
-    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: vbr });
-    rec.ondataavailable = (e)=>{ if (e && e.data && e.data.size > 0) chunks.push(e.data); };
-
-    // Determine duration: one full keyframe cycle if available; else 3s
-    const kfList = (function(){ try { return (typeof window !== 'undefined' && window.__keyframesRef) ? window.__keyframesRef : []; } catch(e){ return []; }})();
-    let totalSec = 3.0;
-    try {
-      if (Array.isArray(kfList) && kfList.length){
-        const sum = kfList.reduce((s,k)=> s + Math.max(0.05, (k && k.timeSec) ? k.timeSec : KF_TIME_DEFAULT), 0);
-        totalSec = Math.max(0.2, sum * Math.max(0.1, KF_SPEED_MUL));
-      }
-    } catch(e){}
-
-    // Warm-up then record
-    const wasPlaying = !!KF_PLAYING;
-    try {
-      try { ensureGlyphsLoadedFor(currentLogoText()); } catch(e){}
-      const chars = Array.from(new Set(String(currentLogoText()||'').toUpperCase().split('').filter(c => /^[A-Z]$/.test(c))));
-      const deadlineAssets = performance.now() + 1000;
-      while (true){
-        const ready = chars.every(ch => glyphImgs[ch] && glyphDims[ch] && glyphDims[ch].w > 0 && glyphDims[ch].h > 0);
-        if (ready || performance.now() > deadlineAssets) break;
-        await new Promise(res => setTimeout(res, 16));
-      }
-      const startMark = performance.now();
-      requestRedraw();
-      await new Promise(res => requestAnimationFrame(res));
-      await new Promise(res => requestAnimationFrame(res));
-      const t0 = _lastDrawT;
-      const deadline = startMark + 1000;
-      while (_lastDrawT <= t0 && performance.now() < deadline){
-        await new Promise(res => requestAnimationFrame(res));
-      }
-    } catch(e){}
-
-    const started = new Promise((resolve)=>{ try { rec.onstart = ()=> resolve(); } catch(e){ resolve(); } });
-    const stopped = new Promise((resolve)=>{ rec.onstop = ()=> resolve(); });
-    try { const tr = stream.getVideoTracks && stream.getVideoTracks()[0]; if (tr) tr.contentHint = 'detail'; } catch(e){}
-    rec.start();
-    try { await started; } catch(e){}
-    if (!wasPlaying){ try { if (typeof window !== 'undefined' && window.__kfPlay) window.__kfPlay(); } catch(e){} }
-    await new Promise(res=> setTimeout(res, Math.round(totalSec * 1000)));
-    rec.stop();
-    await stopped;
-    if (!wasPlaying){ try { if (typeof window !== 'undefined' && window.__kfStop) window.__kfStop(); } catch(e){} }
-
-    const blob = new Blob(chunks, { type: mime });
-    downloadBlob(blob, 'export-hq.mp4');
-  } finally {
-    endRecordingBuffer();
-  }
-}
-
 async function exportWebM(){
   if (typeof MediaRecorder === 'undefined'){
     throw new Error('MediaRecorder not supported in this browser');
@@ -3138,15 +3027,6 @@ function setup(){
         } catch(err){
           console.error('Export MP4 failed:', err);
           alert('Export MP4 failed: ' + (err && err.message ? err.message : err));
-        }
-        return;
-      }
-      if (fmt === 'mp4hq'){
-        try {
-          await exportMP4HQ();
-        } catch(err){
-          console.error('Export MP4 (HQ) failed:', err);
-          alert('Export MP4 (HQ) failed: ' + (err && err.message ? err.message : err));
         }
         return;
       }
