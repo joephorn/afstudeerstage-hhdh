@@ -1,6 +1,6 @@
 # Generative Typography Tool
 
-A creative coding tool that generates dynamic, motion-based typography systems for visual identities.
+A creative coding tool that generates dynamic, motion-based typography systems for Albion.
 
 This project was developed as part of a graduation internship at HeyHeydeHaas.
 The goal is to explore how generative systems can support designers in creating dynamic identities.
