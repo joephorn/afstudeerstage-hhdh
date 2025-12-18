@@ -23,7 +23,6 @@ The goal is to explore how generative systems can support designers in creating 
 
 ```bash
 git clone https://github.com/joephorn/afstudeerstage-hhdh
-cd prototype
 npx serve .
 ```
 
