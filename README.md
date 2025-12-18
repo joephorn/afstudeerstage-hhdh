@@ -5,7 +5,7 @@ A creative coding tool that generates dynamic, motion-based typography systems f
 This project was developed as part of a graduation internship at HeyHeydeHaas.
 The goal is to explore how generative systems can support designers in creating dynamic identities.
 
-[(demo)](https://joephorn.github.io/afstudeerstage-hhdh/)
+[demo](https://joephorn.github.io/afstudeerstage-hhdh/)
 
 ## Features
 - Generate typographic compositions from custom letter paths
