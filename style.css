@@ -509,7 +509,6 @@ button#resetDefaults {
   background: #383838;
   cursor: pointer;
 }
-}
 
 button#resetDefaults:hover {
   background: #0b0b0b;
