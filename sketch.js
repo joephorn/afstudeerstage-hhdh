@@ -1016,6 +1016,49 @@ function downloadBlob(blob, filename){
   } catch(e){ console.error('downloadBlob failed', e); }
 }
 
+function captureScreenshot(){
+  const canvasEl = (typeof mainCanvas !== 'undefined' && mainCanvas && mainCanvas.elt)
+    ? mainCanvas.elt
+    : (typeof document !== 'undefined' ? document.querySelector('canvas') : null);
+  if (!canvasEl){
+    console.warn('Screenshot failed: canvas not found');
+    return;
+  }
+  const pad2 = (v)=> String(v).padStart(2, '0');
+  const now = new Date();
+  const stamp = [
+    now.getFullYear(),
+    pad2(now.getMonth() + 1),
+    pad2(now.getDate())
+  ].join('') + '-' + [
+    pad2(now.getHours()),
+    pad2(now.getMinutes()),
+    pad2(now.getSeconds())
+  ].join('');
+  const filename = `screenshot-${stamp}.png`;
+  const save = ()=>{
+    if (typeof canvasEl.toBlob === 'function'){
+      canvasEl.toBlob((blob)=>{
+        if (!blob){
+          console.warn('Screenshot failed: empty blob');
+          return;
+        }
+        downloadBlob(blob, filename);
+      }, 'image/png');
+      return;
+    }
+    try {
+      const dataUrl = canvasEl.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = filename;
+      a.click();
+    } catch(e){ console.error('Screenshot failed', e); }
+  };
+  requestRedraw();
+  requestAnimationFrame(save);
+}
+
 // === UI helpers: keyframe total + easing duration coupling ===
 function updateKfTotalOut(){
   try {
@@ -1746,6 +1789,7 @@ function setup(){
   const nQReset        = byId('qaReset');
   const nQFill         = byId('qaFill');
   const nQRand         = byId('qaRandomize');
+  const nQScreenshot   = byId('qaScreenshot');
 
   const EASE_MODES = ['smooth','linear','easeInOut','snap','snapHalf','fadeIn'];
 
@@ -1988,6 +2032,7 @@ function setup(){
   }
   if (nQReset){ nQReset.addEventListener('click', ()=>{ resetDefaults(); }); }
   if (nQRand){ nQRand.addEventListener('click', triggerRandomize); }
+  if (nQScreenshot){ nQScreenshot.addEventListener('click', captureScreenshot); }
 
   // Button groups for modes (Repeat, V-wave, H-wave)
   function bindModeButtonGroup(selectEl, containerId){
@@ -2301,7 +2346,7 @@ function setup(){
   }
 
   // Init shortcut icon states
-  [elKfAdd, elKfDel, elKfToggle, nQRand].forEach(bindShortcutButton);
+  [elKfAdd, elKfDel, elKfToggle, nQRand, nQScreenshot].forEach(bindShortcutButton);
   [elKfShortcutPrev, elKfShortcutNext].forEach(icon => {
     setShortcutIconState(icon, 'default');
     bindStandaloneShortcutIcon(icon);
@@ -2621,7 +2666,8 @@ function setup(){
     const isPrevKf = (code === 'ArrowLeft' || key === 'ArrowLeft');
     const isNextKf = (code === 'ArrowRight' || key === 'ArrowRight');
     const isRandomize = (code === 'KeyR' || key === 'r' || key === 'R');
-    if (!isSpace && !isAddKf && !isDelKf && !isPrevKf && !isNextKf && !isRandomize) return;
+    const isScreenshot = (code === 'KeyS' || key === 's' || key === 'S');
+    if (!isSpace && !isAddKf && !isDelKf && !isPrevKf && !isNextKf && !isRandomize && !isScreenshot) return;
     e.preventDefault();
     if (isSpace){
       flashShortcut(elKfToggle);
@@ -2641,6 +2687,9 @@ function setup(){
     } else if (isRandomize){
       flashShortcut(nQRand);
       triggerRandomize();
+    } else if (isScreenshot){
+      flashShortcut(nQScreenshot);
+      captureScreenshot();
     }
   });
 
