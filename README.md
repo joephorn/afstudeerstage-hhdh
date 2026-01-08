@@ -30,6 +30,7 @@ Both 'npx serve .' or the 'Live Server' plugin can be used to run a demo locally
 ![Screen Recording 2026-01-08 at 16 14 45](https://github.com/user-attachments/assets/58adb670-2d78-4351-954c-ae2261380d6a)
 - Use the UI elements to manipulate the logo.
 - Shortcuts can be used to speed up the process:
+
 ```<``` (arrow-left) Previous keyframe
 
 ```>``` (arrow-right) Next keyframe
