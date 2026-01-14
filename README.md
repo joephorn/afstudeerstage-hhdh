@@ -24,26 +24,26 @@ The goal is to explore how generative systems can support designers in creating 
 git clone https://github.com/joephorn/afstudeerstage-hhdh
 npx serve .
 ```
-Both 'npx serve .' or the 'Live Server' plugin can be used to run a demo locally.
+Both the `npx serve .` command and the *Live Server* plugin can be used to run a demo locally.
 
 ## Usage
 ![Screen Recording 2026-01-08 at 16 14 45](https://github.com/user-attachments/assets/58adb670-2d78-4351-954c-ae2261380d6a)
 - Use the UI elements to manipulate the logo.
 - Shortcuts can be used to speed up the process:
 
-```<``` (arrow-left) Previous keyframe
+`<` (arrow-left) Previous keyframe
 
-```>``` (arrow-right) Next keyframe
+`>` (arrow-right) Next keyframe
 
-```+``` Add keyframe after current
+`+` Add keyframe after current
 
-```-``` Remove current keyframe
+`-` Remove current keyframe
 
-```Space``` Pause/play scene
+`Space` Pause/play scene
 
-```R``` Randomize settings
+`R` Randomize settings
 
-```S``` Screenshot and download current canvas
+`S` Screenshot and download current canvas
 
 - Parameters can be locked by clicking on the name label. By doing this, the corrosponding value cannot be changed by interface or the randomize function.
 - You can save the scene (the combination of keyframes) by clicking 'Save scene'. This saves a .json file to your machine, which can later be loaded back in via 'Load scene'.
