@@ -9,7 +9,6 @@ function currentLogoText(){
 }
 const ROWS_DEFAULT             = 12;
 const LINE_HEIGHT              = 10;
-
 const TIP_RATIO_DEFAULT        = 0.3;
 const DISPLACE_UNIT_DEFAULT    = 28;
 const GAP_PX_DEFAULT           = 9;
@@ -23,7 +22,6 @@ const LOGO_SCALE_DEFAULT       = 1.0;
 const ASPECT_W_DEFAULT         = 16;
 const ASPECT_H_DEFAULT         = 9;
 const PRESET_DEFAULT           = 'fit';
-const FIT_MODE_DEFAULT         = (PRESET_DEFAULT === 'fit');
 const ASPECT_WIDTH_PX_DEFAULT  = 1920;
 const ASPECT_HEIGHT_PX_DEFAULT = 1080;
 const TIP_RATIO_SLIDER_STEP    = 0.01;
@@ -41,7 +39,6 @@ const BG_LINES_DEFAULT         = false;
 const CSS_BG_LINES = false; // legacy flag kept; CSS overlay not used to preserve layering
 const PERF_MODE_DEFAULT        = false; // reduce detail during playback
 
-// Transparent background toggle
 let BG_TRANSPARENT = false;
 
 const REPEAT_ENABLED_DEFAULT        = false;
@@ -79,7 +76,7 @@ let DISPLACE_UNIT    = DISPLACE_UNIT_DEFAULT;
 let ASPECT_W         = ASPECT_W_DEFAULT;
 let ASPECT_H         = ASPECT_H_DEFAULT;
 let LOGO_TARGET_W    = 0;
-let FIT_MODE         = FIT_MODE_DEFAULT;
+let FIT_MODE         = PRESET_DEFAULT;
 const FIT_FRACTION = 0.75;
 const BLOCK_STEPS = 4; // fixed number of blocks for block taper
 const BLOCK_MIN_LEN_FRAC = 0.55; // leftmost block length as fraction of its segment
@@ -3565,7 +3562,7 @@ function setup(){
     if (elPreset) elPreset.value = PRESET_DEFAULT;
     if (elAspectW) elAspectW.value = String(ASPECT_WIDTH_PX_DEFAULT);
     if (elAspectH) elAspectH.value = String(ASPECT_HEIGHT_PX_DEFAULT);
-    FIT_MODE = FIT_MODE_DEFAULT;
+    FIT_MODE = PRESET_DEFAULT;
     if (elCustomAR) elCustomAR.style.display = FIT_MODE ? 'none' : 'block';
 
     window.MOUSE_AMPLITUDE = MOUSE_AMPLITUDE;
