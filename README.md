@@ -1,6 +1,6 @@
-# Generative Typography Tool
+# Generative Design Tool
 
-A creative coding tool that generates dynamic, motion-based typography systems for Albion.
+A creative coding tool that generates dynamic, motion-based designs for Albion.
 
 This project was developed as part of a graduation internship at HeyHeydeHaas.
 The goal is to explore how generative systems can support designers in creating dynamic identities.
